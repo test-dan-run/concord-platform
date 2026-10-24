@@ -212,3 +212,42 @@ def test_metrics_si_sdr():
     assert metrics.si_sdr(ref, 0.5 * ref) == float("inf")  # scale-invariant
     noisy = ref + 0.1 * rng.standard_normal(16000)
     assert metrics.si_sdr(ref, noisy) == pytest.approx(20.0, abs=0.5)
+
+
+def test_platform_batch_signatures_are_detected_and_probed():
+    """The enhancer and diarizer services moved to AUDIO [-1, -1] + LENGTHS; the probe sends them a one-row batch."""
+    from conformance import load_server, service_meta
+
+    from tools.schema import PLATFORM_DIR
+
+    names = sorted({t["speaker"] for t in TRUTH["turns"]})
+    diar_dir, enh_dir = PLATFORM_DIR / "custom/nemotron-3-diarization", PLATFORM_DIR / "custom/nemotronlabs-re-use"
+    tt = load_server(diar_dir, "turns")
+
+    class Diarizer(load_server(diar_dir, "diarizer").NemotronDiarizer):
+        def load(self):
+            self.model = object()
+
+        def diarize_batch(self, clips):
+            truth = [(t["start"], t["end"], names.index(t["speaker"])) for t in TRUTH["turns"]]
+            return [tt.turns_to_tensors(truth if len(x) > 16000 else []) for x in clips]
+
+    rep = probes.verify(service_meta("nemotron-3-diarization"), "http://testserver",
+                        client(load_server(diar_dir, "app").build_app(Diarizer("/x"))))
+    assert rep.usable_as == "segmenter" and rep.ok and rep.tasks == ["diar"], rep.lines
+    assert "batch signature" in line(rep, "signature").reason and rep.sample["der"] == 0.0
+
+    clean = probes.clip()[0]
+
+    class Enhancer(load_server(enh_dir, "enhancer").ReUse):
+        def load(self):
+            pass
+
+        def enhance_batch(self, pieces):
+            return [clean[: len(x)].copy() for x, _ in pieces]
+
+    rep = probes.verify(service_meta("nemotronlabs-re-use"), "http://testserver",
+                        client(load_server(enh_dir, "app").build_app(Enhancer("/x"))))
+    assert rep.usable_as == "enhancer" and rep.ok and rep.tasks == ["enhance"], rep.lines
+    assert "batch signature" in line(rep, "signature").reason and rep.sample["length_diff_samples"] == 0
+    assert line(rep, "si-sdr").status == "pass"

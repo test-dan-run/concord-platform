@@ -208,6 +208,26 @@ def test_oip_client_validates_before_sending():
         c.encode({k: v for k, v in good.items() if k != "MASK"})
 
 
+BATCH_SIG = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]},
+                        {"name": "LENGTHS", "datatype": "INT32", "shape": [-1]},
+                        {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1]}],
+             "outputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]}]}
+
+
+def test_oip_batch_signature_also_takes_one_clip_without_lengths():
+    """Callers that still send one clip (AUDIO [-1], no LENGTHS) to an enhancer or diarizer keep working."""
+    c = aicore.OIPClient("http://x", "enh", BATCH_SIG, http=object())
+    sr = np.array([16000], np.int32)
+    one = {t["name"]: t["shape"] for t in c.encode({"AUDIO": np.zeros(5, np.float32), "SAMPLE_RATE": sr})}
+    assert one == {"AUDIO": [5], "SAMPLE_RATE": [1]}  # sent as it is; the server takes it as one row
+    rows = c.encode({"AUDIO": np.zeros((2, 5), np.float32), "LENGTHS": np.array([5, 3], np.int32), "SAMPLE_RATE": sr})
+    assert [t["shape"] for t in rows] == [[2, 5], [2], [1]]
+    with pytest.raises(AicoreError, match=r"or \[-1\] for one clip without LENGTHS"):
+        c.encode({"AUDIO": np.zeros((2, 5), np.float32), "SAMPLE_RATE": sr})
+    with pytest.raises(AicoreError, match="does not match"):
+        c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "SAMPLE_RATE": sr})
+
+
 def test_oip_error_response_raises(oip_stub):
     c = aicore.OIPClient("http://testserver", "other-model", STUB_SIG, http=oip_stub._http)
     with pytest.raises(aicore.oip.OIPError) as exc:

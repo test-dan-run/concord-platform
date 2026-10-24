@@ -22,8 +22,8 @@ def test_base_variant_passes_its_build_args(docker):
     assert base[base.index("-f") + 1].endswith("custom/_bases/Dockerfile.py-cuda")
     args = [base[i + 1] for i, a in enumerate(base) if a == "--build-arg"]
     assert args == ["TORCH_EXTRA=torchaudio==2.11.0", "TORCH_VERSION=2.11.0"]
-    assert base[base.index("-t") + 1] == "ghcr.io/owner/py-cuda-torch211-base:0.1.1"
-    assert service[service.index("--build-arg") + 1] == "BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.1.1"
+    assert base[base.index("-t") + 1] == "ghcr.io/owner/py-cuda-torch211-base:0.2.0"
+    assert service[service.index("--build-arg") + 1] == "BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.2.0"
     assert service[-1].endswith("custom/pyannote-diarization")
 
 
@@ -86,7 +86,9 @@ def test_services_kept_on_the_old_base_keep_their_build_identity(name):
 
 
 # Batching waves move services to the 0.2.0 bases (aisvc batching); kokoro-tts and voxcpm2 stay on 0.1.1.
-BATCHED = {"wavlm-sv", "redimnet2-sv", "utmos", "dnsmos"}  # wave A
+BATCHED = {"wavlm-sv", "redimnet2-sv", "utmos", "dnsmos",  # wave A
+           "nemotronlabs-re-use", "pyannote-diarization", "nemotron-3-diarization",  # wave C
+           "deepfilternet3", "wpe-dereverb"}  # wave C: the CPU enhancers, to keep the enhancer signature shared
 
 
 def test_every_custom_service_stays_on_base_0_1_1_until_its_wave():
@@ -95,3 +97,16 @@ def test_every_custom_service_stays_on_base_0_1_1_until_its_wave():
     assert {n for n, v in versions.items() if v == "0.2.0"} == BATCHED
     assert {v for n, v in versions.items() if n not in BATCHED} == {"0.1.1"}
     assert versions["kokoro-tts"] == versions["voxcpm2"] == "0.1.1"
+
+
+# Files copied into several service images (each image builds from its own folder), which must stay identical.
+SHARED = {"server/rows.py": ["nemotronlabs-re-use", "deepfilternet3", "wpe-dereverb", "pyannote-diarization",
+                             "nemotron-3-diarization"],
+          "server/turns.py": ["pyannote-diarization", "nemotron-3-diarization"]}
+
+
+@pytest.mark.parametrize("path", sorted(SHARED))
+def test_shared_server_files_are_identical(path):
+    p = load_platform()
+    texts = {name: (p.root / "custom" / name / path).read_text() for name in SHARED[path]}
+    assert len(set(texts.values())) == 1, f"{path} differs between {sorted(texts)}; copy one version to all"

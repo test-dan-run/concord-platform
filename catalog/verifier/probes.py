@@ -6,6 +6,7 @@
 | openai / chat.completions with an audio task | input_audio part + "transcribe" | ASR (text only) if the answer matches the clip |
 | oip-v2 with AUDIO + SAMPLE_RATE in, SEGMENTS out | infer | SEGMENTS -> VAD; + SPEAKERS -> diarisation |
 | oip-v2 with AUDIO + SAMPLE_RATE in, AUDIO out | infer on the clip with babble at 5 dB SNR (a synthetic room response for dereverberation) | speech enhancement; SI-SDR against the clean clip |
+| either of the two above with AUDIO [-1, -1] + LENGTHS (a batch signature) | infer with a batch of one row | as above |
 | openai-inspired / text.itn | spoken-form phrases with return_spans | ITN when each output has the expected digits |
 | anything else | conformance only | verified on the protocol; no audio capability |
 
@@ -97,7 +98,17 @@ def clip() -> tuple[np.ndarray, dict[str, Any], bytes]:
     return audio, truth, raw
 
 
+def audio_form(signature: dict[str, Any] | None) -> str:
+    """How an oip-v2 signature takes audio: "batch" (AUDIO [-1, -1] zero-padded rows + LENGTHS [-1]), else "single"
+    (one clip, AUDIO [-1]). The platform's batch enhancers and diarizers also take the single form, but the probe
+    sends the declared one."""
+    ins = {t["name"]: t for t in (signature or {}).get("inputs", [])}
+    return "batch" if "LENGTHS" in ins and len(ins.get("AUDIO", {}).get("shape") or []) == 2 else "single"
+
+
 def usable_as(meta: dict[str, Any]) -> str | None:
+    """The probe that applies. For oip-v2 it goes by tensor names, so the single-clip and the batch signatures
+    (AUDIO [-1] or AUDIO [-1, -1] + LENGTHS) of an enhancer, VAD or diarizer are both detected."""
     if meta["contract"] == "openai" and meta["api"] == "audio.transcriptions":
         return "asr"
     if meta["contract"] == "openai" and meta["api"] == "chat.completions" and AUDIO_TASKS & set(meta.get("tasks") or []):
@@ -239,16 +250,29 @@ def probe_chat_audio(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> N
                 "segmentation stage")
 
 
-def probe_segmenter(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> None:
+def _infer_clip(http: httpx.Client, meta: dict[str, Any], audio: np.ndarray) -> dict[str, np.ndarray]:
+    """One 16 kHz clip through the service, in the signature's form (a batch signature gets one row)."""
     from aicore.oip import OIPClient
 
+    c = OIPClient(str(http.base_url).rstrip("/"), meta["name"], meta.get("signature"), http=http)
+    inputs = {"AUDIO": audio, "SAMPLE_RATE": np.array([16000], dtype=np.int32)}
+    if audio_form(meta.get("signature")) == "batch":
+        inputs |= {"AUDIO": audio[None, :], "LENGTHS": np.array([len(audio)], dtype=np.int32)}
+    return c.infer(inputs)
+
+
+def _form(meta: dict[str, Any]) -> str:
+    return " (batch signature: AUDIO [-1, -1] + LENGTHS)" if audio_form(meta.get("signature")) == "batch" else ""
+
+
+def probe_segmenter(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> None:
     audio, truth, _ = clip()
     outputs = {t["name"] for t in (meta.get("signature") or {}).get("outputs", [])}
-    rep.add("signature", "pass", "AUDIO + SAMPLE_RATE in, SEGMENTS" + (" + SPEAKERS" if "SPEAKERS" in outputs else "") + " out")
-    c = OIPClient(str(http.base_url).rstrip("/"), meta["name"], meta.get("signature"), http=http)
+    rep.add("signature", "pass", "AUDIO + SAMPLE_RATE in, SEGMENTS" + (" + SPEAKERS" if "SPEAKERS" in outputs else "")
+            + " out" + _form(meta))
     t0 = time.perf_counter()
     try:
-        out = c.infer({"AUDIO": audio, "SAMPLE_RATE": np.array([16000], dtype=np.int32)})
+        out = _infer_clip(http, meta, audio)
     except Exception as exc:  # noqa: BLE001 - any failure is the report's answer
         rep.add("request", "fail", f"infer failed: {_short(str(exc))}")
         return
@@ -261,6 +285,9 @@ def probe_segmenter(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> No
     rep.sample["speakers"] = (speakers or [])[:50]
     if not segs:
         rep.add("segments", "fail", "no segments returned for a clip with speech")
+        return
+    if "ROWS" in out and np.asarray(out["ROWS"]).reshape(-1).tolist() != [0] * len(segs):
+        rep.add("segments", "fail", f"ROWS must give row 0 for each of the {len(segs)} segments of a one-row batch")
         return
     bad = [s for s in segs if s[0] < -0.05 or s[1] > dur + 0.5 or s[1] < s[0]]
     if bad:
@@ -322,16 +349,13 @@ def degraded(kind: str) -> np.ndarray:
 
 
 def probe_enhancer(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> None:
-    from aicore.oip import OIPClient
-
     clean = clip()[0]
     kind = "reverb" if DEREVERB_TASKS & set(meta.get("tasks") or []) else "noise"
     noisy = degraded(kind)
-    rep.add("signature", "pass", "AUDIO + SAMPLE_RATE in, AUDIO out")
-    c = OIPClient(str(http.base_url).rstrip("/"), meta["name"], meta.get("signature"), http=http)
+    rep.add("signature", "pass", "AUDIO + SAMPLE_RATE in, AUDIO out" + _form(meta))
     t0 = time.perf_counter()
     try:
-        out = c.infer({"AUDIO": noisy, "SAMPLE_RATE": np.array([16000], dtype=np.int32)})
+        out = _infer_clip(http, meta, noisy)
     except Exception as exc:  # noqa: BLE001 - any failure is the report's answer
         rep.add("request", "fail", f"infer failed: {_short(str(exc))}")
         return
@@ -341,7 +365,8 @@ def probe_enhancer(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> Non
     if "AUDIO" not in out:
         rep.add("audio", "fail", "no AUDIO output returned")
         return
-    est = np.asarray(out["AUDIO"], dtype=np.float64).reshape(-1)
+    est = np.asarray(out["AUDIO"], dtype=np.float64)
+    est = est[0, : int(np.asarray(out["LENGTHS"]).reshape(-1)[0])] if est.ndim == 2 and "LENGTHS" in out else est.reshape(-1)
     rate = int(np.asarray(out["SAMPLE_RATE"]).reshape(-1)[0]) if "SAMPLE_RATE" in out else None
     diff = len(est) - len(noisy)
     rep.sample["length_diff_samples"] = diff

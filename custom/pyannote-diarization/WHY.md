@@ -12,4 +12,6 @@
 
 **Exit condition:** retire when an OIP engine added to `engines.yaml` runs pyannote pipelines
 (e.g. an MLServer custom runtime) with the same signature, or when `nemotron-3-diarization`
-fully replaces it in practice. The two are interchangeable by signature.
+fully replaces it in practice. The two are interchangeable by signature: a batch as `AUDIO` FP32 `[-1, -1]`
+(zero-padded), `LENGTHS` and `SAMPLE_RATE` in, and `SEGMENTS`, `SPEAKERS` and `ROWS` out. One recording as
+`AUDIO` `[-1]` without `LENGTHS` still works.

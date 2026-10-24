@@ -5,7 +5,9 @@ Checked 2026-10-18 against vLLM v0.31.0, SGLang v0.5.21 and the Triton/MLServer 
 - **No engine can run it.** DeepFilterNet3 is a small recurrent speech-enhancement network (ERB encoder,
   ERB and deep-filter decoders) with a hand-written STFT / ERB / deep-filtering pipeline around it. It is not
   a transformer LM; vLLM and SGLang cannot load it, and speech enhancement has no OpenAI route.
-- **Contract `oip-v2`.** Audio in, audio out: `AUDIO` FP32 `[-1]`, `SAMPLE_RATE` INT32 `[1]` → the same.
+- **Contract `oip-v2`.** Audio in, audio out, with the batch signature that all enhancers share: `AUDIO` FP32
+  `[-1, -1]` (zero-padded), `LENGTHS` INT32 `[-1]`, `SAMPLE_RATE` INT32 `[1]`, and the same three out. One clip
+  as `AUDIO` `[-1]` without `LENGTHS` still works.
 - **Why the `deep-filter` binary?** The `deepfilternet` pip package (0.5.6, the last release) needs PyTorch
   and a torchaudio API removed in torchaudio 2.1. The project's own Rust CLI runs the same exported ONNX model
   with tract on CPU, has no Python dependencies, and is pinned by sha256 like any other weights file.

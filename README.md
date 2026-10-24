@@ -75,13 +75,19 @@ labels which speaker talks when.
 | nemotron-3-diarization | default-diarization | model | custom | oip-v2 / infer | 8403 | CPU |
 
 The two diarization services use the same OIP signature, so apps can switch between them without code
-changes. The signature takes `AUDIO` and `SAMPLE_RATE` as inputs, and it returns `SEGMENTS` and
-`SPEAKERS`, with the speakers listed in the order they first appear.
+changes. The signature takes a batch of recordings as `AUDIO` (zero-padded rows), `LENGTHS` and
+`SAMPLE_RATE`, and it returns `SEGMENTS`, `SPEAKERS` and `ROWS`. `ROWS` gives the recording of each
+segment, and in each recording the speakers are numbered in the order they first appear. A request with
+one recording as `AUDIO` `[-1]` and no `LENGTHS` still works, and it gets `SEGMENTS` and `SPEAKERS` back
+as before.
 
 ### Speech enhancement
 
 Speech enhancement services take a recording and return a copy with less noise or less echo from the
-room. The copy keeps the sample rate and length of the input.
+room. The copy keeps the sample rate and length of the input. All three services use the same OIP
+signature, which takes a batch of recordings as `AUDIO` (zero-padded rows), `LENGTHS` and `SAMPLE_RATE`,
+and returns them in the same form. A request with one recording as `AUDIO` `[-1]` and no `LENGTHS` still
+works, and it gets one `AUDIO` `[-1]` back.
 
 | Service | Alias | Kind | Engine | Contract / API | Port | GPU |
 |---|---|---|---|---|---|---|
