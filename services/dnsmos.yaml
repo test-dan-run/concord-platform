@@ -1,0 +1,29 @@
+name: dnsmos
+kind: model
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for speech quality scoring; input is a batch of float audio arrays"
+port: 8409
+description: "Speech quality, DNSMOS P.835 (OVRL as MOS, plus SIG and BAK) ONNX on CPU; batch-shaped like utmos"
+tasks: [speech-quality-assessment]
+build:
+  context: custom/dnsmos
+  image: "{registry}/dnsmos:0.1.0"
+  base: py-cpu
+weights:
+  path: ${AI_ASSETS}/custom-models/dnsmos/p835-82f1b17
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-18: a 1 MB convolutional ONNX scorer with resampling, windowing and polynomial calibration
+  around it, not a transformer LM, so vLLM v0.31.0 and SGLang v0.5.21 cannot serve it. Retire when an
+  OIP-native engine can host the scoring loop. See custom/dnsmos/WHY.md.
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: MOS, datatype: FP32, shape: [-1]}
+    - {name: SIG, datatype: FP32, shape: [-1]}
+    - {name: BAK, datatype: FP32, shape: [-1]}

@@ -1,0 +1,15 @@
+name: whisper-large-v3-turbo
+kind: model
+engine: vllm
+contract: openai
+api: audio.transcriptions
+# Local copy of openai/whisper-large-v3-turbo @41f01f3 in ${AI_ASSETS}/whisper-large-v3-turbo.
+model: /models/whisper-large-v3-turbo
+port: 8104
+gpu:
+  util: 0.10                       # 3.2 GB: 1.5 GB fp16 weights + ~0.9 GB overhead (same 32-layer encoder as large-v3) + KV
+  # Decoder is 4 layers (large-v3 has 32), so the KV that large-v3 needed (0.38 GiB at 448) shrinks to ~0.05 GiB.
+args:
+  - --max-model-len=448            # Whisper decoder context (max_target_positions)
+description: "Speech-to-text, Whisper large-v3-turbo (multilingual, 4-layer decoder, much faster than large-v3); not trained for translation"
+tasks: [speech-recognition, language-identification, voice-activity-detection]

@@ -1,0 +1,22 @@
+name: faster-whisper-large-v3
+kind: model
+engine: custom
+contract: openai
+api: audio.transcriptions
+port: 8102
+gpu:
+  vram_gb: 5                       # measured 4.1 GB loaded, 4.25 GB peak (float16, RTX 5090)
+description: "Speech-to-text with word timestamps (verbose_json + timestamp_granularities[]=word), Whisper large-v3 on CTranslate2"
+tasks: [speech-recognition, speech-translation, language-identification, voice-activity-detection]
+build:
+  context: custom/faster-whisper-large-v3
+  image: "{registry}/faster-whisper-large-v3:0.1.0"
+  base: py-cpu                     # CUDA 12 libraries come from pip wheels; no CUDA image needed
+weights:
+  path: ${AI_ASSETS}/faster-whisper-large-v3    # existing local copy (Systran/faster-whisper-large-v3 @edaa852)
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-17: the weights are in CTranslate2 format, which vLLM v0.31.0 and SGLang v0.5.21
+  cannot load (the same model in HF format already runs on vLLM as whisper-large-v3). Kept for word-level
+  timestamps, which vLLM's /v1/audio/transcriptions does not return (verbose_json has segments only).
+  Retire when the vLLM whisper service returns timestamp_granularities=word.

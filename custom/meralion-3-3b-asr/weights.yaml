@@ -1,0 +1,64 @@
+# Fetched by `just fetch-weights meralion-3-3b-asr` into ${AI_ASSETS}/custom-models/meralion-3-3b-asr/<version>.
+# MERaLiON/MERaLiON-3-3B-ASR @9f226d7 (Whisper-large-v3 encoder + Gemma-2 decoder, bf16), with its transformers
+# remote code. Not gated. sha256: the LFS files match the Hub ids; the small files were hashed from the download.
+# Checked 2026-10-18.
+version: 9f226d7
+source: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/tree/9f226d738dee62c60a2f43b0ab7b9a2585a132c3
+license: MERaLiON-3 Public Licence (use of outputs in a product needs a clear acknowledgement; Gemma terms apply)
+files:
+  - path: model-00001-of-00002.safetensors
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/model-00001-of-00002.safetensors
+    sha256: ea836de00d15a94685d9b69189d0073c9248aa264790634cda38d2cf9b26baac
+    size: 4971858576
+  - path: model-00002-of-00002.safetensors
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/model-00002-of-00002.safetensors
+    sha256: 0c1472c987cf7360c628c7da8881ff1aad6a7fa00d42de3d07424c0862b7804f
+    size: 1642292496
+  - path: tokenizer.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/tokenizer.json
+    sha256: 0ead607d5168e96c02d261dfac8408c63ff2f52e0ac240ac89d0450b3ec805d8
+    size: 34362877
+  - path: tokenizer.model
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/tokenizer.model
+    sha256: 61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2
+    size: 4241003
+  - path: config.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/config.json
+    sha256: abd1ba75fe5a5a3578ef24e88786ca446ab8a8372484d20b026984674ea5e2e5
+    size: 2897
+  - path: configuration_meralion3.py
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/configuration_meralion3.py
+    sha256: c857fe1d26ca32166a78395d846f78aa604af4fa338fc83d37d9cf03e02ee42f
+    size: 3168
+  - path: generation_config.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/generation_config.json
+    sha256: 7c7d1a76dda474094bbd546be7d52b4cd8ace04d0e00338616ac877887f7dde3
+    size: 227
+  - path: model.safetensors.index.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/model.safetensors.index.json
+    sha256: 5c60659b612b00810bc530680904086a430a0a0ba67c9bfdb49b3404039f63d1
+    size: 71204
+  - path: modeling_meralion3.py
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/modeling_meralion3.py
+    sha256: 9ec21babefabaf32b17d8802032805cf01aa6226ee2a0b492d3524dc4cd43bf9
+    size: 27539
+  - path: preprocessor_config.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/preprocessor_config.json
+    sha256: 8bbb30c7d9c367c7f3b2aa4eeabaa1be1d9b5960511ef654b2280489740ce52d
+    size: 448
+  - path: processing_meralion3.py
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/processing_meralion3.py
+    sha256: 5644fcd8badc62aa2bffa69207d702cec53677488094c2c2d7a4671ed18a06be
+    size: 8934
+  - path: processor_config.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/processor_config.json
+    sha256: ffd3562f267db82a6e7efad78f9c46ce474a072a1e5b8a2eb19612bd25ae1442
+    size: 286
+  - path: special_tokens_map.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/special_tokens_map.json
+    sha256: baec30ea10906f16adb8c18af7a34023002c1746542612b8b41c9f09e1351351
+    size: 636
+  - path: tokenizer_config.json
+    url: https://huggingface.co/MERaLiON/MERaLiON-3-3B-ASR/resolve/9f226d738dee62c60a2f43b0ab7b9a2585a132c3/tokenizer_config.json
+    sha256: 0eed3bd7b5217cf8c9253743a7599bc9a3fc6e4ff896c82efe767665772dd809
+    size: 46915

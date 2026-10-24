@@ -1,0 +1,46 @@
+[project]
+name = "aiplatform"
+version = "0.1.0"
+description = "Personal AI service platform: manifests -> compose, client endpoint map, catalog"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic>=2.14,<3",
+    "pyyaml>=6.0.3",
+    "jinja2>=3.1.6",
+    "httpx>=0.28.1",
+    # The model catalog service (catalog/): API, gateway and UI.
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "cryptography>=46",  # Fernet: hosted endpoints' API keys are stored encrypted (catalog/hosted.py)
+    # Editable local packages: the client apps use, and the shared server package custom images use.
+    "aicore[oip]",
+    "aisvc",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1",
+    "soundfile>=0.14.0",   # exercises mp3/flac encoding in aisvc tests (wav/pcm need nothing)
+    "onnxruntime>=1.31.0", # lets silero-vad tests run the real model when weights are present
+    "soxr>=1.1.0",         # deepfilternet3 / dnsmos resampling in their tests
+    "nara-wpe==0.0.11",    # wpe-dereverb runs for real in its tests (no weights needed)
+    "scipy>=1.18.1",       # imported by nara_wpe without being declared
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+aicore = { path = "clients/aicore", editable = true }
+aisvc = { path = "custom/_bases/common", editable = true }
+
+[tool.pytest.ini_options]
+# `just test` runs these. contracts/conformance is run separately by `just conform`.
+testpaths = ["tests", "custom", "catalog/tests"]
+pythonpath = [".", "contracts", "tests", "catalog/tests"]
+addopts = "--import-mode=importlib"
+markers = ["weights: needs real model weights on disk (skipped otherwise)"]
+filterwarnings = [
+    # conformance checks pass per-request timeouts for live servers; TestClient ignores them
+    "ignore:You should not use the 'timeout' argument with the TestClient",
+]

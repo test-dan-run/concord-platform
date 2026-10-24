@@ -1,0 +1,60 @@
+# Fetched by `just fetch-weights redimnet2-sv` into ${AI_ASSETS}/custom-models/redimnet2-sv/<version>.
+# PalabraAI/redimnet2 (Interspeech 2026, MIT): the B6 large-margin checkpoint trained on VoxBlink2 + VoxCeleb2 +
+# CN-Celeb2 (release v1.0.0; the CN-Celeb data adds Mandarin speakers), plus the model code at commit c5bbe0b,
+# which the server imports from code/. sha256 computed 2026-10-18.
+version: b6-vb2-vox2-cnc2-lm-c5bbe0b
+source: https://github.com/PalabraAI/redimnet2/tree/c5bbe0b76e37df698c403f8844e41304ceab6307
+license: MIT
+files:
+  - path: b6-vb2+vox2+cnc2_v0-lm.pt
+    url: https://github.com/PalabraAI/redimnet2/releases/download/v1.0.0/b6-vb2%2Bvox2%2Bcnc2_v0-lm.pt
+    sha256: 287365f6f485b19e65e5176554f8f7123bfa8d85185f3d2c040eab51acec9868
+    size: 51152991
+  - path: code/LICENSE
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/LICENSE
+    sha256: 3d5a4bf9936a7d09dd770588c0d7cb116fc16916a0310d71fb1fff5d64562101
+    size: 1067
+  - path: code/redimnet2/__init__.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/__init__.py
+    sha256: a1035c35f9707dfc1b943252b2627e367c92eb2ace06bbdb1a0e39000494753b
+    size: 1710
+  - path: code/redimnet2/redimnet2.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/redimnet2.py
+    sha256: 3b6bb2b9e8a5766d1286ea18b76f94cfacdd6e895cf4b996efbaf5c5f146dc5b
+    size: 18673
+  - path: code/redimnet2/layers/attention.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/attention.py
+    sha256: 979627de7cb100102ab02b40d97c5d4a6c26db3f386220c873bb887937de7e21
+    size: 15397
+  - path: code/redimnet2/layers/blocks.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/blocks.py
+    sha256: 27d7b3dd4f184b28a33232d9877e33492ba2b3ab9ab5140b5157310dfb74f872
+    size: 12825
+  - path: code/redimnet2/layers/convnext.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/convnext.py
+    sha256: 0d82c2c448e5dcaed5311462b5a6f694126b56ed6d8f7dfa99bcf73469a7445d
+    size: 4552
+  - path: code/redimnet2/layers/features.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/features.py
+    sha256: 5ef8dfb33c3330bddb3c65f693bfe0df597056a287ced99450550e4f5ba34979
+    size: 5503
+  - path: code/redimnet2/layers/features_tf.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/features_tf.py
+    sha256: cef93647e5a4241c76dd00328200dc2fa5bf428b168f75d23284697a27983498
+    size: 17553
+  - path: code/redimnet2/layers/layernorm.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/layernorm.py
+    sha256: 23900399027f6cae34b260e5778e076e0942ef886204b401221fe7c0c21bcabc
+    size: 2833
+  - path: code/redimnet2/layers/poolings.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/poolings.py
+    sha256: f03849e5944e9fa6a7392b60cf3722e3e537a3e5cfd2988bd992c92ffc39a6a6
+    size: 11893
+  - path: code/redimnet2/layers/redim_structural.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/redim_structural.py
+    sha256: 93bae419bfdf11868c9e52dfb95578762b9c0a81e27a32ce930adcaefe457738
+    size: 3306
+  - path: code/redimnet2/layers/resblocks.py
+    url: https://raw.githubusercontent.com/PalabraAI/redimnet2/c5bbe0b76e37df698c403f8844e41304ceab6307/redimnet2/layers/resblocks.py
+    sha256: f79fbc2c7a6d88e9aa5efc4f5764ad137eafe1f5481b33ff7ed8811ee6a80778
+    size: 3965

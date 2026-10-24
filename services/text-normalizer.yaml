@@ -1,0 +1,14 @@
+name: text-normalizer
+kind: utility
+alias: default-normalizer
+engine: custom
+contract: openai-inspired
+api: text.transform
+contract_reason: "Text in, text out, but no OpenAI route covers normalisation/punctuation"
+port: 8501
+description: "Rule-based text normaliser: NFKC, whitespace, sentence capitalisation, terminal punctuation"
+tasks: [text-normalization]
+build:
+  context: custom/text-normalizer
+  image: "{registry}/text-normalizer:0.1.0"
+  base: py-cpu

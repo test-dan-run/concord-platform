@@ -1,0 +1,10 @@
+# Fetched by `just fetch-weights dnsmos` into ${AI_ASSETS}/custom-models/dnsmos/<version>.
+# Pinned to commit 82f1b17 of microsoft/DNS-Challenge (DNSMOS P.835 model); sha256 computed 2026-10-18.
+version: p835-82f1b17
+source: https://github.com/microsoft/DNS-Challenge/tree/82f1b17e7776a43eee395d0f45bae8abb700ad00/DNSMOS/DNSMOS
+license: CC-BY-4.0
+files:
+  - path: sig_bak_ovr.onnx
+    url: https://raw.githubusercontent.com/microsoft/DNS-Challenge/82f1b17e7776a43eee395d0f45bae8abb700ad00/DNSMOS/DNSMOS/sig_bak_ovr.onnx
+    sha256: 269fbebdb513aa23cddfbb593542ecc540284a91849ac50516870e1ac78f6edd
+    size: 1157965

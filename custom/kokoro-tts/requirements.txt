@@ -1,0 +1,10 @@
+# On top of py-cuda-base (torch 2.14.1+cu130, fastapi, uvicorn, numpy, aisvc).
+# Pinned 2026-10-17. kokoro needs torch, which the base already provides (no version constraint).
+kokoro==0.9.4
+misaki[en]==0.9.4
+transformers==4.57.6          # kokoro 0.9.4 predates transformers 5
+huggingface-hub==0.36.2
+spacy==3.8.16
+# misaki would otherwise download this at runtime with `spacy download`.
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+soundfile==0.14.0             # mp3 / flac / opus response formats

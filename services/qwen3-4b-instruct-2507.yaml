@@ -1,0 +1,15 @@
+name: qwen3-4b-instruct-2507
+kind: model
+alias: fast-chat
+engine: vllm
+contract: openai
+api: chat.completions
+# Local copy of Qwen/Qwen3-4B-Instruct-2507-FP8 @8591804 in ${AI_ASSETS}/qwen3-4b-instruct-2507-fp8.
+model: /models/qwen3-4b-instruct-2507-fp8
+port: 8203
+gpu:
+  util: 0.25                       # 8.0 GB: 4.9 GB FP8 checkpoint leaves ~2.5 GB KV (~17k tokens at 144 KB/token)
+args:
+  - --max-model-len=16384          # native 256k; capped to fit the KV cache in the budget
+description: "Fast chat, Qwen3 4B Instruct 2507 FP8 (non-thinking); low-latency alternative to qwen3-8b"
+tasks: [chat, instruction-following, reasoning, coding, math, tool-calling]

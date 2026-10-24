@@ -1,0 +1,35 @@
+name: voxcpm2
+kind: model
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: >-
+  Cloning needs a reference audio array plus its transcript per request; OpenAI audio.speech takes only a voice
+  name, and pre-registering the 175 NSC voices was rejected because references are swapped per meeting
+port: 8410                       # plan said 8105; oip-v2 services live in the 84xx band (8404-8409 taken)
+gpu:
+  vram_gb: 8                       # measured 2026-10-19 on the 5090 with torch.compile: 6.6 GB loaded, 7.4 GB peak (device total, CUDA context incl.)
+description: "Zero-shot voice cloning TTS, VoxCPM2 2B (48 kHz out); reference audio + transcript per request, seeded"
+tasks: [text-to-speech, voice-cloning]
+build:
+  context: custom/voxcpm2
+  image: "{registry}/voxcpm2:0.1.0"
+  base: py-cuda-torch211           # voxcpm imports torchaudio, whose last release pairs with torch 2.11
+weights:
+  path: ${AI_ASSETS}/custom-models/voxcpm2/32279ef
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-18: VoxCPM2 is a tokenizer-free diffusion-autoregressive TTS model (MiniCPM-4 backbone, local
+  DiT, AudioVAE V2); vLLM v0.31.0 and SGLang v0.5.21 have no implementation, and the authors' Nano-vLLM port is a
+  separate fork. Retire when vLLM-Omni or the pinned vLLM serves it with per-request reference audio. See
+  custom/voxcpm2/WHY.md.
+signature:
+  inputs:
+    - {name: TEXT, datatype: BYTES, shape: [1], example: ["Hello there, this is a test."]}
+    - {name: REF_AUDIO, datatype: FP32, shape: [-1]}
+    - {name: REF_SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+    - {name: REF_TEXT, datatype: BYTES, shape: [1], example: ["a short test clip"]}
+    - {name: SEED, datatype: INT64, shape: [1], example: [1]}
+  outputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1]}

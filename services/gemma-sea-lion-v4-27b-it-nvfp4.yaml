@@ -1,0 +1,18 @@
+name: gemma-sea-lion-v4-27b-it-nvfp4
+kind: model
+engine: vllm
+contract: openai
+api: chat.completions
+# Local copy of aisingapore/Gemma-SEA-LION-v4-27B-IT-NVFP4 @391631d in ${AI_ASSETS}/gemma-sea-lion-v4-27b-it-nvfp4.
+# Gemma3ForConditionalGeneration, registered in vLLM v0.31.0. NVFP4 W4A4 by AI Singapore (llm-compressor, vision tower kept bf16).
+model: /models/gemma-sea-lion-v4-27b-it-nvfp4
+port: 8207
+gpu:
+  util: 0.80                       # 25.6 GB: measured 16.6 GiB weights loaded (vision skipped) + KV at 32k (11 global layers; the other 51 cache a 1k window)
+  # Verified 2026-10-18 on the 5090: W4A4 NVFP4 runs with FlashInferCutlassNvFp4LinearKernel.
+args:
+  - --max-model-len=32768          # native 128k; a full script plus rubric is ~20k tokens
+  - --language-model-only          # text only: the vision tower is not loaded
+  - '--structured-outputs-config={"backend": "xgrammar", "disable_any_whitespace": true}'   # JSON without free whitespace: guided decoding otherwise lets a model pad until max_tokens
+description: "Synthetics primary script judge, Gemma-SEA-LION v4 27B NVFP4 (Gemma Terms of Use); does not fit beside apertus-sea-lion-v4-8b-it"
+tasks: [chat, instruction-following, reasoning, multilingual, southeast-asian-languages, translation]

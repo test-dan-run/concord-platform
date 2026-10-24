@@ -1,0 +1,23 @@
+name: kokoro-tts
+kind: model
+alias: default-tts
+engine: custom
+contract: openai
+api: audio.speech
+port: 8103
+gpu:
+  vram_gb: 3
+description: "Text-to-speech, Kokoro 82M, 24 kHz; OpenAI voice names map to Kokoro voices"
+tasks: [text-to-speech]
+build:
+  context: custom/kokoro-tts
+  image: "{registry}/kokoro-tts:0.1.0"
+  base: py-cuda
+weights:
+  path: ${AI_ASSETS}/custom-models/kokoro-tts/v1.0
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-17: vLLM v0.31.0 and SGLang v0.5.21 have no Kokoro (StyleTTS2 + iSTFTNet)
+  model implementation and no /v1/audio/speech for it; vLLM-Omni's TTS list does not include it
+  either. Retire when vLLM-Omni or the pinned vLLM/SGLang serves hexgrad/Kokoro-82M on
+  /v1/audio/speech.

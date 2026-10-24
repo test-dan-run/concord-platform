@@ -1,0 +1,30 @@
+name: nemotronlabs-re-use          # nvidia/NVIDIA-NemotronLabs-RE-USE, without the vendor prefix
+kind: model
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for speech enhancement; input and output are float audio arrays"
+port: 8411
+gpu:
+  vram_gb: 4                       # measured 2026-10-24: peak 2.9 GiB allocated at every rate (8-48 kHz, 0.01-60 s);
+                                   # one pass is capped at 240k samples, longer audio goes in 5 s chunks
+description: "Universal speech enhancement, NVIDIA NemotronLabs RE-USE (9.6M, bidirectional Mamba): noise, reverb, clipping, band limits, codec artifacts; 8-48 kHz, output keeps the input rate and length"
+tasks: [speech-enhancement, noise-suppression, dereverberation, speech-restoration]
+build:
+  context: custom/nemotronlabs-re-use
+  image: "{registry}/nemotronlabs-re-use:0.1.0"
+  base: py-cuda                    # torch 2.14; the Dockerfile compiles mamba-ssm's kernel against it
+weights:
+  path: ${AI_ASSETS}/custom-models/nemotronlabs-re-use/31f82f2
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-24: a convolutional encoder/decoder with 30 bidirectional Mamba (SSM) blocks over STFT
+  magnitude and phase, not a transformer LM; vLLM v0.31.0 and SGLang v0.5.21 cannot serve it, and it needs
+  mamba-ssm's CUDA kernels. Retire when an OIP-native engine can host the model (e.g. a TensorRT export).
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1]}

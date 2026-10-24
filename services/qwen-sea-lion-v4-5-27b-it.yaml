@@ -1,0 +1,22 @@
+name: qwen-sea-lion-v4-5-27b-it     # "v4.5" -> "v4-5"; NVFP4A16 quantised locally (no official 4-bit variant)
+kind: model
+engine: vllm
+contract: openai
+api: chat.completions
+# Local NVFP4A16 quantisation of aisingapore/Qwen-SEA-LION-v4.5-27B-IT @544e416 in
+# ${AI_ASSETS}/qwen-sea-lion-v4.5-27b-it-nvfp4 (Qwen3_5ForConditionalGeneration, registered in vLLM
+# v0.31.0), made by experiments/quantize-qwen-sea-lion-nvfp4. FP4 weights (group 16), bf16 activations.
+# Hybrid attention: only 16 of 64 layers keep a KV cache (64 KB/token).
+model: /models/qwen-sea-lion-v4.5-27b-it-nvfp4
+port: 8206
+gpu:
+  util: 0.75                       # 24.0 GB: measured 17.9 GiB weights loaded (vision skipped), KV cache 42k tokens; ~22.9 GB on the GPU
+  # Verified 2026-10-18 on the 5090: weight-only FP4 runs through the Marlin kernel; ~22 tok/s decode.
+args:
+  - --max-model-len=32768          # native 262k; script chunks need ~10k in + up to 8k out
+  - --language-model-only          # text only: the vision tower is not loaded
+  - --reasoning-parser=qwen3       # thinks by default; reasoning goes to message.reasoning_content
+  - --max-num-seqs=16              # Synthetics runs sequentially; bounds the GDN state and CUDA-graph sizes profiled at start
+  - '--structured-outputs-config={"backend": "xgrammar", "disable_any_whitespace": true}'   # JSON without free whitespace: guided decoding otherwise lets a model pad until max_tokens
+description: "Synthetics script generator, Qwen-SEA-LION v4.5 27B NVFP4A16 (thinks by default; pass enable_thinking=false via chat_template_kwargs); runs alone"
+tasks: [chat, instruction-following, reasoning, multilingual, southeast-asian-languages, translation]

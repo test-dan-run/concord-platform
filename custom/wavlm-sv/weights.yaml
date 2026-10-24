@@ -1,0 +1,26 @@
+# Fetched by `just fetch-weights wavlm-sv` into ${AI_ASSETS}/custom-models/wavlm-sv/<version>.
+# prj-beatrice/unispeech-wavlm-large-ecapa-tdnn-torch-native @13ad4fc: UniSpeech's WavLM-Large + ECAPA-TDNN speaker
+# verification model (the SIM model of Seed-TTS-eval) ported to plain torch, with its model code as transformers
+# remote code. Chosen over microsoft/wavlm-base-plus-sv, whose cosines overlapped between speakers on NSC clips
+# (2026-10-18, 6 speakers x 3 clips: base-plus same-speaker min 0.90 vs different max 0.95; this model 0.65 vs 0.60,
+# means 0.79 vs 0.21). sha256: the LFS file matches the Hub id; the small files were hashed from the download.
+version: large-ecapa-13ad4fc
+source: https://huggingface.co/prj-beatrice/unispeech-wavlm-large-ecapa-tdnn-torch-native/tree/13ad4fcc740cbd47992bcc2aaa59186d4072b7c9
+license: CC-BY-SA-3.0
+files:
+  - path: config.json
+    url: https://huggingface.co/prj-beatrice/unispeech-wavlm-large-ecapa-tdnn-torch-native/resolve/13ad4fcc740cbd47992bcc2aaa59186d4072b7c9/config.json
+    sha256: 271eed76573c676b159162d525293abff18663f9ce688594464384e815ae94b6
+    size: 219
+  - path: modeling_wavlm_speaker_verification.py
+    url: https://huggingface.co/prj-beatrice/unispeech-wavlm-large-ecapa-tdnn-torch-native/resolve/13ad4fcc740cbd47992bcc2aaa59186d4072b7c9/modeling_wavlm_speaker_verification.py
+    sha256: 3fdf0d2aee22099c18e04c1aa53784372eb5083eb373e6eca5e7f7047d4bd7d1
+    size: 13899
+  - path: model.safetensors
+    url: https://huggingface.co/prj-beatrice/unispeech-wavlm-large-ecapa-tdnn-torch-native/resolve/13ad4fcc740cbd47992bcc2aaa59186d4072b7c9/model.safetensors
+    sha256: 559b87088828b5f1bc5762d9746c08ef00ba4e5141b6897bebce1b77a58ae2b7
+    size: 1295603692
+  - path: LICENSE
+    url: https://huggingface.co/prj-beatrice/unispeech-wavlm-large-ecapa-tdnn-torch-native/resolve/13ad4fcc740cbd47992bcc2aaa59186d4072b7c9/LICENSE
+    sha256: 45d777e01ad784684d542e1d1681c1cf9878b2c861ed8ac7fdc0bd324b8dcef9
+    size: 1370

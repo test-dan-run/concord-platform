@@ -1,0 +1,14 @@
+# Fetched by `just fetch-weights deepfilternet3` into ${AI_ASSETS}/custom-models/deepfilternet3/<version>.
+# Pinned to the v0.5.6 release of the official repo; sha256 computed 2026-10-18.
+version: v0.5.6
+source: https://github.com/Rikorose/DeepFilterNet/tree/v0.5.6
+license: MIT OR Apache-2.0
+files:
+  - path: deep-filter
+    url: https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-x86_64-unknown-linux-musl
+    sha256: 70775e251eee44c0f2451a1e833326cf8bcbbe304d3e7cd12851e6fce72ef7da
+    size: 36417296
+  - path: DeepFilterNet3_onnx.tar.gz
+    url: https://raw.githubusercontent.com/Rikorose/DeepFilterNet/v0.5.6/models/DeepFilterNet3_onnx.tar.gz
+    sha256: c94d91f70911001c946e0fabb4aa9adc37045f45a03b56008cb0c8244cb63616
+    size: 7983136

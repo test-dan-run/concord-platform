@@ -1,0 +1,17 @@
+# Registry of API types per contract. tools/schema.py validates manifest `api` against this file.
+# Adding an openai-inspired API type requires a spec section in contracts/README.md and a
+# conformance suite in contracts/conformance/ first. Its input must be text only.
+
+openai:
+  chat.completions: {route: /v1/chat/completions}
+  completions: {route: /v1/completions}
+  embeddings: {route: /v1/embeddings}
+  audio.transcriptions: {route: /v1/audio/transcriptions}
+  audio.speech: {route: /v1/audio/speech}
+
+oip-v2:
+  infer: {route: "/v2/models/{name}/infer"}
+
+openai-inspired:
+  text.transform: {route: /v1/text/transform, input: text}
+  text.itn: {route: /v1/text/itn, input: text}

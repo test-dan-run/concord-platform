@@ -1,0 +1,11 @@
+# On top of py-cuda-torch211-base (CUDA 13.0, torch 2.11.0 + torchaudio 2.11.0, fastapi, uvicorn, numpy, aisvc).
+# voxcpm 2.0.3 is installed with --no-deps (Dockerfile): its declared deps pull gradio, funasr, modelscope and
+# datasets for the demo, training and denoiser, none of which inference imports. These are the ones it does.
+# Pinned 2026-10-18.
+transformers==4.57.6
+huggingface-hub==0.36.0
+safetensors==0.8.0
+einops==0.8.2
+tqdm==4.70.1
+librosa==0.11.0
+soundfile==0.13.1

@@ -1,0 +1,9 @@
+# Build context of catalog/Dockerfile (the platform root). Custom services build from custom/<name>/.
+.venv
+**/__pycache__
+**/.pytest_cache
+catalog/ui/node_modules
+catalog/ui/dist
+run
+dist
+.env

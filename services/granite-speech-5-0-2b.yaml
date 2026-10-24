@@ -1,0 +1,23 @@
+name: granite-speech-5-0-2b        # granite-speech-5.0-2b ("." -> "-")
+kind: model
+engine: vllm
+contract: openai
+api: audio.transcriptions
+# Local copy of ibm-granite/granite-speech-5.0-2b @f8478b4 in ${AI_ASSETS}/granite-speech-5.0-2b, without
+# out_llm.safetensors: the repo has no weight index, so vLLM would load that file (a BPE CTC head used only for
+# IBM's speculative decoding) and fail on its unknown names. See SOURCE.txt.
+# GraniteSpeechForConditionalGeneration (SupportsTranscription) is registered in vLLM v0.31.0 (checked in the
+# image's ModelRegistry, 2026-10-23); the weight names match granite-speech-4.1-2b, and the processor loads offline.
+# Verified by the catalog on 2026-10-22: 3 conformance checks passed, WER 2.7% on the probe clip, RTF 0.04.
+model: /models/granite-speech-5.0-2b
+port: 8105
+gpu:
+  util: 0.24                       # 7.7 GB: 4.6 GB bf16 weights + ~2.5 GB encoder profiling/non-torch + ~0.6 GB KV (~8k tokens at 80 KB/token)
+  # measured 2026-10-22: 7.64 GiB budget = 4.49 GiB weights + non-torch, 1.31 GiB peak activations, 0.04 GiB CUDA
+  # graphs, KV 1.84 GiB = 24,112 tokens (5.9 requests of 4,096).
+args:
+  - --max-model-len=4096           # native 16k (YaRN); audio is 10 tokens/s, so a 2 min clip (card's limit) is ~1.2k tokens plus transcript
+  - --max-num-seqs=4               # requests are sequential; keeps the profiling batch small
+  - '--limit-mm-per-prompt={"audio": 1}'   # one clip per request; bounds encoder memory at profiling
+description: "Speech-to-text and speech translation, IBM Granite Speech 5.0 2B (en, fr, de, es, pt, ja); vLLM's transcription prompt gives raw transcripts, so punctuation, keyword biasing and language hints need chat.completions prompts from the model card"
+tasks: [speech-recognition, speech-translation, keyword-biasing]

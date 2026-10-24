@@ -1,0 +1,19 @@
+name: qwen3-asr-1-7b                # Qwen3-ASR-1.7B ("." -> "-")
+kind: model
+engine: vllm
+contract: openai
+api: audio.transcriptions
+# Local copy of Qwen/Qwen3-ASR-1.7B @7278e1e in ${AI_ASSETS}/qwen3-asr-1.7b.
+# Qwen3ASRForConditionalGeneration is registered in vLLM v0.31.0 (checked in the image's ModelRegistry, 2026-10-18).
+model: /models/qwen3-asr-1.7b
+port: 8106
+gpu:
+  util: 0.22                       # 7.0 GB: 4.4 GB bf16 weights + ~1.2 GB audio-encoder profiling + ~1.4 GB KV (~12k tokens at 112 KB/token)
+  # measured 2026-10-18: 6.8 GB on the device; 4.16 GiB weights + non-torch, 0.89 GiB activations, KV 1.96 GiB =
+  # 18,304 tokens (4.47 requests of 4,096). The plan's 0.12 is below the weights alone.
+args:
+  - --max-model-len=4096           # native 64k; one utterance (<= 60 s of audio) plus its transcript fits easily
+  - --max-num-seqs=4               # requests are sequential; keeps the profiling batch small
+  - '--limit-mm-per-prompt={"audio": 1}'   # one clip per request; bounds encoder memory at profiling
+description: "Speech-to-text, Qwen3-ASR 1.7B (52 languages and dialects, accented English, language ID); primary ASR for Synthetics voice checks"
+tasks: [speech-recognition, language-identification]

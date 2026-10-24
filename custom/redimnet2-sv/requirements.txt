@@ -1,0 +1,4 @@
+# On top of py-cuda-torch211-base (CUDA 13.0, torch 2.11.0 + torchaudio 2.11.0, fastapi, uvicorn, numpy, aisvc).
+# Pinned 2026-10-18.
+scipy==1.18.1
+soxr==1.1.0

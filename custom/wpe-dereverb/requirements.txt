@@ -1,0 +1,5 @@
+# On top of py-cpu-base (fastapi, uvicorn, numpy, aisvc). Pinned 2026-10-18.
+# nara_wpe imports scipy (STFT helpers) without declaring it.
+nara_wpe==0.0.11
+scipy==1.18.1
+bottleneck==1.6.0

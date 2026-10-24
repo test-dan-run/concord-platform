@@ -1,0 +1,16 @@
+name: bge-m3
+kind: model
+alias: default-embed
+engine: vllm
+contract: openai
+api: embeddings
+# Local copy of BAAI/bge-m3 @5617a9f in ${AI_ASSETS}/bge-m3 (see SOURCE.txt there).
+model: /models/bge-m3
+port: 8301
+gpu:
+  util: 0.08                       # 2.6 GB: fp32 checkpoint is downcast to fp16 by vLLM (~1.1 GB)
+args:
+  - --runner=pooling               # --task embed no longer exists in v0.31; --runner/--convert replace it
+  - --max-model-len=8192
+description: "Dense multilingual embeddings, 1024-d, 8k context"
+tasks: [dense-retrieval, sparse-retrieval, multi-vector-retrieval]

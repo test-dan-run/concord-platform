@@ -1,0 +1,54 @@
+# The model catalog service. Use `just catalog-up` / `just catalog-down`, which set the variables below.
+# Its own Compose project, so `just down` (the model services' project) never stops it.
+name: aiplatform-catalog
+
+services:
+  catalog:
+    build:
+      context: ..
+      dockerfile: catalog/Dockerfile
+      args:
+        PLATFORM_DIR: ${PLATFORM_DIR:?run through just catalog-up}
+    image: aiplatform-catalog:0.1.0
+    container_name: catalog
+    restart: unless-stopped
+    user: "${CATALOG_UID:-1000}:${CATALOG_GID:-1000}"
+    group_add: ["${DOCKER_GID:?run through just catalog-up}"]
+    ports: ["127.0.0.1:8700:8700"]
+    networks: [ai-net]
+    environment:
+      AI_ASSETS: ${AI_ASSETS:?set AI_ASSETS in platform/.env}
+      CATALOG_PUBLIC_URL: http://127.0.0.1:8700
+      CATALOG_MASTER_KEY_FILE: /run/secrets/catalog_master_key
+      CATALOG_DOCKER_AUTH: /run/docker-auth/config.json
+    secrets: [catalog_master_key]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PLATFORM_DIR}:${PLATFORM_DIR}
+      - ${AI_ASSETS}:${AI_ASSETS}:ro
+      # Export's registry push: the host's Docker login, read-only (copied to a temporary DOCKER_CONFIG per push)
+      - ${CATALOG_DOCKER_AUTH_HOST:-/dev/null}:/run/docker-auth/config.json:ro
+    # nvidia-smi only (utility, no compute): the scheduler measures free GPU memory before each start
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - {driver: nvidia, count: all, capabilities: [utility]}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8700/api/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+# The master key that encrypts hosted endpoints' API keys. It lives outside PLATFORM_DIR
+# (~/.config/aiplatform/catalog.key, mode 0600, created by `just catalog-up`), so platform backups
+# and export bundles never contain it.
+secrets:
+  catalog_master_key:
+    file: ${CATALOG_MASTER_KEY_HOST:-/dev/null}
+
+networks:
+  ai-net:
+    name: ai-net
+    external: true

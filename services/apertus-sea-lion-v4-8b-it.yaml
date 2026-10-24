@@ -1,0 +1,16 @@
+name: apertus-sea-lion-v4-8b-it
+kind: model
+engine: vllm
+contract: openai
+api: chat.completions
+# Local copy of aisingapore/Apertus-SEA-LION-v4-8B-IT @3cb0202 in ${AI_ASSETS}/apertus-sea-lion-v4-8b-it.
+# ApertusForCausalLM, registered in vLLM v0.31.0. bf16: it runs in its own phase (beside the 27B judge it would not fit even at FP8).
+model: /models/apertus-sea-lion-v4-8b-it
+port: 8208
+gpu:
+  util: 0.68                       # 21.8 GB: measured 15.0 GiB weights loaded + 4.0 GiB KV (32k tokens at 128 KB/token); 0.65 left 3.98 GiB KV, just short
+args:
+  - --max-model-len=32768          # native 64k
+  - '--structured-outputs-config={"backend": "xgrammar", "disable_any_whitespace": true}'   # JSON without free whitespace: guided decoding otherwise lets a model pad until max_tokens
+description: "Synthetics tie-breaker script judge, Apertus-SEA-LION v4 8B bf16 (deliberation off unless enable_thinking=true)"
+tasks: [chat, instruction-following, reasoning, multilingual, southeast-asian-languages, translation, tool-calling]

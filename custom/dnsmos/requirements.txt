@@ -1,0 +1,3 @@
+# On top of py-cpu-base (fastapi, uvicorn, numpy, aisvc). Pinned 2026-10-18.
+onnxruntime==1.31.0
+soxr==1.1.0

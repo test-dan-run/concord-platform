@@ -1,0 +1,4 @@
+# On top of py-cpu-base (fastapi, uvicorn, numpy, aisvc). Pinned 2026-10-18. No deepfilternet pip package:
+# it needs torch + an old torchaudio; the official Rust `deep-filter` binary (tract, CPU) is mounted instead.
+soundfile==0.14.0
+soxr==1.1.0

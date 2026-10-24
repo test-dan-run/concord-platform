@@ -1,0 +1,14 @@
+# Fetched by `just fetch-weights nemotronlabs-re-use` into ${AI_ASSETS}/custom-models/nemotronlabs-re-use/<version>.
+# Pinned to revision 31f82f2 of the official repo; sha256 from the Hub (LFS) and of the downloaded config, 2026-10-24.
+version: 31f82f2
+source: https://huggingface.co/nvidia/NVIDIA-NemotronLabs-RE-USE/tree/31f82f2efad1095034492f236e8dac9239ba713b
+license: OpenMDW-1.1
+files:
+  - path: model.safetensors
+    url: https://huggingface.co/nvidia/NVIDIA-NemotronLabs-RE-USE/resolve/31f82f2efad1095034492f236e8dac9239ba713b/model.safetensors
+    sha256: 06badaf4029b297f97f7fe48d62990b48d5482608210df577354e0d4e0ed70e1
+    size: 38592940
+  - path: config.json
+    url: https://huggingface.co/nvidia/NVIDIA-NemotronLabs-RE-USE/resolve/31f82f2efad1095034492f236e8dac9239ba713b/config.json
+    sha256: e69986483774f01893d2727503addc49ef201d19e6e1a266b8d4e971e28c478d
+    size: 830

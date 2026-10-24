@@ -1,0 +1,4 @@
+# On top of py-cuda-torch211-base (CUDA 13.0, torch 2.11.0 + torchaudio 2.11.0, fastapi, uvicorn, numpy, aisvc).
+# Install with constraints.txt (exact versions from the tested venv).
+pyannote.audio==4.0.7
+pyyaml

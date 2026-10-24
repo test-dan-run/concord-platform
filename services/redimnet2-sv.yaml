@@ -1,0 +1,29 @@
+name: redimnet2-sv
+kind: model
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for speaker embeddings from audio; input is a batch of float audio arrays"
+port: 8405
+gpu:
+  vram_gb: 2                       # measured 2026-10-19: 0.75 GB loaded, ~2.6 GB device peak on a 20 s clip (input cut at 20 s; 60 s ran out of 2 GB)
+description: "Speaker embeddings, ReDimNet2-B6 (vb2+vox2+cnc2, LM fine-tuned; 192-d, L2-normalised) for speaker verification; same signature as wavlm-sv"
+tasks: [speaker-verification, speaker-embedding]
+build:
+  context: custom/redimnet2-sv
+  image: "{registry}/redimnet2-sv:0.1.0"
+  base: py-cuda-torch211           # torch 2.11 + torchaudio; one base for the phase C services
+weights:
+  path: ${AI_ASSETS}/custom-models/redimnet2-sv/b6-vb2-vox2-cnc2-lm-c5bbe0b
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-18: a convolutional speaker encoder over log-mel features, not a transformer LM, so vLLM v0.31.0
+  and SGLang v0.5.21 cannot serve it; the authors ship it only as torch.hub code. Retire when an OIP-native engine
+  can host it with its feature front end, keeping this signature. See custom/redimnet2-sv/WHY.md.
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: EMBEDDINGS, datatype: FP32, shape: [-1, -1]}

@@ -1,0 +1,29 @@
+{
+ "file": "check_clip.wav",
+ "duration": 10.56,
+ "speakers": [
+  "agent",
+  "caller"
+ ],
+ "transcript": "Thank you for calling the help desk. How can I help you today? Hi, my parcel was meant to arrive yesterday but it never came. I am sorry about that. Let me check the tracking for you.",
+ "turns": [
+  {
+   "speaker": "agent",
+   "start": 0.4,
+   "end": 3.4,
+   "text": "Thank you for calling the help desk. How can I help you today?"
+  },
+  {
+   "speaker": "caller",
+   "start": 2.9,
+   "end": 6.81,
+   "text": "Hi, my parcel was meant to arrive yesterday but it never came."
+  },
+  {
+   "speaker": "agent",
+   "start": 7.11,
+   "end": 9.96,
+   "text": "I am sorry about that. Let me check the tracking for you."
+  }
+ ]
+}

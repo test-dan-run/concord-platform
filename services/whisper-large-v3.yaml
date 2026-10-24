@@ -1,0 +1,18 @@
+name: whisper-large-v3
+kind: model
+alias: default-asr
+engine: vllm
+contract: openai
+api: audio.transcriptions
+# Local copy of openai/whisper-large-v3 in ${AI_ASSETS}/whisper-large-v3 (mounted read-only at /models).
+# On a machine without it, download it there with `hf download openai/whisper-large-v3 --local-dir`.
+model: /models/whisper-large-v3
+port: 8101
+gpu:
+  util: 0.15                       # 4.8 GB: 3.1 GB fp16 weights + encoder-decoder KV cache
+  # Raised from 0.12 on 2026-10-17: vLLM v0.31.0 refused to start at 0.12 ("0.38 GiB KV cache is
+  # needed ... larger than the available KV cache memory (0.12 GiB)") for max_model_len 448.
+args:
+  - --max-model-len=448            # Whisper decoder context (max_target_positions)
+description: "Speech-to-text, Whisper large-v3 (multilingual)"
+tasks: [speech-recognition, speech-translation, language-identification, voice-activity-detection]

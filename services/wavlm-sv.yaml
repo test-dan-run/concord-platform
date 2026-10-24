@@ -1,0 +1,29 @@
+name: wavlm-sv
+kind: model
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for speaker embeddings from audio; input is a batch of float audio arrays"
+port: 8404
+gpu:
+  vram_gb: 3                       # measured 2026-10-19: 1.9 GB loaded, ~2.5 GB peak on a 20 s clip (input is cut at 20 s; 60 s ran out of 3 GB)
+description: "Speaker embeddings, WavLM-Large + ECAPA-TDNN (UniSpeech SV, the Seed-TTS-eval SIM model; 256-d, L2-normalised); same signature as redimnet2-sv"
+tasks: [speaker-verification, speaker-embedding]
+build:
+  context: custom/wavlm-sv
+  image: "{registry}/wavlm-sv:0.1.0"
+  base: py-cuda-torch211           # torch 2.11 + torchaudio; one base for the phase C services
+weights:
+  path: ${AI_ASSETS}/custom-models/wavlm-sv/large-ecapa-13ad4fc
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-18: a WavLM-Large speech encoder with an ECAPA-TDNN head that returns speaker embeddings from raw audio;
+  vLLM v0.31.0 pooling covers text embedding models only and SGLang v0.5.21 has no WavLM. Retire when an engine
+  serves audio speaker-embedding models behind an OIP route with this signature. See custom/wavlm-sv/WHY.md.
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: EMBEDDINGS, datatype: FP32, shape: [-1, -1]}

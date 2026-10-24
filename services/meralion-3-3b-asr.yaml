@@ -1,0 +1,22 @@
+name: meralion-3-3b-asr
+kind: model
+engine: custom
+contract: openai
+api: audio.transcriptions
+port: 8107
+gpu:
+  vram_gb: 9                       # measured 2026-10-18: 7.2 GB loaded, 8.1 GB peak on 4-10 s clips
+description: "Speech-to-text, MERaLiON-3-3B-ASR (Singapore English, Mandarin, Malay, Tamil, code-switching) on transformers; 30 s chunking"
+tasks: [speech-recognition, code-switching-asr]
+build:
+  context: custom/meralion-3-3b-asr
+  image: "{registry}/meralion-3-3b-asr:0.1.0"
+  base: py-cuda-torch211           # one base for the phase C services
+weights:
+  path: ${AI_ASSETS}/custom-models/meralion-3-3b-asr/9f226d7
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-18: MERaLiON3ASRForConditionalGeneration is not in vLLM v0.31.0's registry, and the authors'
+  plugin pins vLLM 0.16.0 (supports 0.12-0.16 only); a second vLLM pin was declined. Served with the model's own
+  transformers code and the package's prompt, decoding and 30 s chunking. Retire when the pinned vLLM supports
+  MERaLiON-3. See custom/meralion-3-3b-asr/WHY.md.

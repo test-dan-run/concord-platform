@@ -1,0 +1,94 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* AeroAudio DS core tokens (dev/DESIGN_SYSTEM.md §2), copied from apps/Concord/frontend. Dark slate only. */
+@theme {
+  --font-sans: "Inter Variable", Inter, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+
+  --color-canvas: #0a0f1d;
+  --color-panel: #111827;
+  --color-track: #1e293b;
+  --color-active: #283548;
+  --color-line: #334155;
+  --color-fg: #f8fafc;
+  --color-muted: #94a3b8;
+  --color-subtle: #64748b;
+  --color-focus: #38bdf8;
+  --color-primary: #06b6d4;
+  --color-secondary: #6366f1;
+
+  /* outcome / confidence */
+  --color-good: #10b981;
+  --color-warn: #f59e0b;
+  --color-bad: #f43f5e;
+  --color-pending: #64748b;
+
+  /* categorical palette (§2): fixed order, one slot per running model in the GPU memory bar */
+  --color-cat-1: #3987e5;
+  --color-cat-2: #d95926;
+  --color-cat-3: #199e70;
+  --color-cat-4: #c98500;
+  --color-cat-5: #d55181;
+  --color-cat-6: #9085e9;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  a {
+    color: var(--color-focus);
+  }
+  a:hover {
+    color: #7dd3fc;
+  }
+  button,
+  select,
+  input,
+  textarea {
+    font-family: inherit;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-subtle);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: #38bdf855;
+  }
+}
+
+/* Every metric, time and token: JetBrains Mono with tabular figures. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

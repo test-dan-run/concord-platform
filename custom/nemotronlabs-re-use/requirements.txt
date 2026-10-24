@@ -1,0 +1,5 @@
+# On top of py-cuda-base (CUDA 13.0, torch 2.14.1 with triton, fastapi, uvicorn, numpy, aisvc). Pinned 2026-10-24.
+# mamba-ssm 2.3.2.post1 is compiled in the Dockerfile's first stage and installed without its dependencies.
+einops==0.8.2
+safetensors==0.8.0
+packaging==26.3

@@ -1,0 +1,8 @@
+# On top of py-cpu-base (python 3.12 slim, fastapi, uvicorn, numpy, aisvc). CPU-only torch: the model
+# diarized 23 s of audio in 0.5 s on CPU, so it costs no VRAM. Install with constraints.txt.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+# NeMo Speech from main: the 3.0.0 release (2026-08-07) rejects this model's rope self-attention;
+# support landed after it. Pinned commit (main on 2026-10-17); a tarball, so no git is needed in the image.
+# Switch to the PyPI release once nemo-toolkit > 3.0.0 is published.
+nemo_toolkit[asr] @ https://github.com/NVIDIA-NeMo/Speech/archive/a3afbd901807bfa5b46ae386573af31dced77834.tar.gz

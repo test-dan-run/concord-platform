@@ -1,0 +1,10 @@
+# Fetched by `just fetch-weights nemotron-3-diarization` into the manifest's weights.path.
+# nvidia/Nemotron-3-Diarization (OpenMDW-1.1) at revision f667ed7; sha256 = Hub LFS id = local copy. Checked 2026-10-17.
+version: "3@f667ed7"
+source: https://huggingface.co/nvidia/Nemotron-3-Diarization/tree/f667ed73aee57d40cc39428eb768b4fd87a0a29e
+license: OpenMDW-1.1
+files:
+  - path: Nemotron-3-Diarization.nemo
+    url: https://huggingface.co/nvidia/Nemotron-3-Diarization/resolve/f667ed73aee57d40cc39428eb768b4fd87a0a29e/Nemotron-3-Diarization.nemo
+    sha256: 867c53f552998f772e5b5e5c082962ae85ee7ca5669c2bc17d7f615133d4e96d
+    size: 198676480

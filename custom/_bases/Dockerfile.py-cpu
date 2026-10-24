@@ -1,0 +1,20 @@
+# py-cpu-base: CPU-only models and utilities. No CUDA, no PyTorch.
+# Build: just build <service>   (or: docker build -f Dockerfile.py-cpu -t {registry}/py-cpu-base:<version> .)
+FROM python:3.12.15-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
+
+# Non-root runtime user; the venv belongs to it so service images can `pip install` without root.
+RUN useradd --create-home --uid 1000 app \
+ && python -m venv /opt/venv && mkdir /app && chown -R 1000:1000 /opt/venv /app
+USER 1000:1000
+WORKDIR /app
+
+COPY --chown=1000:1000 requirements-base.txt /tmp/requirements-base.txt
+RUN pip install -r /tmp/requirements-base.txt
+COPY --chown=1000:1000 common/ /tmp/aisvc/
+RUN pip install --no-deps /tmp/aisvc && rm -rf /tmp/aisvc
+
+EXPOSE 8000

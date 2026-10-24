@@ -1,0 +1,240 @@
+openapi: 3.1.0
+info:
+  title: Inverse text normalisation (openai-inspired text.itn)
+  version: 1.0.0
+  description: |
+    Converts spoken-form ASR transcripts into written form
+    (e.g. "three thirty p m" -> "3:30pm"). The `text.itn` API type of the platform's
+    `openai-inspired` contract; contracts/README.md section 5 is the source of truth.
+
+    Adapted from an external ITN API (v1.0.0) to the openai-inspired conventions:
+    - `language` is an option, `model` is required, and `classes` is a comma-separated string,
+      because options are scalar.
+    - Unknown top-level fields and unknown options are rejected (400 invalid_options).
+    - `input` is a string or a non-empty list; a string yields one `data` item.
+    - Output is deterministic for a given build.
+    - Span offsets are zero-based, half-open [start, end), counted in Unicode code points.
+servers:
+  - url: http://localhost:{port}
+    variables:
+      port:
+        default: "8501"
+
+paths:
+  /v1/text/itn:
+    post:
+      operationId: inverseNormalize
+      summary: Normalise spoken-form text to written form
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItnRequest'
+            examples:
+              basic:
+                summary: Text only
+                value:
+                  model: itn-en
+                  input: meet at three thirty p m on the twelfth of october
+                  options:
+                    language: en-SG
+              withSpans:
+                summary: With spans requested
+                value:
+                  model: itn-en
+                  input:
+                    - meet at three thirty p m on the twelfth of october
+                  options:
+                    language: en-SG
+                    return_spans: true
+                    classes: TIME,DATE,MONEY,CARDINAL
+      responses:
+        '200':
+          description: Normalised text, one result per input item, in input order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItnResponse'
+              examples:
+                basic:
+                  summary: Text only
+                  value:
+                    object: list
+                    model: itn-en
+                    created: 1760700000
+                    data:
+                      - object: text.itn
+                        index: 0
+                        output: meet at 3:30pm on 12 October
+                    usage: {input_chars: 50, output_chars: 28}
+                withSpans:
+                  summary: With spans
+                  value:
+                    object: list
+                    model: itn-en
+                    created: 1760700000
+                    data:
+                      - object: text.itn
+                        index: 0
+                        output: meet at 3:30pm on 12 October
+                        spans:
+                          - {input_start: 8, input_end: 24, output_start: 8, output_end: 14, class: TIME}
+                          - {input_start: 28, input_end: 50, output_start: 18, output_end: 28, class: DATE}
+                    usage: {input_chars: 50, output_chars: 28}
+        '400':
+          description: Malformed request (invalid_request), or an unknown or unsupported option, language or class (invalid_options).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: The `model` is not the one this service serves (model_not_found).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error (server_error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: The service is still loading (not_ready).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: The served model, in OpenAI list format
+      responses:
+        '200':
+          description: One entry whose id is the service name.
+  /health:
+    get:
+      operationId: health
+      summary: 200 when ready, 503 while loading
+      responses:
+        '200':
+          description: Ready.
+        '503':
+          description: Loading, or the load failed (error in the body).
+
+components:
+  schemas:
+    ItnRequest:
+      type: object
+      required: [model, input]
+      additionalProperties: false
+      properties:
+        model:
+          type: string
+          description: The service name, as listed by GET /v1/models.
+          examples: [itn-en]
+        input:
+          description: Spoken-form text, or a list of them. A string yields one data item.
+          oneOf:
+            - type: string
+              maxLength: 10000
+            - type: array
+              minItems: 1
+              maxItems: 256
+              items:
+                type: string
+                maxLength: 10000
+        options:
+          $ref: '#/components/schemas/ItnOptions'
+
+    ItnOptions:
+      type: object
+      description: All fields optional and scalar. Unknown fields are rejected with 400 invalid_options.
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+          description: BCP-47 locale; sets output conventions such as date order and currency symbols. Defaults to the service's default locale.
+          examples: [en-SG, en-US]
+        return_spans:
+          type: boolean
+          default: false
+          description: If true, each result includes `spans` describing what was converted.
+        classes:
+          type: string
+          description: Comma-separated semiotic classes to convert. Omit to convert every class the service supports.
+          examples: ['TIME,DATE,MONEY,CARDINAL']
+
+    SemioticClass:
+      type: string
+      description: Category of a converted span. Services may add new values; clients must accept unknown ones.
+      examples: [CARDINAL, ORDINAL, DECIMAL, FRACTION, MONEY, MEASURE, DATE, TIME, TELEPHONE, ELECTRONIC]
+
+    ItnResponse:
+      type: object
+      required: [object, model, created, data]
+      properties:
+        object:
+          const: list
+        model:
+          type: string
+        created:
+          type: integer
+          description: Unix seconds.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItnResult'
+        usage:
+          type: object
+          properties:
+            input_chars: {type: integer, minimum: 0}
+            output_chars: {type: integer, minimum: 0}
+
+    ItnResult:
+      type: object
+      required: [object, index, output]
+      properties:
+        object:
+          const: text.itn
+        index:
+          type: integer
+          minimum: 0
+          description: Position of the corresponding item in the request input.
+        output:
+          type: string
+          description: Written-form output.
+        spans:
+          type: array
+          description: Present only when `options.return_spans` is true; sorted by input_start, non-overlapping.
+          items:
+            $ref: '#/components/schemas/Span'
+
+    Span:
+      type: object
+      required: [input_start, input_end, output_start, output_end, class]
+      properties:
+        input_start: {type: integer, minimum: 0}
+        input_end: {type: integer, minimum: 0}
+        output_start: {type: integer, minimum: 0}
+        output_end: {type: integer, minimum: 0}
+        class:
+          $ref: '#/components/schemas/SemioticClass'
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+              examples: [invalid_request_error, service_unavailable, server_error]
+            code:
+              type: [string, 'null']
+              examples: [invalid_request, invalid_options, model_not_found, not_ready, server_error]

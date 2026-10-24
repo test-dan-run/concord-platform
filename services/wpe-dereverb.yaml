@@ -1,0 +1,20 @@
+name: wpe-dereverb
+kind: utility
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for dereverberation; input and output are float audio arrays"
+port: 8502
+description: "Single-channel dereverberation, WPE (nara_wpe, statistical, no weights) on CPU; output keeps the input rate and length"
+tasks: [dereverberation, speech-enhancement]
+build:
+  context: custom/wpe-dereverb
+  image: "{registry}/wpe-dereverb:0.1.0"
+  base: py-cpu
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1]}

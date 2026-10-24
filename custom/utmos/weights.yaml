@@ -1,0 +1,27 @@
+# Fetched by `just fetch-weights utmos` into ${AI_ASSETS}/custom-models/utmos/<version>.
+# prj-beatrice/utmos22-torch-native @eecd3e6: the UTMOS22 strong learner (sarulab-speech/UTMOS22) ported to plain
+# torch + transformers remote code; its card checks it against tarepan/SpeechMOS v1.2.0. sha256 computed 2026-10-18.
+version: utmos22-strong-eecd3e6
+source: https://huggingface.co/prj-beatrice/utmos22-torch-native/tree/eecd3e6e7ad9dd794308a4338c3ac7cb34691af9
+license: MIT
+files:
+  - path: config.json
+    url: https://huggingface.co/prj-beatrice/utmos22-torch-native/resolve/eecd3e6e7ad9dd794308a4338c3ac7cb34691af9/config.json
+    sha256: 0098588c42c44742834622991fabbe5fa4182b6989b4aa091da1369bf4d25bce
+    size: 128
+  - path: modeling_utmos22.py
+    url: https://huggingface.co/prj-beatrice/utmos22-torch-native/resolve/eecd3e6e7ad9dd794308a4338c3ac7cb34691af9/modeling_utmos22.py
+    sha256: 4a776476d792670a7661c9ddf5773cec1426a455a3eb5fab178efdc5f0076184
+    size: 7321
+  - path: modeling_wav2vec2.py
+    url: https://huggingface.co/prj-beatrice/utmos22-torch-native/resolve/eecd3e6e7ad9dd794308a4338c3ac7cb34691af9/modeling_wav2vec2.py
+    sha256: 9e33bfa08714e9dd2b328e4caeaa8ee912a4b5bed8482e2207e966b52aa8353d
+    size: 8565
+  - path: model.safetensors
+    url: https://huggingface.co/prj-beatrice/utmos22-torch-native/resolve/eecd3e6e7ad9dd794308a4338c3ac7cb34691af9/model.safetensors
+    sha256: 42c822767345583f03a6955ff7ae19fb57f67f4cd31a57a62675af46d15d5e1f
+    size: 406918700
+  - path: LICENSE
+    url: https://huggingface.co/prj-beatrice/utmos22-torch-native/resolve/eecd3e6e7ad9dd794308a4338c3ac7cb34691af9/LICENSE
+    sha256: 7c6838c2fb785c5e59e1a51eec7e567eb249d4550e22912e4a597821f4c0cacb
+    size: 1304

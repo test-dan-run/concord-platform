@@ -1,0 +1,10 @@
+# Fetched by `just fetch-weights silero-vad` into ${AI_ASSETS}/custom-models/silero-vad/<version>.
+# Pinned to the v6.2.3 tag of the official repo; sha256 computed 2026-10-17.
+version: v6.2.3
+source: https://github.com/snakers4/silero-vad/tree/v6.2.3
+license: MIT
+files:
+  - path: silero_vad.onnx
+    url: https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx
+    sha256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
+    size: 2327524

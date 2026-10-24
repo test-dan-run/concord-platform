@@ -1,0 +1,27 @@
+# Fetched by `just fetch-weights faster-whisper-large-v3` into the manifest's weights.path.
+# Systran/faster-whisper-large-v3 (CTranslate2 conversion of openai/whisper-large-v3, MIT) at revision edaa852.
+# model.bin sha256 is the Hub LFS id; the small files were hashed from the local copy (sizes match the Hub). Checked 2026-10-17.
+version: large-v3@edaa852
+source: https://huggingface.co/Systran/faster-whisper-large-v3/tree/edaa852ec7e145841d8ffdb056a99866b5f0a478
+license: MIT
+files:
+  - path: model.bin
+    url: https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/model.bin
+    sha256: 69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1
+    size: 3087284237
+  - path: config.json
+    url: https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/config.json
+    sha256: a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9
+    size: 2394
+  - path: preprocessor_config.json
+    url: https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/preprocessor_config.json
+    sha256: 7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711
+    size: 340
+  - path: tokenizer.json
+    url: https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/tokenizer.json
+    sha256: 6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca
+    size: 2480617
+  - path: vocabulary.json
+    url: https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/vocabulary.json
+    sha256: c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1
+    size: 1068114

@@ -1,0 +1,22 @@
+name: ark-asr-0-6b                 # ARK-ASR-0.6B ("." -> "-")
+kind: model
+engine: custom
+contract: openai
+api: audio.transcriptions
+port: 8109
+gpu:
+  vram_gb: 3                       # measured 2026-10-23: 2.16 GiB loaded, 2.29 GiB peak on a 70 s clip (3 chunks of 30 s)
+description: "Speech-to-text, ARK-ASR-0.6B (19 languages incl. zh, en, ja, ko and Central/Eastern European) on transformers; distilled from a larger ASR teacher; 30 s chunking"
+tasks: [speech-recognition]
+build:
+  context: custom/ark-asr-0-6b
+  image: "{registry}/ark-asr-0-6b:0.1.0"
+  base: py-cuda-torch211           # same base and transformers pin as meralion-3-3b-asr
+weights:
+  path: ${AI_ASSETS}/custom-models/ark-asr-0-6b/45776b5
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-23: ArkasrForConditionalGeneration (Whisper-style RoPE encoder + MLP adapter + Qwen2 decoder) is the
+  authors' transformers remote code and is not in vLLM v0.31.0's registry; there is no vLLM or SGLang integration, and
+  a vLLM plugin was declined in favour of this server. Served with the model's own code and the authors' prompt,
+  decoding and text cleanup. Retire when the pinned vLLM supports ARK-ASR. See custom/ark-asr-0-6b/WHY.md.

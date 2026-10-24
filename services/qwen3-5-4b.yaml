@@ -1,0 +1,20 @@
+name: qwen3-5-4b                   # names are kebab-case, so "3.5" is written "3-5"
+kind: model
+alias: default-vlm
+engine: vllm
+contract: openai
+api: chat.completions              # images/video go in message content parts (image_url / video_url)
+# Local copy of Qwen/Qwen3.5-4B @851bf6e in ${AI_ASSETS}/qwen3.5-4b (Qwen3_5ForConditionalGeneration,
+# registered in vLLM v0.31.0). Hybrid attention: only 8 of 32 layers keep a KV cache (~32 KB/token).
+model: /models/qwen3.5-4b
+port: 8205
+gpu:
+  util: 0.40                       # 12.7 GB: 8.8 GB bf16 checkpoint (incl. vision tower) + KV/state + encoder cache
+  # TODO(verify): first start of a hybrid (linear-attention) VLM on sm_120 is untested; if profiling
+  # reports too little memory, lower --max-model-len or the multimodal limits before raising util.
+args:
+  - --max-model-len=32768
+  - --reasoning-parser=qwen3       # thinks by default; reasoning goes to message.reasoning_content
+  - '--limit-mm-per-prompt={"image": 4, "video": 1}'   # bounds the encoder memory vLLM profiles for
+description: "Vision-language chat, Qwen3.5 4B (images + video, thinking by default)"
+tasks: [chat, instruction-following, reasoning, coding, math, tool-calling, image-understanding, video-understanding, ocr, visual-agent]

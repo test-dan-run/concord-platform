@@ -1,0 +1,28 @@
+name: silero-vad
+kind: model
+alias: default-vad
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for VAD; input is a float audio array"
+port: 8401
+description: "Voice activity detection, Silero VAD v6 ONNX on CPU; returns speech segments in seconds"
+tasks: [voice-activity-detection]
+build:
+  context: custom/silero-vad
+  image: "{registry}/silero-vad:0.1.0"
+  base: py-cpu
+weights:
+  path: ${AI_ASSETS}/custom-models/silero-vad/v6.2.3
+  mount: /models
+custom_reason: >-
+  A 2 MB stateful ONNX model run frame by frame on CPU, followed by segment post-processing.
+  vLLM/SGLang serve transformer LMs and cannot run it. An OIP-native server (Triton's
+  ONNX Runtime backend) could run the raw model but not the stateful frame loop and segment
+  logic without a Python backend. See custom/silero-vad/WHY.md.
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: SEGMENTS, datatype: FP32, shape: [-1, 2]}

@@ -1,0 +1,29 @@
+# py-cuda-base: GPU models. CUDA 13.0 runtime + Python 3.12 + PyTorch built for CUDA 13.0
+# (cu130 wheels include sm_120, so the RTX 5090 works; needs driver >= 580).
+# Variants (bases.yaml `args`) change TORCH_VERSION / TORCH_EXTRA, e.g. py-cuda-torch211.
+# Build: just build <service>   (or: docker build -f Dockerfile.py-cuda -t {registry}/py-cuda-base:<version> .)
+FROM nvidia/cuda:13.0.3-runtime-ubuntu24.04
+
+ARG TORCH_VERSION=2.14.1
+ARG TORCH_EXTRA=""
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cu130
+
+ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH
+
+# Ubuntu 24.04 ships Python 3.12. uid 1000 is the image's existing `ubuntu` user.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3.12 python3.12-venv libsndfile1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && python3.12 -m venv /opt/venv && mkdir /app && chown -R 1000:1000 /opt/venv /app
+USER 1000:1000
+WORKDIR /app
+
+RUN pip install torch==${TORCH_VERSION} ${TORCH_EXTRA} --index-url ${TORCH_INDEX}
+COPY --chown=1000:1000 requirements-base.txt /tmp/requirements-base.txt
+RUN pip install -r /tmp/requirements-base.txt
+COPY --chown=1000:1000 common/ /tmp/aisvc/
+RUN pip install --no-deps /tmp/aisvc && rm -rf /tmp/aisvc
+
+EXPOSE 8000

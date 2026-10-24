@@ -1,0 +1,15 @@
+name: qwen2-5-14b-instruct-awq     # names are kebab-case, so "2.5" is written "2-5"
+kind: model
+alias: mid-chat
+engine: vllm
+contract: openai
+api: chat.completions
+# Local copy of Qwen/Qwen2.5-14B-Instruct-AWQ @5395358 in ${AI_ASSETS}/qwen2.5-14b-instruct-awq.
+model: /models/qwen2.5-14b-instruct-awq
+port: 8204
+gpu:
+  util: 0.45                       # 14.4 GB: 9.4 GB AWQ checkpoint leaves ~4 GB KV (~20k tokens at 192 KB/token)
+args:
+  - --max-model-len=16384          # native 32k
+description: "Mid-size chat, Qwen2.5 14B Instruct AWQ 4-bit; between qwen3-8b and qwen3-32b-awq"
+tasks: [chat, instruction-following, coding, math, table-understanding, structured-output]

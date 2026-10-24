@@ -1,0 +1,35 @@
+# Fetched by `just fetch-weights voxcpm2` into ${AI_ASSETS}/custom-models/voxcpm2/<version>.
+# openbmb/VoxCPM2 @32279ef (2B, 48 kHz out). sha256: the LFS files match the Hub ids; the small files were hashed
+# from the download. Checked 2026-10-18.
+version: 32279ef
+source: https://huggingface.co/openbmb/VoxCPM2/tree/32279effe8c19989596f05d353d1447f51d9e915
+license: Apache-2.0
+files:
+  - path: model.safetensors
+    url: https://huggingface.co/openbmb/VoxCPM2/resolve/32279effe8c19989596f05d353d1447f51d9e915/model.safetensors
+    sha256: f7f964cfa9da23653baec6e6f7750719977ad944ed9f95fe52fe3a620506891d
+    size: 4580080592
+  - path: audiovae.pth
+    url: https://huggingface.co/openbmb/VoxCPM2/resolve/32279effe8c19989596f05d353d1447f51d9e915/audiovae.pth
+    sha256: 94b5d51e107e0507d4acc976cfdadb64edd6fd06d1f751dadbf2fd1594274bf1
+    size: 376951122
+  - path: config.json
+    url: https://huggingface.co/openbmb/VoxCPM2/resolve/32279effe8c19989596f05d353d1447f51d9e915/config.json
+    sha256: 405f0dcd92f7feba6011ed4eac5c8d4f74cba9712f07fd5cfa3063bbdd95402c
+    size: 4336
+  - path: special_tokens_map.json
+    url: https://huggingface.co/openbmb/VoxCPM2/resolve/32279effe8c19989596f05d353d1447f51d9e915/special_tokens_map.json
+    sha256: 068594063e37662c02b21acf42ebb334ef6a74fb810e68a2368f88f08351de76
+    size: 1632
+  - path: tokenization_voxcpm2.py
+    url: https://huggingface.co/openbmb/VoxCPM2/resolve/32279effe8c19989596f05d353d1447f51d9e915/tokenization_voxcpm2.py
+    sha256: 84489ea32b6ee0cae22ed5480cacb6df85c46624c3119be9a2021c3649a12729
+    size: 2895
+  - path: tokenizer.json
+    url: https://huggingface.co/openbmb/VoxCPM2/resolve/32279effe8c19989596f05d353d1447f51d9e915/tokenizer.json
+    sha256: f8984687e4a92a3503d521396d454b7d68e9fdaab2a0288eb3536c7c1aa4bc20
+    size: 3676772
+  - path: tokenizer_config.json
+    url: https://huggingface.co/openbmb/VoxCPM2/resolve/32279effe8c19989596f05d353d1447f51d9e915/tokenizer_config.json
+    sha256: e78a3ebb48a0b9437efd1823b6b726c823da89e49dd8bcc90c02419d9baa772b
+    size: 5059

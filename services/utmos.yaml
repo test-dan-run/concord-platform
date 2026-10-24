@@ -1,0 +1,27 @@
+name: utmos
+kind: model
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for speech quality scoring; input is a batch of float audio arrays"
+port: 8406
+description: "Speech naturalness MOS, UTMOS22 strong learner (wav2vec 2.0 + BLSTM) on CPU; batch-shaped like dnsmos"
+tasks: [speech-quality-assessment]
+build:
+  context: custom/utmos
+  image: "{registry}/utmos:0.1.0"
+  base: py-cpu                     # CPU torch wheels are installed by the service Dockerfile
+weights:
+  path: ${AI_ASSETS}/custom-models/utmos/utmos22-strong-eecd3e6
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-18: a wav2vec 2.0 encoder with a BLSTM regression head that scores raw audio, not a
+  text-generating model, so vLLM v0.31.0 and SGLang v0.5.21 cannot serve it. Retire when an OIP-native engine
+  can host the torch model and its resampling, keeping this signature. See custom/utmos/WHY.md.
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: MOS, datatype: FP32, shape: [-1]}

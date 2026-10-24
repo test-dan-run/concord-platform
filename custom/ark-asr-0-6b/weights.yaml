@@ -1,0 +1,73 @@
+# Fetched by `just fetch-weights ark-asr-0-6b` into ${AI_ASSETS}/custom-models/ark-asr-0-6b/<version>.
+# Edge0/ARK-ASR-0.6B @45776b5 (Whisper-style RoPE encoder + MLP adapter + Qwen2 0.5B-size decoder, bf16), with its
+# transformers remote code (the four *.py files, read 2026-10-23: no network, exec or pickle use). Edge0 is the
+# renamed AutoArk-AI org (AutoArk-AI/ARK-ASR-0.6B redirects here). Not gated. sha256: the LFS files match the Hub
+# ids; the small files were hashed from a download at this revision. Checked 2026-10-23.
+version: 45776b5
+source: https://huggingface.co/Edge0/ARK-ASR-0.6B/tree/45776b56d58cdfb2e2eb632f7e110f38684633e0
+license: Apache-2.0
+files:
+  - path: model.safetensors
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/model.safetensors
+    sha256: 57a86ce1c2f2c2d6ebb7ad9642c9e951a5109625122b48c9180126a28787673d
+    size: 2599020680
+  - path: tokenizer.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/tokenizer.json
+    sha256: ff07bfc6cf4ed2365e9ae107e5118c89170363624f2036c85a27904d368efd87
+    size: 13894630
+  - path: added_tokens.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/added_tokens.json
+    sha256: 203424360f206e9d432d16aeab31900ee9f8c94bf872cbead953c9db327c7e86
+    size: 469580
+  - path: chat_template.jinja
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/chat_template.jinja
+    sha256: b65159f329e94704814031bb882de38ae9d0ac8955e520044e37ab49b2252ada
+    size: 334
+  - path: config.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/config.json
+    sha256: 24d383b963ac31e807e7dc49d515c50a97aa35ecff434995eb64202f1d22f1e8
+    size: 2828
+  - path: configuration_arkasr.py
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/configuration_arkasr.py
+    sha256: f7dc852c604f985b675c866e352ce81dfbc69f3a6c69646d0863adf9dd6e3aed
+    size: 1619
+  - path: generation_config.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/generation_config.json
+    sha256: ebfc270f9b6fa54f4ff848905ee717431bf5caa03673b787a3bb425537d02e51
+    size: 131
+  - path: merges.txt
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/merges.txt
+    sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5
+    size: 1671853
+  - path: modeling_arkasr.py
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/modeling_arkasr.py
+    sha256: b15aa7f98fc3de644ad68df2ebee3b16229763a0988a273cca92a1bf0ec33333
+    size: 9402
+  - path: modeling_audio.py
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/modeling_audio.py
+    sha256: 645093b34975a9556503384bb10ad9cf23d8b137bbe0cad1cc50715cf0d21fd3
+    size: 11834
+  - path: preprocessor_config.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/preprocessor_config.json
+    sha256: 1e180caf7382179f67c7ffe0ac585d1d639ee9032dadae6868968ffb2e65dd77
+    size: 434
+  - path: processing_arkasr.py
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/processing_arkasr.py
+    sha256: 1db5338f55e714f97eb5d8ed076568897dda7339cb585e3b13fc7d8782c1a94e
+    size: 19160
+  - path: processor_config.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/processor_config.json
+    sha256: d637206d91054c242bea3f2ab25210582161f0c135cc1aa97c3b068d5e0fbd57
+    size: 201
+  - path: special_tokens_map.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/special_tokens_map.json
+    sha256: 1c6f70185b3b9ba0cb0ffede543c9a153e27e1d9e2fcc90c50bdfaf13fee2167
+    size: 434
+  - path: tokenizer_config.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/tokenizer_config.json
+    sha256: f0b39ce6eb0220f3edcda039e9b9990c57cf68cd59abacf6aaf69e14a82041f6
+    size: 2354311
+  - path: vocab.json
+    url: https://huggingface.co/Edge0/ARK-ASR-0.6B/resolve/45776b56d58cdfb2e2eb632f7e110f38684633e0/vocab.json
+    sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+    size: 2776833

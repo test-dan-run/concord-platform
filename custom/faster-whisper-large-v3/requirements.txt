@@ -1,0 +1,10 @@
+# On top of py-cpu-base (python 3.12 slim, fastapi, uvicorn, numpy, aisvc). Pinned 2026-10-17 from a
+# venv that ran large-v3 in float16 on the RTX 5090 (sm_120).
+faster-whisper==1.2.1
+ctranslate2==4.8.3             # >= 4.6.2 for sm_120; needs cuBLAS 12 (cuDNN optional since 4.6.3)
+av==18.1.0                     # av 19 removed open(metadata_errors=) used by faster-whisper 1.2.1
+onnxruntime==1.31.0            # faster-whisper's bundled Silero VAD filter
+huggingface-hub==2.2.0
+# CUDA 12 user-space libraries as wheels: no CUDA base image needed (the driver comes from the host).
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cuda-runtime-cu12==12.9.79

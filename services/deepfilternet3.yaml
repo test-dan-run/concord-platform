@@ -1,0 +1,27 @@
+name: deepfilternet3
+kind: model
+engine: custom
+contract: oip-v2
+api: infer
+contract_reason: "No OpenAI route for speech enhancement; input and output are float audio arrays"
+port: 8408
+description: "Speech denoising, DeepFilterNet3 (v0.5.6 deep-filter CLI, tract) on CPU; output keeps the input rate and length"
+tasks: [speech-enhancement, noise-suppression]
+build:
+  context: custom/deepfilternet3
+  image: "{registry}/deepfilternet3:0.1.0"
+  base: py-cpu
+weights:
+  path: ${AI_ASSETS}/custom-models/deepfilternet3/v0.5.6
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-18: DeepFilterNet3 is a recurrent enhancement network inside a libDF STFT/ERB/deep-filter
+  pipeline, not a transformer LM, so vLLM v0.31.0 and SGLang v0.5.21 cannot serve it. Served by the
+  project's Rust CLI; retire when an OIP-native engine can host the libDF pipeline. See custom/deepfilternet3/WHY.md.
+signature:
+  inputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
+  outputs:
+    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: SAMPLE_RATE, datatype: INT32, shape: [1]}

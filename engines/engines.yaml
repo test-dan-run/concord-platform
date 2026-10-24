@@ -1,0 +1,40 @@
+# Pinned inference engines. Never use :latest.
+#
+# Each entry: image, the contract it speaks, internal port, native health path, shm size,
+# whether it needs a GPU budget (gpu.util in manifests), and a command template.
+# Template placeholders: {model} {name} {util} {internal_port}. Manifest `args` are appended.
+#
+# Adding an OIP-native server later (Triton, MLServer) is one more entry here with
+# `contract: oip-v2`; render.py and the schema treat every entry the same way.
+
+vllm:
+  # v0.31.0 = newest stable GitHub release (2026-10-05). Default image is CUDA 13.0 and is
+  # built with TORCH_CUDA_ARCH_LIST including 12.0 (sm_120, RTX 5090). Checked 2026-10-17.
+  # Image ENTRYPOINT is ["vllm", "serve"], so the command is only the arguments.
+  image: vllm/vllm-openai:v0.31.0
+  contract: openai
+  internal_port: 8000
+  health_path: /health
+  shm_size: 16g
+  gpu: true
+  command: ["--model", "{model}", "--served-model-name", "{name}",
+            "--host", "0.0.0.0", "--port", "{internal_port}",
+            "--gpu-memory-utilization", "{util}"]
+
+sglang:
+  # v0.5.21 = newest stable GitHub release (2026-10-02). Images are CUDA 13 only since
+  # v0.5.20 (v0.5.19-cu129 was the last CUDA 12 tag). A v0.5.22 image was pushed on
+  # 2026-10-16 but has no release notes yet, so it is not pinned. Checked 2026-10-17.
+  # No ENTRYPOINT in the image, so the command launches the server explicitly.
+  # TODO(verify): sm_120 support in SGLang falls back to FA2 (no FA4 on consumer Blackwell);
+  # no sample manifest uses SGLang yet, so this tag has not been exercised on the 5090.
+  image: lmsysorg/sglang:v0.5.21
+  contract: openai
+  internal_port: 8000
+  health_path: /health
+  shm_size: 16g
+  gpu: true
+  command: ["python3", "-m", "sglang.launch_server",
+            "--model-path", "{model}", "--served-model-name", "{name}",
+            "--host", "0.0.0.0", "--port", "{internal_port}",
+            "--mem-fraction-static", "{util}"]

@@ -1,0 +1,15 @@
+name: qwen3-8b
+kind: model
+alias: default-chat
+engine: vllm
+contract: openai
+api: chat.completions
+# Local copy of Qwen/Qwen3-8B-FP8 @220b46e in ${AI_ASSETS}/qwen3-8b-fp8.
+model: /models/qwen3-8b-fp8
+port: 8201
+gpu:
+  util: 0.35                       # 11.2 GB: 9.4 GB FP8 checkpoint leaves ~1.5-2 GB KV (~10k tokens)
+args:
+  - --max-model-len=8192           # keeps the KV cache inside the 0.35 budget
+description: "General chat, Qwen3 8B FP8 (thinking on by default; pass enable_thinking=false via chat_template_kwargs)"
+tasks: [chat, instruction-following, reasoning, coding, math, tool-calling, translation]
