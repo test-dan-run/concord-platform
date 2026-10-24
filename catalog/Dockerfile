@@ -23,6 +23,8 @@ ARG PLATFORM_DIR=/platform
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH=/opt/venv/bin:$PATH HOME=/tmp PLATFORM_DIR=${PLATFORM_DIR}
 COPY --from=uv /uv /usr/local/bin/uv
+# ffprobe: the Dataset Catalog reads each uploaded file's duration, sample rate and channels (catalog/datasets/store.py)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 # docker CLI + compose plugin: the catalog starts and stops model services on the host's daemon (socket mounted)
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose

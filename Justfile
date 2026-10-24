@@ -91,13 +91,15 @@ catalog-up:
     chmod 600 "$key"; \
     auth="$HOME/.docker/config.json"; \
     if [ ! -f "$auth" ]; then auth="$HOME/.config/aiplatform/docker-config.json"; [ -f "$auth" ] || echo '{}' > "$auth"; fi; \
+    data="${AI_DATA:-$HOME/ai-data}"; store="${DATASET_STORE:-${data/#\~/$HOME}/datasets}"; store="${store/#\~/$HOME}"; \
+    mkdir -p "$store"; \
     PLATFORM_DIR="{{justfile_directory()}}" CATALOG_UID="$(id -u)" CATALOG_GID="$(id -g)" DOCKER_GID="$(stat -c %g /var/run/docker.sock)" \
-        CATALOG_MASTER_KEY_HOST="$key" CATALOG_DOCKER_AUTH_HOST="$auth" \
+        CATALOG_MASTER_KEY_HOST="$key" CATALOG_DOCKER_AUTH_HOST="$auth" DATASET_STORE="$store" \
         docker compose -f catalog/compose.yml up -d --build --force-recreate
 
 # stop the catalog container (model services keep running)
 catalog-down:
-    PLATFORM_DIR="{{justfile_directory()}}" DOCKER_GID=0 docker compose -f catalog/compose.yml down
+    PLATFORM_DIR="{{justfile_directory()}}" DOCKER_GID=0 DATASET_STORE=/dev/null docker compose -f catalog/compose.yml down
 
 # follow the catalog container's logs
 catalog-logs:

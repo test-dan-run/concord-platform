@@ -18,6 +18,7 @@ services:
     networks: [ai-net]
     environment:
       AI_ASSETS: ${AI_ASSETS:?set AI_ASSETS in platform/.env}
+      DATASET_STORE: ${DATASET_STORE:?run through just catalog-up}
       CATALOG_PUBLIC_URL: http://127.0.0.1:8700
       CATALOG_MASTER_KEY_FILE: /run/secrets/catalog_master_key
       CATALOG_DOCKER_AUTH: /run/docker-auth/config.json
@@ -26,6 +27,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PLATFORM_DIR}:${PLATFORM_DIR}
       - ${AI_ASSETS}:${AI_ASSETS}:ro
+      # The Dataset Catalog's store, read-write at the same path as on the host, so a path the catalog reports is
+      # the path the apps see on their read-only mounts.
+      - ${DATASET_STORE}:${DATASET_STORE}
       # Export's registry push: the host's Docker login, read-only (copied to a temporary DOCKER_CONFIG per push)
       - ${CATALOG_DOCKER_AUTH_HOST:-/dev/null}:/run/docker-auth/config.json:ro
     # nvidia-smi only (utility, no compute): the scheduler measures free GPU memory before each start
