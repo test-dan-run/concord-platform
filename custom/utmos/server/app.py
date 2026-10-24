@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from aisvc import MicroBatcher, create_oip_app
+from aisvc import Limits, MicroBatcher, create_oip_app
 from aisvc.batch import audio_ms
 
 from .utmos import Utmos
@@ -29,8 +29,9 @@ SIGNATURE = {
 
 def build_app(model: Utmos | None = None):
     model = model or Utmos(os.environ.get("WEIGHTS_DIR", "/models"))
-    # Any number of rows: sorted by length, run in batches within AISVC_MAX_BATCH / AISVC_MAX_BATCH_LEN (ms of audio)
-    batch = MicroBatcher(model.score_batch, length=lambda c: audio_ms(*c), name="score")
+    # Any number of rows, run in batches within AISVC_MAX_BATCH / AISVC_MAX_BATCH_LEN (ms of audio). On the CPU a
+    # batch is no faster (7.8 s one by one against 8.7 s in batches of 8 for 32 clips of 2 to 8 s, measured 2026-10-24), so the default is one clip at a time.
+    batch = MicroBatcher(model.score_batch, length=lambda c: audio_ms(*c), limits=Limits.from_env(max_items=1), name="score")
 
     def handler(inputs: dict[str, np.ndarray], parameters: dict) -> dict[str, np.ndarray]:
         if parameters:

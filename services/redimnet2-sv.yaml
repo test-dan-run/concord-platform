@@ -7,6 +7,8 @@ contract_reason: "No OpenAI route for speaker embeddings from audio; input is a 
 port: 8405
 gpu:
   vram_gb: 2                       # measured 2026-10-19: 0.75 GB loaded, ~2.6 GB device peak on a 20 s clip (input cut at 20 s; 60 s ran out of 2 GB)
+  # batch profile 2026-10-25 (0.2.0, catalog sweep, torch counters): peak GiB = 0.98 + 0.102 x seconds of audio in the
+  # batch; 12 clips of 20 s fit 29.6 GB, 6 fit 16 GB. Only equal-length clips share a pass (no padding mask): 1.9x on 32 x 5 s.
 description: "Speaker embeddings, ReDimNet2-B6 (vb2+vox2+cnc2, LM fine-tuned; 192-d, L2-normalised) for speaker verification; same signature as wavlm-sv"
 tasks: [speaker-verification, speaker-embedding]
 batch:

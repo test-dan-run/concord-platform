@@ -204,3 +204,14 @@ def test_just_batch_prints_the_recommendation_and_table(cat, monkeypatch, capsys
         assert cli.main(["show", "wavlm-sv", "--vram", "24", "--item-s", "20", "--n", "8"]) == 0
     out = capsys.readouterr().out
     assert "profile: measured" in out and "24 GB, items of 20 s: batch" in out and "needs" in out and "(full)" in out
+
+
+def test_sweep_stops_before_a_batch_predicted_over_the_budget():
+    mem = FakeMemory(limit=1e9)  # no out of memory error ever (WSL2 spills to system RAM instead)
+
+    def send(n, length):
+        mem.last = (n, length)
+
+    pts, stops, _ = sweep(send, mem, [15.0], budget_gib=8.0, max_n=128)
+    assert all(p.peak_gib <= 0.95 * 8.0 for p in pts) and "would need about" in stops[0]["stopped"]
+    assert max(p.n for p in pts) == 32  # 64 x 15 s would need about 9.4 GiB

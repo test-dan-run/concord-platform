@@ -24,7 +24,8 @@ def limit_torch_memory(torch: Any, device: int = 0) -> float | None:
 def memory_stats(device: int = 0, reset: bool = False) -> dict[str, Any]:
     """GPU memory as torch sees it (peak, reserved, device total and free) plus the current batch limits.
 
-    `reset` clears the peak after reading it. Without torch or CUDA the body says so instead of failing.
+    `reset` first empties the CUDA cache (the caching allocator keeps freed blocks reserved, so a reading after a
+    big batch would count them), then reads, then clears the peak. Without torch or CUDA the body says so.
     """
     from .batch import limits_stats
 
@@ -38,6 +39,8 @@ def memory_stats(device: int = 0, reset: bool = False) -> dict[str, Any]:
     try:
         if not torch.cuda.is_available():
             return body
+        if reset:
+            torch.cuda.empty_cache()
         free, total = torch.cuda.mem_get_info(device)
         counts = {"peak_allocated": torch.cuda.max_memory_allocated(device), "peak_reserved": torch.cuda.max_memory_reserved(device),
                   "allocated": torch.cuda.memory_allocated(device), "reserved": torch.cuda.memory_reserved(device),

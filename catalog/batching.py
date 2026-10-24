@@ -265,7 +265,7 @@ def sender(meta: dict[str, Any], url: str, http: httpx.Client) -> Callable[[int,
 
     from aicore.oip import OIPClient
 
-    client = OIPClient(url, meta["name"], meta.get("signature"), http=http)
+    client = OIPClient(url, meta["name"], meta.get("signature"), timeout=SLOW_S * 5)  # its own client, on url
     extra = {t["name"]: np.asarray(t["example"]) for t in meta["signature"]["inputs"]
              if t["name"] not in ("AUDIO", "LENGTHS", "SAMPLE_RATE") and "example" in t}
 
@@ -295,6 +295,7 @@ class Memory:
     def __init__(self, url: str, http: httpx.Client, gpu: Callable[[], tuple[float, float] | None],
                  baseline_gib: float | None):
         self.url, self.http, self.gpu, self.baseline = url, http, gpu, baseline_gib
+        self.high: float | None = None  # the most the device has had in use: allocators keep what they took
 
     def _used(self) -> float | None:
         g = self.gpu()
@@ -311,8 +312,12 @@ class Memory:
     def backoffs(stats: dict[str, Any]) -> int:
         return sum(int(b.get("backoffs") or 0) for b in (stats.get("batch") or {}).values())
 
-    def measure(self, fn: Callable[[], None]) -> tuple[float, str]:
-        """Run fn; (peak GiB, how it was read). Raises Oom on a lowered server limit, like an error would."""
+    def measure(self, fn: Callable[[], None]) -> tuple[float, str] | None:
+        """Run fn; (peak GiB, how it was read), or None when it cannot be told (a device reading under an earlier
+        high, with no torch counters). Raises Oom on a lowered server limit, like an error would.
+
+        The torch reading is exact: the reset empties the image's CUDA cache first. A device reading counts only
+        above the highest one so far, since CTranslate2 and ONNX Runtime keep the memory a bigger batch took."""
         before = self._stats(reset=True)
         idle = self._used()
         samples: list[float] = []
@@ -339,7 +344,10 @@ class Memory:
             raise Oom("the server ran out of memory and split the batch")
         reads: list[tuple[float, str]] = []
         if self.baseline is not None and samples:
-            reads.append((max(samples) - self.baseline, "nvidia-smi"))
+            top = max(samples)
+            if self.high is None or top > self.high + 0.05:
+                reads.append((top - self.baseline, "nvidia-smi"))
+            self.high = max(top, self.high or top)
         if after.get("cuda") and before.get("cuda"):
             extra = after["peak_reserved_gib"] - before.get("reserved_gib", 0.0)
             if self.baseline is not None and idle is not None:
@@ -347,9 +355,12 @@ class Memory:
             else:
                 reads.append((after["peak_reserved_gib"] + CONTEXT_GIB, "torch (context estimated)"))
         if not reads:
-            raise ValueError("no way to read the model's memory: the image has no torch counters and the "
-                             "memory used before it started is unknown (restart it from the catalog)")
-        peak, how = max(reads)
+            if self.baseline is None:
+                raise ValueError("no way to read the model's memory: the image has no torch counters and the "
+                                 "memory used before it started is unknown (restart it from the catalog)")
+            return None
+        torch_reads = [r for r in reads if r[1].startswith("torch")]
+        peak, how = max(torch_reads or reads)  # torch's own count, when there is one, is not inflated by caches
         return round(peak, 3), how
 
 
@@ -371,17 +382,30 @@ def sweep(send: Callable[[int, float], None], memory: Memory, lengths: list[floa
     how = ""
     for length in lengths:
         n, why = 1, "max batch"
+        here: list[Point] = []
         while n <= max_n:
             if stop is not None and stop.is_set():
                 return points, stops, how
+            if budget_gib is not None and len(here) >= 2:
+                # Doubling N about doubles what the batch adds to the first point. Past the budget, WSL2 does not
+                # fail: Windows moves GPU memory to system RAM and the batch takes minutes, so stop before it.
+                guess = here[0].peak_gib + (here[-1].peak_gib - here[0].peak_gib) * n / here[-1].n
+                if guess > 0.95 * budget_gib:
+                    why = f"a batch of {n} would need about {guess:.1f} GiB, near the {budget_gib:.1f} GiB budget"
+                    break
             t0 = time.perf_counter()
             try:
-                peak, how = memory.measure(lambda n=n, length=length: send(n, length))
+                read = memory.measure(lambda n=n, length=length: send(n, length))
             except Oom as exc:
                 why = f"out of memory at {n}: {exc}"
                 break
             secs = time.perf_counter() - t0
+            if read is None:  # no reading for this batch; a bigger one will tell
+                n *= 2
+                continue
+            peak, how = read
             points.append(Point(n=n, length_s=length, peak_gib=peak, seconds=round(secs, 3)))
+            here.append(points[-1])
             log_fn(f"batch {n} x {length:g} s: peak {peak:.2f} GiB in {secs:.1f} s")
             if budget_gib is not None and peak > 0.95 * budget_gib:
                 why = f"peak {peak:.1f} GiB near the {budget_gib:.1f} GiB budget at {n}"
