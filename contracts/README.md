@@ -26,6 +26,9 @@ Rules:
 
 `api_types.yaml` is the machine-readable registry the schema validates against.
 
+The Dataset Catalog's version format is not a service contract. It is in
+[`datasets/version.md`](datasets/version.md), and `just validate` checks its samples.
+
 ## 2. Universal requirement: `GET /health`
 
 Every service, whatever its contract, serves `GET /health`: **200** when ready, **503** while

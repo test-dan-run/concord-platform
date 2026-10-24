@@ -1,0 +1,24 @@
+{
+ "files": {
+  "check_clip.wav": {
+   "condition": "clean",
+   "channel": "phone"
+  }
+ },
+ "speakers": {
+  "check_clip.wav": {
+   "agent": {
+    "gender": "F",
+    "accent": {
+     "region": "south"
+    }
+   },
+   "caller": {
+    "gender": "M",
+    "accent": {
+     "region": "north"
+    }
+   }
+  }
+ }
+}

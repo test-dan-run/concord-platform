@@ -184,6 +184,24 @@ def check_folder(root: Path, *, package: bool = False, hash_audio: bool = True) 
     return problems
 
 
+def check_samples(folder: Path | None = None) -> list[str]:
+    """Problems with the sample versions in contracts/datasets/samples (`just validate`): each one is a version
+    as the catalog stores it, so it also has its source and export_version."""
+    if folder is None:
+        from tools.schema import PLATFORM_DIR
+
+        folder = PLATFORM_DIR / "contracts" / "datasets" / "samples"
+    samples = sorted(p for p in folder.iterdir() if p.is_dir())
+    problems = [] if samples else [f"no sample versions in {folder}"]
+    for d in samples:
+        found = check_folder(d)
+        m = json.loads((d / "manifest.json").read_text(encoding="utf-8")) if (d / "manifest.json").is_file() else {}
+        if not found and (m.get("source") or {}).get("install_id") != INSTALL_ID:
+            found.append(f"manifest.json: source.install_id must be {INSTALL_ID!r} in a stored version")
+        problems += [f"{d.name}: {p}" for p in found]
+    return problems
+
+
 def _labels_ok(obj: object) -> bool:
     """A labels object: strings, numbers, true / false, or nested labels objects."""
     return isinstance(obj, dict) and all(isinstance(v, (str, int, float, bool)) or _labels_ok(v) for v in obj.values())

@@ -7,13 +7,14 @@ import json
 import queue
 import shutil
 import zipfile
+from pathlib import Path
 
 import pytest
 from catalog_helpers import ASR, jsonl, new_dataset, publish, sha, upload, version_zip, wav
 from fastapi.testclient import TestClient
 
 from catalog.app import create_app
-from catalog.datasets.versions import check_folder, digest
+from catalog.datasets.versions import check_folder, check_samples, digest
 
 needs_ffprobe = pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffprobe is not installed")
 A, B, C = wav(1), wav(2), wav(3)
@@ -40,6 +41,45 @@ def drain(q: queue.Queue) -> list:
     while not q.empty():
         out.append(q.get_nowait())
     return out
+
+
+# ----------------------------------------------------------------------------- the version format
+
+def test_the_contract_samples_are_valid_versions():
+    assert check_samples() == []
+
+
+def test_the_format_rules_for_a_version_folder(tmp_path):
+    samples = Path(__file__).resolve().parents[2] / "contracts" / "datasets" / "samples"
+    shutil.copytree(samples, tmp_path / "s")
+    s = tmp_path / "s"
+    (s / "version-audio-only" / "refs").mkdir()
+    (s / "version-audio-only" / "refs" / "segments.jsonl").write_text("")
+    shutil.copy(s / "version-labelled" / "refs" / "attributes.json", s / "version-diar-v1" / "refs")
+    (s / "version-asr" / "audio").mkdir()
+    m = json.loads((s / "version-labelled" / "manifest.json").read_text())
+    (s / "version-labelled" / "manifest.json").write_text(json.dumps({**m, "label_types": []}))
+    problems = check_samples(s)
+    assert "version-audio-only: refs/ must be empty when label_types is empty (a version with audio only)" in problems
+    assert any(p.startswith("version-diar-v1: refs/ must hold exactly one references file besides uids.jsonl") for p in problems)
+    assert "version-asr: audio/ is not part of a version" in problems
+    assert "version-labelled: manifest.json: label_types []" in problems
+
+
+def test_the_digest_leaves_out_the_catalog_fields_only(tmp_path):
+    src = Path(__file__).resolve().parents[2] / "contracts" / "datasets" / "samples" / "version-labelled"
+    shutil.copytree(src, tmp_path / "v")
+    v = tmp_path / "v"
+    before = digest(v)
+    m = json.loads((v / "manifest.json").read_text())
+    m.update(source=None, export_version=9, created_at="2031-01-01T00:00:00Z", audio_included="all")
+    (v / "manifest.json").write_text(json.dumps(m, indent=4))
+    assert digest(v) == before
+    (v / "manifest.json").write_text(json.dumps({**m, "name": "Other"}))
+    assert digest(v) != before
+    (v / "manifest.json").write_text(json.dumps(m))
+    (v / "refs" / "uids.jsonl").write_text("")
+    assert digest(v) != before
 
 
 # ----------------------------------------------------------------------------- publishing (§5.3)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -496,9 +497,19 @@ def main() -> int:
         for e in exc.errors:
             print(f"  - {e}")
         return 1
+    if str(PLATFORM_DIR) not in sys.path:  # run as a script: the catalog package is beside tools/
+        sys.path.insert(0, str(PLATFORM_DIR))
+    from catalog.datasets.versions import check_samples  # the Dataset Catalog's version format, contracts/datasets
+
+    samples = check_samples()
+    if samples:
+        print("validation FAILED:")
+        for e in samples:
+            print(f"  - contracts/datasets/samples/{e}")
+        return 1
     for w in p.warnings:
         print(f"warning: {w}")
-    print(f"ok: {len(p.services)} services, {len(p.engines)} engines")
+    print(f"ok: {len(p.services)} services, {len(p.engines)} engines; dataset version samples ok")
     return 0
 
 

@@ -1,0 +1,23 @@
+[
+ {
+  "session_id": "check_clip",
+  "speaker": "agent",
+  "start_time": 0.4,
+  "end_time": 3.4,
+  "words": "Thank you for calling the help desk. How can I help you today?"
+ },
+ {
+  "session_id": "check_clip",
+  "speaker": "caller",
+  "start_time": 2.9,
+  "end_time": 6.81,
+  "words": "Hi, my parcel was meant to arrive yesterday but it never came."
+ },
+ {
+  "session_id": "check_clip",
+  "speaker": "agent",
+  "start_time": 7.11,
+  "end_time": 9.96,
+  "words": "I am sorry about that. Let me check the tracking for you."
+ }
+]

@@ -1,0 +1,28 @@
+{
+ "format": "concord-reference-package",
+ "format_version": 2,
+ "name": "Help desk calls",
+ "created_at": "2026-10-24T09:30:00Z",
+ "language": "en",
+ "tags": [
+  "call-centre",
+  "en"
+ ],
+ "source": {
+  "app": "concord-label",
+  "install_id": "dataset-catalog",
+  "dataset_uid": "8d4e2b6a1c9f4e3a9b7c5d1e2f3a4b5c",
+  "dataset_name": "Help desk calls"
+ },
+ "export_version": 4,
+ "scope": "any",
+ "label_types": [
+  "asr"
+ ],
+ "counts": {
+  "files": 1,
+  "segments": 2,
+  "hours": 0.002933
+ },
+ "audio_included": "none"
+}
