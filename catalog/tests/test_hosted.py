@@ -168,8 +168,10 @@ def test_leases_grant_hosted_models_at_once_and_start_stop_refuse(api, cat, prov
     api.post("/api/hosted", json=ASR)
     r = api.post("/api/leases", json={"holder": "bench:job-1", "models": ["hosted-asr"]})
     assert r.status_code == 201 and r.json()["state"] == "active"
-    mixed = api.post("/api/leases", json={"holder": "bench:job-2", "models": ["hosted-asr", "silero-vad"]}).json()
-    assert mixed["state"] == "starting" and mixed["models"] == ["hosted-asr", "silero-vad"]
+    # A hosted endpoint, a CPU model and one GPU model are granted together.
+    mixed = api.post("/api/leases", json={"holder": "bench:job-2",
+                                          "models": ["hosted-asr", "silero-vad", "whisper-large-v3"]}).json()
+    assert mixed["state"] == "starting" and mixed["models"] == ["hosted-asr", "silero-vad", "whisper-large-v3"]
     step(cat)
     assert api.get(f"/api/leases/{mixed['id']}").json()["state"] == "active"
     assert api.get("/api/models/hosted-asr").json()["leased_by"] == ["bench:job-1", "bench:job-2"]

@@ -8,17 +8,18 @@
     python tools/stack.py release --holder ID
     python tools/stack.py leases
 
-NAME is a service name or alias. `up` validates, renders and checks that the requested services
-fit under util_limit. GPU services that are already running stay up if they fit alongside the
-request; otherwise they are stopped first (`--no-evict` refuses instead). CPU-only services are
-never stopped. Requested services then start one at a time, GPU services first, each waiting
-until healthy: vLLM sizes its KV cache from the free memory it measures at startup, so
-concurrent starts can mis-measure.
+NAME is a service name or alias. One GPU service runs at a time and it gets the whole GPU: `up`
+validates, renders and refuses a request that names two or more GPU services (CPU services may join
+the one GPU service). Another GPU service that is running is stopped first (`--no-evict` refuses
+instead). CPU-only services are never stopped. Requested services then start one at a time, the GPU
+service first, each waiting until healthy. The GPU service gets min(util_limit, (free - 1 GiB) / total)
+of the device, measured with nvidia-smi right before its start (tools/vram_check.py start_memory): vLLM
+fails to start when the memory it asks for is not free.
 
 Leases let several apps share the GPU (tools/leases.py). `up --holder ID` (e.g. `bench:job-12`)
 leases the requested services to ID for --ttl seconds (default 120); `lease --holder ID` renews
-them and `release --holder ID` ends them. `up` never stops a leased service: if the request does
-not fit next to leased services it refuses, with or without --holder.
+them and `release --holder ID` ends them. `up` never stops a leased service: if another GPU service
+is leased, a request for a different GPU service refuses, with or without --holder.
 
 When the model catalog is running (catalog/README.md), it owns the GPU: `up`, `down`, `lease`,
 `release` and `leases` go through its API instead, so its queue and leases stay the only ones.
@@ -46,9 +47,10 @@ if __package__ in (None, ""):
 from tools import images, render
 from tools.leases import DEFAULT_TTL, Leases
 from tools.schema import PLATFORM_DIR, Manifest, Platform, PlatformError, load_platform
-from tools.vram_check import budget, format_budget
+from tools.vram_check import UTIL_VAR, budget, format_budget, measure_gpu, start_env
 
 DEFAULT_TIMEOUT = int(os.environ.get("AI_STACK_TIMEOUT", 15 * 60))
+GPU_FREE_WAIT_S = 30  # how long a GPU start waits for stopped services to give their memory back
 LEASES_DIR = PLATFORM_DIR / "run" / "leases"
 
 
@@ -73,9 +75,10 @@ def compose_file(p: Platform) -> Path:
     return p.root / "compose" / "generated" / "compose.yml"
 
 
-def compose(p: Platform, *args: str, capture: bool = False, check: bool = True) -> subprocess.CompletedProcess:
+def compose(p: Platform, *args: str, capture: bool = False, check: bool = True,
+            env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     cmd = ["docker", "compose", "-f", str(compose_file(p)), *args]
-    return subprocess.run(cmd, env=_env(p), check=check, text=True, capture_output=capture)
+    return subprocess.run(cmd, env=_env(p) | (env or {}), check=check, text=True, capture_output=capture)
 
 
 def require_docker() -> None:
@@ -180,34 +183,46 @@ def lease_store() -> Leases:
 
 def make_room(p: Platform, wanted: list[Manifest], running: dict[str, Container],
               leased: dict[str, list[str]], evict: bool) -> None:
-    """Stop running GPU services that do not fit next to `wanted`. Leased services are never stopped."""
+    """Stop the other running GPU services: the wanted GPU service gets the whole GPU. Leased services are never
+    stopped, and a request without a GPU service stops nothing."""
     wanted_names = {s.name for s in wanted}
+    if not any(s.gpu for s in wanted):
+        return
     known = {s.name: s for s in p.services}
     other_gpu = sorted(n for n, c in running.items() if c.gpu and c.state == "running" and n not in wanted_names)
     # Leased GPU services count even when not running yet: their holder may be starting them right now.
     held = sorted(n for n in leased if n not in wanted_names and (n in other_gpu or (n in known and known[n].gpu)))
-    kept = wanted + [known[n] for n in held if n in known]
     if held:
-        b = budget(p, kept)
         who = ", ".join(f"{n} (held by {' and '.join(leased[n])})" for n in held)
-        if not b.ok:
-            raise StackError(f"not enough VRAM next to leased services {who} "
-                             f"({b.total_fraction:.3f} > {p.config.util_limit}); leased services are never "
-                             f"stopped, retry when they are released")
-        print(f"keeping leased GPU services: {who}")
-    other_gpu = [n for n in other_gpu if n not in leased]
+        raise StackError(f"the GPU is leased to {who}; only one GPU service runs at a time and leased services "
+                         "are never stopped, so retry when it is released")
     if other_gpu:
-        unknown = [n for n in other_gpu if n not in known]  # manifest removed since it started: size unknown
-        combined = budget(p, kept + [known[n] for n in other_gpu if n in known])
-        if combined.ok and not unknown:
-            print(f"keeping GPU services running ({combined.total_fraction:.3f} total): {', '.join(other_gpu)}")
-        elif not evict:
-            raise StackError(f"not enough VRAM with {', '.join(other_gpu)} running "
-                             f"({combined.total_fraction:.3f} > {p.config.util_limit}); "
-                             f"stop them (`just down {' '.join(other_gpu)}`) or drop --no-evict")
-        else:
-            print(f"stopping GPU services to free VRAM: {', '.join(other_gpu)}", flush=True)
-            compose(p, "stop", *other_gpu)
+        if not evict:
+            raise StackError(f"{', '.join(other_gpu)} is running on the GPU and only one GPU service runs at a time; "
+                             f"stop it (`just down {' '.join(other_gpu)}`) or drop --no-evict")
+        print(f"stopping GPU services to give the GPU to {', '.join(s.name for s in wanted if s.gpu)}: "
+              f"{', '.join(other_gpu)}", flush=True)
+        compose(p, "stop", *other_gpu)
+
+
+def gpu_env(p: Platform, s: Manifest, wait_s: float = GPU_FREE_WAIT_S) -> dict[str, str]:
+    """Compose variables giving s the GPU memory measured as free now (stopped services give theirs back a moment
+    after they exit, so this waits up to wait_s). Without nvidia-smi: util_limit x gpu_total_gb."""
+    if s.gpu is None:
+        return {}
+    deadline = time.monotonic() + wait_s
+    while True:
+        gpu = measure_gpu()
+        try:
+            env = start_env(p, s, gpu)
+        except ValueError as exc:
+            if time.monotonic() >= deadline:
+                raise StackError(str(exc)) from None
+            time.sleep(1)
+            continue
+        if gpu:
+            print(f"  {s.name}: {env[UTIL_VAR]} of the GPU ({gpu[1]:.1f} of {gpu[0]:.1f} GiB free)")
+        return env
 
 
 @contextlib.contextmanager
@@ -239,7 +254,7 @@ def up(names: list[str], timeout: int, evict: bool = True, holder: str | None = 
     b = budget(p, wanted)
     print(format_budget(b))
     if not b.ok:
-        raise StackError(f"{', '.join(s.name for s in wanted)} together exceed util_limit {p.config.util_limit}")
+        raise StackError(b.problem())
     ensure_network(p.config.network)
     ensure_assets(p, wanted)
 
@@ -271,7 +286,7 @@ def up(names: list[str], timeout: int, evict: bool = True, holder: str | None = 
                     print(f"[{i}/{len(order)}] {s.name} ({tag}) already running and healthy")
                     continue
                 print(f"[{i}/{len(order)}] starting {s.name} ({tag}, :{s.port})", flush=True)
-                compose(p, "up", "-d", "--no-deps", "--no-build", s.name, capture=True)
+                compose(p, "up", "-d", "--no-deps", "--no-build", s.name, capture=True, env=gpu_env(p, s))
                 wait_healthy(p, s.name, timeout)
     except BaseException:
         if new:  # leave no lease behind for a request that failed
@@ -421,7 +436,10 @@ def via_catalog(cat, args: argparse.Namespace) -> int:
     try:
         if args.cmd == "up":
             p = prepare()
-            names = [s.name for s in resolve(p, args.names)]
+            wanted = resolve(p, args.names)
+            if not (b := budget(p, wanted)).ok:
+                raise StackError(b.problem())
+            names = [s.name for s in wanted]
             print(f"catalog at {cat.url}: queueing {', '.join(names)}" + (f" for {args.holder}" if args.holder else ""))
             if args.no_evict:
                 print("note: --no-evict is ignored; the catalog stops only unleased, idle, settled models")
@@ -478,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     u = sub.add_parser("up", help="start services (names or aliases), one at a time")
     u.add_argument("names", nargs="+")
-    u.add_argument("--no-evict", action="store_true", help="fail instead of stopping running GPU services that do not fit")
+    u.add_argument("--no-evict", action="store_true", help="fail instead of stopping another running GPU service")
     u.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"seconds per service (default {DEFAULT_TIMEOUT})")
     u.add_argument("--holder", type=_holder, help="lease NAMEs to this holder (e.g. bench:job-12): no other `up` stops them")
     u.add_argument("--ttl", type=_ttl, default=DEFAULT_TTL,

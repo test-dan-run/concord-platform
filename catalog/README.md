@@ -209,38 +209,47 @@ priority.
 
 ```json
 {"id": "l-8c1f…", "holder": "bench:job-12", "models": ["pyannote-diarization"],
- "state": "queued", "position": 2, "waiting_for": "pyannote-diarization does not fit next to qwen3-32b-awq (leased by label:job-3)",
+ "state": "queued", "position": 2, "waiting_for": "one GPU model runs at a time: pyannote-diarization waits for qwen3-32b-awq (leased by label:job-3)",
  "error": null, "created_at": "…", "granted_at": null, "ready_at": null, "expires_at": "…"}
 ```
 
-- `state`: `queued` -> `starting` (fits; its models are being started) -> `active` (every model is
+- `state`: `queued` -> `starting` (granted; its models are being started) -> `active` (every model is
   healthy and has a build key: call it now, and index what it returns) -> `released` | `expired` | `failed` (a model failed to start, or the request
   can never be met, `error` says why).
 - **Heartbeat** every 30 s; a lease (queued or not) expires after `ttl_s` (default 90 s, i.e. three
   missed beats) without one, so a crashed app frees its models and its queue place.
-- One request names its whole model set. A request that could only fit by stopping models the same
-  holder already leases fails at once (it would wait forever): release the old lease first.
+- One request names its whole model set, with at most one GPU model. A request for a GPU model while
+  the same holder leases a different GPU model fails at once, because it would wait forever. Release
+  the old lease first.
 - `aicore.catalog.Catalog.lease(...)` does all of this (heartbeat thread, waiting, release).
 
 ### Scheduler rules
 
-- Fit uses declared footprints: `gpu.util` for engines, `gpu.vram_gb / gpu_total_gb` for custom
-  services. Free = `util_limit` minus running GPU models minus models of starting/active leases.
-- To make room it stops only unleased models with no calls in flight that have run for their settle
-  time (2 x cold start, at least 60 s) or whose lease has ended, cheapest *reload cost* first (cold
-  start x likelihood of reuse: queued demand and recent use), and only as many as needed.
-- One model starts at a time (vLLM sizes its KV cache from free memory at start).
-- **Each model loads entirely on the GPU.** Declared footprints leave out other processes and CUDA
-  contexts, so the catalog also reads free memory from `nvidia-smi` (the container gets the NVIDIA
-  `utility` capability for this). A GPU model starts only when its whole budget (`util` x the device, or
-  `vram_gb`) plus 0.5 GiB is free on the device, and never while another GPU model is still loading: vLLM
-  assumes the memory around it does not change while it profiles, so a neighbour that loads at the same
-  time breaks its start ("No available memory for the cache blocks"). If the measured memory is short,
-  the catalog stops more idle models. If none can be stopped, the request waits with
-  `waiting_for` saying how much memory is free and about how much other processes use. Just before the
-  start it checks again, waiting up to 30 s for stopped models to give their memory back. If memory is
-  still short, the request goes back to its place in the queue, and the model is not started at all. A
-  model is never left partly loaded. Without `nvidia-smi` the catalog fits by declared footprints only.
+- Only one GPU model runs at a time, and it gets the whole GPU. A queued request for a GPU model is
+  granted when no other GPU model is running, or when the one that is running may be stopped. CPU
+  models and hosted endpoints run next to the GPU model and never wait for it.
+- A request that names two or more GPU models fails at once with HTTP 422. Lease one GPU model per
+  stage of a job, together with the CPU models and hosted endpoints that stage needs.
+- The scheduler stops a GPU model to make room only when nobody leases it, no call to it is in flight,
+  and it has run for its settle time (2 x cold start, at least 60 s) or its lease has ended. If any
+  other GPU model can't be stopped yet, the request waits, and `waiting_for` names the model it waits
+  for and the reason.
+- One model starts at a time, and no GPU model starts while another GPU model is still loading. vLLM
+  sizes its KV cache from the free memory it measures at start, so a neighbour that loads at the same
+  time breaks its start ("No available memory for the cache blocks").
+- `gpu.util` (engines) and `gpu.vram_gb` (custom services) are the least memory a model needs to
+  load. The catalog reads free memory from `nvidia-smi` (the container gets the NVIDIA `utility`
+  capability for this), so memory used by other processes counts. A GPU model starts only when that
+  minimum plus 1 GiB is free. Just before the start the catalog measures again, waiting up to 30 s
+  for a stopped model to give its memory back. If memory is still short, the request goes back to its
+  place in the queue, and the model is not started at all.
+- At start, a GPU model gets `min(util_limit, (free - 1 GiB) / total)` of the GPU, from that last
+  measurement. vLLM gets it as `--gpu-memory-utilization`, and custom services get it in GiB as
+  `AISVC_VRAM_GB`. The 1 GiB stays free because Windows keeps some GPU memory for the display under
+  WSL2, and vLLM fails to start when the memory it asks for isn't free. Without `nvidia-smi`, a GPU
+  model gets `util_limit` x `gpu_total_gb`.
+- Stopping one GPU model to start a different one counts as a swap. `GET /api/platform` returns the
+  count as `swaps`, and the catalog keeps it in its database across restarts.
 - **Models a lease brought up are spun down when nothing needs them.** Once its last lease ends, a model
   is stopped after `CATALOG_RELEASE_LINGER_S` (default 30 s, so a back-to-back lease on the same model
   keeps it loaded) unless a live or queued request names it or a call is in flight. Models started on
@@ -325,7 +334,7 @@ Response:
 - `staged` (default): each stage runs over the whole dataset before the next; each model loads once.
   Models already running go first in a stage, then the rest by cold start.
 - `co-resident`: both stages at once (streaming, or audio added mid-run). The slowest-loading stage is
-  the outer loop and stays up; the other stage's models are re-spun inside it unless they all fit
+  the outer loop and stays up; the other stage's models are re-spun inside it unless at most one model of the two stages uses the GPU
   beside it, in which case nothing is re-spun.
 - `keys` per model are optional. With keys, the catalog checks the index for the current build, and
   a model with nothing missing is skipped (`skip: true`). Keys for a later stage are usually unknown

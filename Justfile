@@ -18,11 +18,11 @@ validate:
 render:
     {{py}} tools/render.py
 
-# VRAM footprint of every service, or the budget for a set of NAMEs (exit 1 if over util_limit)
+# least GPU memory each service needs to load, or a check of a set of NAMEs (exit 1 with two or more GPU services)
 vram *names:
     {{py}} tools/vram_check.py {{names}}
 
-# start services by name/alias, one at a time (GPU first, health-gated); stops other GPU services only if VRAM runs out (--no-evict to refuse)
+# start services by name/alias, one at a time (GPU first, health-gated); one GPU service at a time, so another running GPU service is stopped (--no-evict to refuse)
 up +names:
     {{py}} tools/stack.py up {{names}}
 

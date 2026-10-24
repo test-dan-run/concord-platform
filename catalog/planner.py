@@ -2,7 +2,8 @@
 
 The plan is advice: the app runs the steps, taking one lease per step. Cold-start time is the only
 cost weighed. Staged pipelines load every model once (the lowest possible total); co-resident
-pipelines keep the slowest-loading stage in the outer loop.
+pipelines keep the slowest-loading stage in the outer loop. Only one GPU model runs at a time, so models
+fit together only when at most one of them uses the GPU.
 """
 
 from __future__ import annotations
@@ -67,13 +68,12 @@ def plan(scheduler: Scheduler, index: OutputIndex, body: dict[str, Any]) -> dict
         if len(stages) != 2:
             raise PlanError("a co-resident plan takes exactly two stages")
         outer, inner = sorted(stages, key=lambda st: -max(info[m]["cold"] for m in st["models"]))
-        limit = p.config.util_limit
         loaded_inner: set[str] = set()
         for o in sorted(outer["models"], key=lambda m: (not info[m]["running"], info[m]["cold"], m)):
             items, hits, missing = counts(outer, o)
             steps.append(_step(outer["name"], o, info[o], items, hits, missing, missing == 0,
                                load=missing != 0 and not info[o]["running"]))
-            all_fit = info[o]["frac"] + sum(info[i]["frac"] for i in inner["models"]) <= limit + 1e-9
+            all_fit = sum(info[m]["frac"] > 0 for m in [o, *inner["models"]]) <= 1  # one GPU model at a time
             for i in sorted(inner["models"], key=lambda m: (info[m]["cold"], m)):
                 items, hits, missing = counts(inner, i)
                 stays = all_fit and i in loaded_inner
@@ -84,7 +84,7 @@ def plan(scheduler: Scheduler, index: OutputIndex, body: dict[str, Any]) -> dict
                     loaded_inner.add(i)
 
     loads = sum(1 for s in steps if s["load"])
-    fits = sum(info[m]["frac"] for m in {s["model"] for s in steps}) <= p.config.util_limit + 1e-9
+    fits = sum(info[m]["frac"] > 0 for m in {s["model"] for s in steps}) <= 1
     return {"pipeline": pipeline, "steps": steps, "loads": loads,
             "est_load_s": round(sum(s["cold_start_s"] for s in steps if s["load"]), 1),
             "hits": sum(s["hits"] or 0 for s in steps), "fits_together": fits}

@@ -1,5 +1,6 @@
 """Build identity: what changes a build key and what does not."""
 
+import dataclasses
 import time
 
 from catalog_helpers import wait_builds
@@ -15,6 +16,14 @@ def test_config_hash_ignores_fields_that_do_not_change_outputs():
     same = s.model_copy(update={"port": 8199, "description": "x", "alias": None, "tasks": ["other"]})
     assert identity.config_hash(p, same) == base
     assert identity.config_hash(p, s.model_copy(update={"args": ["--max-model-len=224"]})) != base
+
+
+def test_gpu_size_is_not_part_of_the_build():
+    p = load_platform()
+    s = p.get("whisper-large-v3")
+    bigger = s.model_copy(update={"gpu": s.gpu.model_copy(update={"util": 0.5})})
+    smaller_gpu = dataclasses.replace(p, config=p.config.model_copy(update={"gpu_total_gb": 16, "util_limit": 0.8}))
+    assert identity.config_hash(p, bigger) == identity.config_hash(smaller_gpu, s) == identity.config_hash(p, s)
 
 
 def test_containers_carry_their_config_hash():

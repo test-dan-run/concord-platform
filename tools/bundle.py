@@ -224,9 +224,9 @@ def report(p: Platform, services: list[Manifest]) -> dict[str, Any]:
     warnings = list(p.warnings)
     if not has_docker:
         warnings.append("docker is not installed: image presence and sizes are unknown")
-    if not b.ok:
-        warnings.append(f"together these need {b.total_fraction:.3f} of the GPU, over util_limit {p.config.util_limit}; "
-                        "they cannot all run at once (stack.py starts the subset a job needs)")
+    if len(b.gpu) > 1:
+        warnings.append(f"{len(b.gpu)} GPU services: only one GPU service runs at a time and it gets the whole GPU "
+                        "(stack.py starts the one a job stage needs)")
     images_bytes = sum(f["bytes"] for f in facts.values() if f)
     weights_bytes = sum(r["weights_bytes"] for r in rows)
     return {
@@ -271,8 +271,8 @@ def readme(p: Platform, services: list[Manifest], title: str, *, with_images: bo
            platform_tree: bool) -> str:
     order = sorted(services, key=lambda s: (s.gpu is None, -s.vram_fraction(p.config.gpu_total_gb), s.name))
     b = budget(p, services)
-    fit = ("all of them fit on the GPU together" if b.ok else
-           "they do NOT all fit on the GPU together; start only a subset that does")
+    fit = ("one GPU service runs at a time and gets the whole GPU; stop it before you start another"
+           if len(b.gpu) > 1 else "it gets the whole GPU" if b.gpu else "none of them uses the GPU")
     if with_weights:
         weights = "in `assets/`, so `AI_ASSETS` is this bundle's `assets/` folder."
     else:
@@ -284,7 +284,8 @@ def readme(p: Platform, services: list[Manifest], title: str, *, with_images: bo
     lines = [
         f"# AI platform bundle: `{title}`",
         "",
-        f"VRAM: {b.total_fraction:.3f} of {p.config.gpu_total_gb:g} GB for all services (limit {p.config.util_limit}); {fit}.",
+        f"GPU: the largest service needs at least {max([r.fraction for r in b.rows] + [0]):.3f} of "
+        f"{p.config.gpu_total_gb:g} GB to load (limit {p.config.util_limit}); {fit}.",
         "",
         "| service | kind | contract | api | port | image |",
         "|---|---|---|---|---|---|",
@@ -307,7 +308,8 @@ def readme(p: Platform, services: list[Manifest], title: str, *, with_images: bo
         ]
     else:
         lines += [
-            "4. Start services one at a time, GPU first, waiting for `healthy` (`docker compose ps`) before the next:",
+            "4. Start services one at a time, waiting for `healthy` (`docker compose ps`) before the next. Only one "
+            "GPU service runs at a time: `docker compose stop NAME` before you start another one.",
             "",
             "```bash",
             *[f"docker compose up -d {s.name}" for s in order],
