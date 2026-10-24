@@ -13,7 +13,8 @@ imports a version without copying any audio. The platform gets a standalone UI f
 a second tab beside the Model Catalog.
 
 The work is split into milestones D0 to D7 (§11). The owner's decisions are in §1. The open questions of
-the first draft are settled, and §13 records how.
+the first draft are settled, and §13 records how. §15 records what was built and where the build differs
+from this plan.
 
 ---
 
@@ -50,7 +51,7 @@ A shared catalog fixes these gaps in one place:
   came from.
 - **One list of datasets.** The UI and both apps can show and compare every version.
 
-The platform already runs a shared service that both apps call, the model catalog's output index, which is
+The platform already runs a shared service that both apps call, the Model Catalog's output index, which is
 also keyed on the audio sha256. The Dataset Catalog follows the same pattern. The apps already depend on
 the platform's Python client (`clients/aicore`), so the shared client code goes there. That avoids adding a
 module that would be copied by hand between Bench and Label (Label's AGENTS.md lists the modules the apps
@@ -110,7 +111,7 @@ the path they see. In `just dev`, the apps run on the host and read the host pat
 ### 4.2 Database
 
 The Dataset Catalog has its own SQLite file (`datasets.db`), kept apart from `run/catalog/catalog.db`. It
-uses the catalog's `DB` class (`catalog/db.py`: raw SQL, WAL, one schema string). The model catalog's
+uses the catalog's `DB` class (`catalog/db.py`: raw SQL, WAL, one schema string). The Model Catalog's
 database holds state that can be rebuilt, while the dataset records can't be rebuilt, so the two files are
 backed up differently.
 
@@ -450,3 +451,225 @@ the section it shapes.
 | The two apps derive different 16 kHz audio from the same original, so shared outputs don't match. | No change from today. Both apps already rely on deriving the same audio from the same original sha256. |
 | Merge conflicts with the model-cards work on platform `main`. | D0 commits that work first. The dataset routes are added to `catalog/app.py` by one call, and the UI changes are mostly in new files. |
 | Contract version 3 lands in one app before the other. | Both app branches merge together after D6 (§11). |
+
+## 15. What was built
+
+D0 to D7 were built on 2026-10-24 and 2026-10-25, on the `dataset-catalog` branch of each repository. Each
+branch lives in its own worktree: `worktrees/platform-dataset-catalog`, `worktrees/bench-dataset-catalog`
+and `worktrees/label-dataset-catalog`, next to `platform` and `apps`. None of the branches is merged yet.
+This section lists, per milestone, what was built and where the build differs from the plan, with the
+reason. §15.9 lists the gaps that are still open, and §15.10 lists what has to happen before the branches
+merge.
+
+### 15.1 D0: branches
+
+- The three `dataset-catalog` branches start from the last commit on each `main`. Label `main` already
+  has the merge of `reference-package-v2` (4a8fd22), so it speaks contract version 2.
+- **Differs from the plan.** §11 asked D0 to commit or set aside the uncommitted work on platform `main`
+  (model cards) and on Bench `main` (stopping jobs). D0 did neither. It left that work untouched in the
+  main working trees and made the branches in separate worktrees from the committed `main`, so the
+  Dataset Catalog work never mixed with it. That work still has to be committed (§15.10).
+
+### 15.2 D1: names and the tab switch (platform)
+
+- The UI's `<title>`, the Nav brand, the FastAPI title, the heading of `catalog/README.md`, the title of
+  MODEL_CATALOG_REDESIGN.md and the root README say "Model Catalog". The two lines of
+  MODEL_CATALOG_REDESIGN.md now point here. The static page from `just catalog` is "AI service list".
+- The Nav has the Model Catalog / Dataset Catalog switch. Any path under `/datasets` is the Dataset
+  Catalog, and every other path is the Model Catalog, so `/` and `/models/:id` open the same pages as
+  before.
+- The catalog UI had no tests. D1 added vitest and a test of the paths and the switch.
+- **Differs from the plan.** The Nav brand and `<title>` follow the open tab, so they read "Dataset
+  Catalog" on the Dataset Catalog's pages. The plan had them always read "Model Catalog". This way the
+  brand names the catalog that is open.
+- The apps' UI text was renamed in D4 and D5, and the docs in D7.
+
+### 15.3 D2: the service, the format and the client (platform)
+
+- `catalog/datasets/` holds the store (`store.py`), datasets and versions (`versions.py`), the reading of
+  references for the UI (`refs.py`), clean-up (`gc.py`) and the routes (`routes.py`). `catalog/app.py`
+  adds the routes with one call. `just datasets-gc` runs clean-up through the running service.
+- `contracts/datasets/version.md` describes format version 3, with four sample versions that
+  `just validate` checks: labelled (format 2), text only (format 2), speakers only (format 1) and audio
+  only (format 3).
+- `aicore.datasets` has `DatasetCatalog` and `FakeDatasetCatalog`. `catalog/tests/test_dataset_client.py`
+  runs the same tests on both, so the fake can't drift from the service.
+- `just catalog-up` creates the store and mounts it read-write at the same path, and the catalog image
+  has ffmpeg. `.env.example` has `AI_DATA` and `DATASET_STORE`.
+- **Differs from the plan:**
+  - `dataset` has a `last_n` column, the highest version number used so far. A deleted version's number is
+    then never used again, even when it was the latest version.
+  - `version` has a `labels` column with the label names, for the Datasets page and its filters.
+  - The digest also leaves out `created_at` and `audio_included`, so a version published from a folder
+    and the same version imported from a zip with audio get the same digest.
+  - `refs.py` reads the formats Label writes (SegLST, `segments.jsonl` and RTTM), plus STM. A version with
+    another references format is stored, but the UI shows no segments for it.
+  - A version with audio only may not have `refs/` or `refs/attributes.json`.
+  - For an upload that stopped partway, clean-up counts the 24 hours from its last write, so an upload
+    that is still going is never removed.
+  - `POST /api/datasets/{id}/versions` also takes a whole reference package zip. Its `audio/` is checked
+    and stored, and `outputs/` is dropped. `POST /api/datasets/import` takes `preview`, which stores
+    nothing. `GET /api/datasets` can also filter by `app`.
+  - `DatasetCatalog` needs the app's name (`app`) and sends it with everything it creates, publishes,
+    holds and uses. `publish` and `publish_audio` return the version with `created`, which is false when
+    the content matches the latest version.
+
+### 15.4 D3: the pages (platform)
+
+- The pages of §6 are built: Datasets, Dataset, Version, Compare, Upload audio, Import package and
+  Storage. The Storage widget replaces the GPU widget in the Nav while the Dataset Catalog is open. The
+  `dataset` event refreshes the lists, the records and the store stats.
+- The browser hashes files with a SHA-256 written in plain TypeScript (`lib/sha256.ts`), because
+  `crypto.subtle` can't hash a file in parts and works only on https or localhost. Uploads resume from the
+  size the store reports, and they retry with a growing delay.
+- A new dataset made on Upload audio is removed again if its first version can't be made.
+- **Differs from the plan:**
+  - Import package sends the zip twice, once for the preview and once for the import, because there is
+    no route that imports a zip already in the store (§15.9).
+  - Upload audio calls commit for files the store already has, to get their audio records.
+  - The label statistics on the Version page count file labels only.
+  - "Open in Label" shows only when Label registered with the catalog (`POST /api/apps`) at an address a
+    browser can reach, because the catalog learns Label's address only from that registration (§15.9).
+
+### 15.5 D4: Concord Bench
+
+- With `DATASET_STORE` set, ingest uploads originals to the store and holds them, and `paths.original`
+  reads the store first. Bench uses the app name `concord-bench`, and its catalog URL is `CATALOG_URL` or
+  `AICORE_CATALOG`. `/api/config` reports `dataset_catalog` (`enabled`, `ui_url`). Without
+  `DATASET_STORE`, nothing changes.
+- Import references has a second source, From Dataset Catalog. Bench stages the version's folder on the
+  mount as the package root, with no copy. Migration `bench_0009` adds `dataset.catalog_dataset_id` and
+  `catalog_version`.
+- The dataset page publishes a dataset from an annotated upload or a zip, as version 1 of a new catalog
+  dataset or as the next version of an existing one. Bench had no reference package writer, so
+  `datasets/catalog.py` got `write_version`.
+- `just move-originals` moves `data/originals/` into the store.
+- The exit check passes: `tests/test_dataset_catalog_versions.py` imports the fixture set as a zip and as
+  a catalog version, and both score the same.
+- **Differs from the plan:**
+  - `just move-originals` holds only the originals that a Bench dataset uses. No Bench dataset would ever
+    release a hold on the others, so clean-up removes them from the store later. They are still in
+    `data/originals.moved/`.
+  - Ingest needs the catalog service. When it doesn't answer, the upload fails, and there is no fallback
+    copy in `data/originals/`. §14 expects this, since only uploads, publishing and holds wait for the
+    service.
+  - Deleting a dataset answers 503 and keeps the dataset when the catalog doesn't answer, so no hold is
+    lost.
+  - A publish from Bench also records a use, so the catalog shows that the Bench dataset is that version.
+  - Publishing leaves out files that can't be decoded, because a version gives each file's duration and
+    sample rate. It refuses a dataset where some segments have a speaker without text and others have text
+    without a speaker, because one references file can't hold both. A dataset that was already published,
+    or made from a catalog version, can't be published from Bench. A first publish that fails deletes the
+    catalog dataset it made.
+  - Holds belong to an app name, so Bench releases a hold only when no other Bench dataset needs the file.
+  - In D4, catalog versions could be format version 3 while zips stayed at versions 1 and 2. D6 then let
+    zips be format version 3 too.
+
+### 15.6 D5: Concord Label
+
+- With `DATASET_STORE` set, ingest uploads originals to the store and holds them, and `paths.original`
+  looks in the store first and then in `data/originals/`, where Sync still puts audio. Label uses the app
+  name `concord-label`, the catalog URL `CATALOG_URL` or `AICORE_CATALOG`, and `CATALOG_UI_URL` for links.
+  `/api/config` reports `dataset_catalog` (`enabled`, `store`, `url`, `ui_url`).
+- Publish to Dataset Catalog and New from Dataset Catalog are built, with the endpoints
+  `POST /api/datasets/{id}/catalog-publishes` and `POST /api/datasets/from-catalog`. Migration
+  `label_0007` adds `dataset.catalog_dataset_id`, `dataset.catalog_version` and
+  `reference_export.catalog_dataset_id`.
+- `just move-originals` moves `data/originals/` into the store. It holds every original, and it renames
+  nothing unless every file is in the store and visible at `DATASET_STORE`.
+- The exit check passes: a published version opens in a new Label dataset with the same segments, uids
+  and file labels.
+- **Differs from the plan:**
+  - A publish is a `reference_export` row with destination `catalog`, run as a `reference` job, so it
+    reuses the history and the job of Send to Bench. A dataset made from a version runs as a new
+    `catalog-dataset` job.
+  - New from Dataset Catalog reads the file labels in `refs/attributes.json`, but not its speaker labels.
+  - Label has no compose file, so the Dockerfile notes how to mount the store read-only.
+  - Label imports `aicore.datasets` only when `DATASET_STORE` is set, so it still runs with an aicore that
+    has no Dataset Catalog client.
+  - Deleting a dataset stops when the catalog doesn't answer, so no hold is lost.
+  - Label's Docker image takes aicore from the `PLATFORM_DIR` build context. With platform `main` that
+    aicore has no `aicore.datasets`, so build the image with `PLATFORM_DIR` set to the platform worktree.
+
+### 15.7 D6: contract version 3 (Bench and Label)
+
+- `CONTRACTS.md` and `contracts/` are at contract version 3 in both apps, with the same text and files.
+  A reference package is a dataset version plus `audio/`, and format version 3 allows audio only. The
+  flags file is format version 2, with `catalog_dataset_id`, `catalog_version` and `dataset_name`. The
+  push endpoints are out of the contract, and Label reads scores at
+  `GET /api/datasets/by-catalog/{dataset_id}/scores`. `files/by-sha` and `/label/file/by-sha/{sha}` take
+  `catalog_dataset_id`. `contracts/check.py` also checks the platform's four sample versions when
+  `PLATFORM_DIR` is set.
+- Bench removed `POST /api/fingerprints/missing`. It keeps the uploads and reference-imports routes for its
+  own pages. It refuses zips with audio only. It offers flags and "Open in Label" only for datasets that
+  are catalog versions, and the page of an older dataset says why.
+- Label finds the working dataset for flags by `catalog_dataset_id`, picking the dataset based on the
+  highest version and then the newest. Live evaluation asks Bench for the locked score by catalog dataset
+  id. "Open in Label" from the Dataset Catalog UI works, and when no dataset matches, the page points to
+  New from Dataset Catalog.
+- `just e2e-handoff` in Label runs the round trip with three images on one Docker network:
+  `aiplatform-catalog:dataset-catalog`, `concord-bench:dataset-catalog` and `concord-label:dataset-catalog`.
+  It passes: upload in Label, publish, import in Bench, flag back to Label.
+- At the end of D6, Bench passed 292 pytest, 29 vitest and 10 Playwright tests. Label passed 215 pytest
+  and 48 vitest tests. Its Playwright tests passed 15 and skipped 1 with the catalog on, and passed 14 and
+  skipped 2 with it off. `just check-contracts` passes in both apps.
+- **Differs from the plan:**
+  - Without the Dataset Catalog, Label's panel is "Download references", which builds a zip, so Label still
+    works without the catalog. A push request answers 422, and a push queued before the change fails with
+    the reason.
+  - Both apps still read flags format version 1, by dataset uid and install id, for files written before
+    the change.
+  - A zip of a catalog version that Bench imports gets the catalog dataset id, so its flags and links work.
+    It records no use, because the zip didn't come through the catalog.
+  - "Open in Label" in the Dataset Catalog UI stays hidden in Docker (§15.9).
+
+### 15.8 D7: docs
+
+- Platform: `catalog/README.md` has a Dataset Catalog section (the store and its backup, `DATASET_STORE`
+  and `AI_DATA`, the API, the pages, holds and clean-up, and `aicore.datasets`). The root README and
+  `contracts/README.md` mention the Dataset Catalog. Docs and docstrings say "Model Catalog".
+- Bench: README.md covers audio in the store, import from and publish to the Dataset Catalog,
+  `just move-originals`, contract version 3 and the settings. HANDOFF.md has a note. Docs, comments and
+  the error messages that name the Model Catalog say "Model Catalog".
+- Label: README.md has a Dataset Catalog section and the known gaps. AGENTS.md lists the shared modules
+  that now differ between the apps, and how to work against the new aicore. The Docs page says how flags
+  and "Open in Label" find a dataset. HANDOFF.md has a note.
+- This section.
+
+### 15.9 Known gaps
+
+- **"Open in Label" in Docker.** The catalog learns where Label is only from Label's registration
+  (`POST /api/apps`). In Docker, Label registers its container address, `http://concord-label:8620`, which
+  a browser can't open. So the Dataset Catalog UI hides "Open in Label" there. It works when Label runs on
+  the host. The fix is for Label to also register the URL where people open its pages.
+- **Import package sends the zip twice.** The page uploads the zip once for the preview and again for the
+  import, because there is no route to import a zip that is already in the store. A large zip takes twice
+  as long.
+- **`/docs` on Label's built app.** Loading `/docs` directly, e.g. from a bookmark or a reload, opens
+  FastAPI's Swagger page, because FastAPI serves its API docs at `/docs`. The app's own Docs page opens
+  only from the sidebar. This bug is older than this work.
+- **Running the apps against the new aicore before the platform branch merges.** Both apps install aicore
+  from `../../platform/clients/aicore`, and the client there has no `aicore.datasets` until the platform
+  branch merges. Until then, install the client from the platform worktree into each app's environment
+  as an editable install (`uv pip install -e <platform worktree>/clients/aicore`). Set `UV_NO_SYNC=1` for
+  every `just` and `uv run` command, so uv doesn't put the old client back, and never run a plain
+  `uv sync` or `just setup`. Set `PLATFORM_DIR` to the platform worktree too, for `just build`,
+  `just check-contracts` and `just e2e-handoff`.
+
+### 15.10 Before the branches merge
+
+- **Commit the work D0 left on `main`.** The model cards on platform `main` and stopping jobs on Bench
+  `main` are still uncommitted. Commit each on its `main` first, and then merge the `dataset-catalog`
+  branches. Expect conflicts:
+  - Platform: the model cards change `Justfile`, `catalog/README.md`, `catalog/app.py`,
+    `catalog/ui/package.json`, `catalog/ui/package-lock.json` and `catalog/ui/src/lib/api.ts`, which the
+    branch changes too.
+  - Bench: stopping jobs changes `README.md`, `api/datasets.py`, `core/models.py`, `core/paths.py`,
+    `runs/jobs.py`, `Leaderboard.tsx`, `JobsPage.tsx`, `lib/api.ts`, `tests/test_cache.py` and
+    `tests/test_orchestration.py`, which the branch changes too.
+- **Merge order.** The platform branch can merge first, because the Dataset Catalog adds routes and
+  changes none of the Model Catalog's. Once it is on platform `main`, the apps get `aicore.datasets` from
+  `../../platform`, and the workaround in §15.9 is no longer needed. Contract version 3 needs both apps at
+  once, so the Bench and Label branches merge into their `main` branches together (§11).
+- **Shared modules.** The two apps changed several shared modules in different ways. Label's AGENTS.md,
+  "Code shared with Concord Bench", lists them.
