@@ -6,6 +6,8 @@ api: audio.transcriptions
 port: 8109
 gpu:
   vram_gb: 3                       # measured 2026-10-23: 2.16 GiB loaded, 2.29 GiB peak on a 70 s clip (3 chunks of 30 s)
+  # batch profile 2026-10-25 (0.2.0, sweep of concurrent requests, torch): peak GiB = 3.91 + 0.0015 x seconds of audio
+  # in the batch; 128 concurrent 30 s requests used 9.6 GiB, so memory is not the limit.
 description: "Speech-to-text, ARK-ASR-0.6B (19 languages incl. zh, en, ja, ko and Central/Eastern European) on transformers; distilled from a larger ASR teacher; 30 s chunking"
 tasks: [speech-recognition]
 batch:

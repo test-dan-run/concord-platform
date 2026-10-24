@@ -8,6 +8,8 @@ port: 8411
 gpu:
   vram_gb: 4                       # measured 2026-10-24: peak 2.9 GiB allocated at every rate (8-48 kHz, 0.01-60 s);
                                    # one pass is capped at 240k samples, longer audio goes in 5 s chunks
+  # batch profile 2026-10-25 (0.2.0, sweep, torch): peak GiB = 1.23 + 0.266 x seconds of audio in the batch; 19 clips
+  # of 5 s fit 29.6 GB, 9 fit 16 GB. Only pieces of equal length share a pass.
 description: "Universal speech enhancement, NVIDIA NemotronLabs RE-USE (9.6M, bidirectional Mamba): noise, reverb, clipping, band limits, codec artifacts; 8-48 kHz, output keeps the input rate and length"
 tasks: [speech-enhancement, noise-suppression, dereverberation, speech-restoration]
 batch:

@@ -6,10 +6,13 @@ api: audio.transcriptions
 port: 8107
 gpu:
   vram_gb: 9                       # measured 2026-10-18: 7.2 GB loaded, 8.1 GB peak on 4-10 s clips
+  # batch profile 2026-10-25 (0.2.0, sweep of concurrent requests, torch): peak GiB = 7.45 + about 0.57 per 30 s piece
+  # (every piece is padded to 30 s); 33 pieces fit 29.6 GB, 12 fit 16 GB.
 description: "Speech-to-text, MERaLiON-3-3B-ASR (Singapore English, Mandarin, Malay, Tamil, code-switching) on transformers; 30 s chunking"
 tasks: [speech-recognition, code-switching-asr]
 batch:
   max_item_s: 30                   # longer audio is cut into 30 s pieces that run as separate batch rows
+  lengths_s: [30]                  # the processor pads every piece to 30 s, so every item costs a 30 s item
 build:
   context: custom/meralion-3-3b-asr
   image: "{registry}/meralion-3-3b-asr:0.2.0"

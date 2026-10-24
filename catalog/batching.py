@@ -52,6 +52,9 @@ log = logging.getLogger("catalog.batching")
 HOLDER = "catalog:batch"
 HEADROOM = 0.9  # a recommendation keeps the predicted peak under this share of the memory
 MAX_N = 256  # largest batch ever recommended (the fit is not trusted far past the measured points)
+# Most audio in one request: OIP sends samples as JSON numbers, so 64 x 180 s (11,520 s) took the aligner server's
+# host memory with it on 2026-10-25, while 32 x 180 s worked. Recommendations and the sweep stay under this.
+MAX_REQUEST_S = 6000.0
 SWEEP_MAX_N = 128
 DEFAULT_LENGTHS_S = (2.0, 15.0, 60.0)
 SLOW_S = 120.0  # a batch that takes longer ends its length's sweep
@@ -110,7 +113,8 @@ class Profile:
         room = HEADROOM * vram_gib - self.base
         if room < per or room <= 0:
             return 0
-        return MAX_N if per <= 0 else min(MAX_N, int(room / per))
+        cap = min(MAX_N, max(1, int(MAX_REQUEST_S // max(length, 1e-9))))
+        return cap if per <= 0 else min(cap, int(room / per))
 
     def need(self, n: int, length: float) -> float:
         """GiB of memory a batch needs: the peak with the headroom (audio) or the vLLM budget (kv)."""
@@ -127,6 +131,7 @@ class Profile:
         if n < 1 or room <= 0:
             return {}
         padded_s = room / (self.a + self.b * longest) if self.a + self.b * longest > 0 else MAX_N * longest
+        padded_s = min(padded_s, MAX_REQUEST_S)
         return {"AISVC_MAX_BATCH": str(n), "AISVC_MAX_BATCH_LEN": str(max(int(longest * 1000), int(padded_s * 1000)))}
 
     def to_json(self) -> dict[str, Any]:
@@ -386,6 +391,9 @@ def sweep(send: Callable[[int, float], None], memory: Memory, lengths: list[floa
         while n <= max_n:
             if stop is not None and stop.is_set():
                 return points, stops, how
+            if n > 1 and n * length > MAX_REQUEST_S:
+                why = f"a batch of {n} would be {n * length:.0f} s of audio in one request, over {MAX_REQUEST_S:.0f} s"
+                break
             if budget_gib is not None and len(here) >= 2:
                 # Doubling N about doubles what the batch adds to the first point. Past the budget, WSL2 does not
                 # fail: Windows moves GPU memory to system RAM and the batch takes minutes, so stop before it.

@@ -225,3 +225,17 @@ def test_kv_profile_from_a_vllm_0_31_log():
     prof = kv_profile(text, 28.66)
     assert prof.kv_tokens == 130208 and prof.max_model_len == 32768 and prof.max_concurrency == 3.97
     assert prof.recommend(28.66, 32768) == 3
+
+
+def test_no_request_carries_more_than_the_audio_cap():
+    from catalog.batching import MAX_REQUEST_S
+
+    prof = Profile(kind="audio", base=1.0, a=0.0001, b=0.0, max_item_s=180.0)
+    assert prof.recommend(29.6, 180.0) == int(MAX_REQUEST_S // 180)
+    mem = FakeMemory(limit=1e9)
+
+    def send(n, length):
+        mem.last = (n, length)
+
+    pts, stops, _ = sweep(send, mem, [180.0], budget_gib=1e6, max_n=128)
+    assert max(p.n for p in pts) == 32 and "over 6000 s" in stops[0]["stopped"]
