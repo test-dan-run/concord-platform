@@ -1,7 +1,8 @@
-import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet, type RouteObject } from "react-router-dom";
 import { useCatalogEvents } from "../lib/events";
 import { AddModel } from "../pages/AddModel";
 import { ContractPage } from "../pages/ContractPage";
+import { DatasetsPage } from "../pages/DatasetsPage";
 import { DocsPage } from "../pages/DocsPage";
 import { ExportPage } from "../pages/ExportPage";
 import { IndexPage } from "../pages/IndexPage";
@@ -22,7 +23,8 @@ function Shell() {
   );
 }
 
-export const router = createBrowserRouter([
+// The Model Catalog's paths are fixed: both apps link to `/` and `/models/:id`. The Dataset Catalog lives under /datasets.
+export const routes: RouteObject[] = [
   {
     element: <Shell />,
     children: [
@@ -35,7 +37,11 @@ export const router = createBrowserRouter([
       { path: "/contract", element: <ContractPage /> },
       { path: "/docs", element: <DocsPage /> },
       { path: "/export", element: <ExportPage /> },
+      { path: "/datasets", element: <DatasetsPage /> },
+      { path: "/datasets/*", element: <Navigate to="/datasets" replace /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
-]);
+];
+
+export const router = createBrowserRouter(routes);

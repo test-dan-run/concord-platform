@@ -1,4 +1,4 @@
-# Model catalog — design
+# Model Catalog: design
 
 Oct 22, 2026 · @Dan
 
@@ -13,7 +13,7 @@ build key covers their weights. The catalog listens on 8700.
 One catalog service registers, verifies and runs every model service, so Benchmark and Labelling never load or verify a model themselves. Both apps ask the catalog for models by capability and send their inference calls through it.
 
 - **In scope:** reading model definitions, verifying contracts, recording capabilities, starting and stopping model services within the available compute, routing inference calls, indexing model outputs, planning multi-model jobs.
-- **Out of scope:** datasets, metrics, labels and training. Those stay in the apps.
+- **Out of scope:** metrics, labels and training. Those stay in the apps. Datasets are kept in the Dataset Catalog, a second catalog in the same service, which [DATASET_CATALOG_PLAN.md](DATASET_CATALOG_PLAN.md) describes.
 - **Where it lives:** the catalog is the control plane of the Personal AI service platform, not a third standalone app. The platform repo's README stays the source of truth for model contracts and per-model config; the catalog reads that config and adds nothing the platform already defines.
 - **Deployment:** one catalog per compute environment. It manages only the GPUs of the host it runs on.
 
@@ -132,4 +132,4 @@ Apps need six catalog calls plus the gateway; paths are a sketch, not final.
 - **Model pickers** in both apps list catalog models filtered by task and tag, each showing state (running, stopped, starting, queued), capabilities and cold-start time.
 - **Benchmark** submits a grid as a job, shows the plan (stages, loads, index hits) before running, and shows "waiting for compute" with queue position while blocked.
 - **Labelling** takes a lease for a pseudo-labelling pass; outputs Benchmark already stored are found through the catalog's index and read from Benchmark.
-- **Export from Labelling to Benchmark** is unchanged; datasets stay in the apps.
+- **Export from Labelling to Benchmark** goes through the Dataset Catalog. Labelling publishes dataset versions there, and Benchmark imports them, as [DATASET_CATALOG_PLAN.md](DATASET_CATALOG_PLAN.md) describes.

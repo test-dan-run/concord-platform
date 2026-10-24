@@ -208,9 +208,21 @@ export function Fact({ k, v }: { k: ReactNode; v: ReactNode }) {
   );
 }
 
-export function Toggle({ options, value, onChange, label }: { options: { value: string; label: string }[]; value: string; onChange: (v: string) => void; label: string }) {
+export function Toggle({
+  options,
+  value,
+  onChange,
+  label,
+  className,
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+  className?: string;
+}) {
   return (
-    <span role="group" aria-label={label} className="inline-flex border border-line rounded-md overflow-hidden">
+    <span role="group" aria-label={label} className={cx("inline-flex border border-line rounded-md overflow-hidden", className)}>
       {options.map((o) => (
         <button
           key={o.value}
