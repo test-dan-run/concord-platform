@@ -31,7 +31,7 @@ def test_plain_base_has_no_build_args(docker):
     p = load_platform()
     images.build(p, p.get("faster-whisper-large-v3"))  # GPU service on the slim base (pip CUDA wheels)
     assert "--build-arg" not in docker[0] and docker[0][-1].endswith("custom/_bases")
-    assert "BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1" in docker[1]
+    assert "BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0" in docker[1]  # on the current base since batching wave B
 
 
 def test_engine_services_have_nothing_to_build(docker):
@@ -86,7 +86,8 @@ def test_services_kept_on_the_old_base_keep_their_build_identity(name):
 
 
 # Batching waves move services to the 0.2.0 bases (aisvc batching); kokoro-tts and voxcpm2 stay on 0.1.1.
-BATCHED = {"wavlm-sv", "redimnet2-sv", "utmos", "dnsmos"}  # wave A
+BATCHED = {"wavlm-sv", "redimnet2-sv", "utmos", "dnsmos",  # wave A
+           "faster-whisper-large-v3", "meralion-3-3b-asr", "ark-asr-0-6b", "qwen3-forced-aligner"}  # wave B
 
 
 def test_every_custom_service_stays_on_base_0_1_1_until_its_wave():

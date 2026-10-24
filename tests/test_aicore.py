@@ -208,6 +208,27 @@ def test_oip_client_validates_before_sending():
         c.encode({k: v for k, v in good.items() if k != "MASK"})
 
 
+BATCH_SIG = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]},
+                        {"name": "LENGTHS", "datatype": "INT32", "shape": [-1]},
+                        {"name": "TEXT", "datatype": "BYTES", "shape": [-1]}],
+             "outputs": [{"name": "WORDS", "datatype": "BYTES", "shape": [-1]}]}
+
+
+def test_oip_client_sends_one_clip_to_a_batch_signature_as_it_is():
+    """Callers written for a single-clip signature keep working when it becomes a padded batch (AUDIO [-1, -1] +
+    LENGTHS): AUDIO [-1] without LENGTHS goes to the server unchanged, which answers it as one row."""
+    c = aicore.OIPClient("http://x", "m", BATCH_SIG, http=object())
+    one = c.encode({"AUDIO": np.zeros(5, np.float32), "TEXT": np.array(["hi"])})
+    assert [(t["name"], t["shape"]) for t in one] == [("AUDIO", [5]), ("TEXT", [1])]
+    batch = c.encode({"AUDIO": np.zeros((2, 5), np.float32), "LENGTHS": np.array([5, 3], np.int32),
+                      "TEXT": np.array(["a", "b"])})
+    assert [t["shape"] for t in batch] == [[2, 5], [2], [2]]
+    with pytest.raises(AicoreError, match="missing \\['LENGTHS'\\]"):  # a 2-D batch still needs its lengths
+        c.encode({"AUDIO": np.zeros((2, 5), np.float32), "TEXT": np.array(["a", "b"])})
+    with pytest.raises(AicoreError, match="shape \\[5\\] does not match"):  # with LENGTHS, AUDIO must be 2-D
+        c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "TEXT": np.array(["a"])})
+
+
 def test_oip_error_response_raises(oip_stub):
     c = aicore.OIPClient("http://testserver", "other-model", STUB_SIG, http=oip_stub._http)
     with pytest.raises(aicore.oip.OIPError) as exc:

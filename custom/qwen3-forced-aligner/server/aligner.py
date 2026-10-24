@@ -5,13 +5,15 @@ transcript, put two <timestamp> slots after each word, take the argmax class of 
 package's monotonic fix) and also keeps the softmax probability of each slot's class: a word's score is the mean of
 its two. `nagisa` (Japanese tokeniser) is imported by the package at module level but has no Python 3.12 wheel, so
 a stub stands in for it; Japanese is not supported here.
+
+Many clips align in one padded forward pass (`slot_classes_batch`); the package's own `align` batches the same way.
 """
 
 from __future__ import annotations
 
 import sys
-import threading
 import types
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -61,13 +63,23 @@ def _stub_nagisa() -> None:
         sys.modules["nagisa"] = stub
 
 
+@dataclass
+class Row:
+    """One clip ready to align: 16 kHz audio, the aligner's words, and the prompt with two <timestamp> slots per word."""
+    audio: np.ndarray
+    words: list[str]
+    prompt: str
+
+
+EMPTY = ([], np.zeros((0, 2), np.float32), np.zeros(0, np.float32))
+
+
 class QwenForcedAligner:
     def __init__(self, weights_dir):
         self.weights_dir = Path(weights_dir)
         self.wrapper = None
         self.device = "cpu"
         self._torch = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         import torch
@@ -90,32 +102,62 @@ class QwenForcedAligner:
     def words(self, text: str, language: str) -> tuple[list[str], str]:
         return self.wrapper.aligner_processor.encode_timestamp(text, language)
 
-    def slot_classes(self, audio: np.ndarray, aligner_text: str) -> tuple[np.ndarray, np.ndarray]:
-        """(class index, its probability) for every <timestamp> slot, in order."""
-        torch, w = self._torch, self.wrapper
-        inputs = w.processor(text=[aligner_text], audio=[audio], return_tensors="pt", padding=True)
-        inputs = inputs.to(w.model.device).to(w.model.dtype)
-        with torch.inference_mode():
-            logits = w.model.thinker(**inputs).logits[0].float()
-        slots = inputs["input_ids"][0] == w.timestamp_token_id
-        probs = torch.softmax(logits[slots], dim=-1)
-        p, idx = probs.max(dim=-1)
-        return idx.cpu().numpy(), p.cpu().numpy()
-
-    def align(self, audio: np.ndarray, sample_rate: int, text: str, language: str):
+    def row(self, audio: np.ndarray, sample_rate: int, text: str, language: str) -> Row:
+        """Check and prepare one clip; raises ValueError on bad input, before any batch runs."""
         if self.wrapper is None:
             raise RuntimeError("model not loaded")
-        lang = language_name(language)
-        x = prepare(audio, sample_rate)
-        with self._lock:
-            word_list, aligner_text = self.words(text, lang)
-            if not word_list:
-                return [], np.zeros((0, 2), np.float32), np.zeros(0, np.float32)
-            idx, prob = self.slot_classes(x, aligner_text)
-        if len(idx) != 2 * len(word_list):
-            raise RuntimeError(f"{len(idx)} timestamp slots for {len(word_list)} words")
-        ms = idx * self.wrapper.timestamp_segment_time
-        fixed = self.wrapper.aligner_processor.fix_timestamp(ms)
+        lang, x = language_name(language), prepare(audio, sample_rate)
+        words, prompt = self.words(text, lang)
+        return Row(x, list(words), prompt)
+
+    def slot_classes_batch(self, rows: list[Row]) -> list[tuple[np.ndarray, np.ndarray]]:
+        """(class index, its probability) of every <timestamp> slot of each row, from one padded forward pass.
+
+        Each row is prepared alone, exactly as it would be on its own; prompts are padded on the left and the mel
+        features on the right with their mask. The audio encoder runs each clip at its own length and the decoder
+        takes positions from the attention mask, so a row gets what it gets alone (up to bf16 rounding).
+        Callers serialise calls (aisvc MicroBatcher).
+        """
+        torch, w = self._torch, self.wrapper
+        one = [w.processor(text=[r.prompt], audio=[r.audio], return_tensors="pt", padding=True) for r in rows]
+        pad = w.processor.tokenizer.pad_token_id or 0  # masked out, so any id that is not a <timestamp> slot
+        width, frames = max(o["input_ids"].shape[1] for o in one), max(o["input_features"].shape[-1] for o in one)
+        inputs = {"input_ids": torch.full((len(one), width), pad, dtype=torch.long),
+                  "attention_mask": torch.zeros((len(one), width), dtype=torch.long),
+                  "input_features": torch.zeros((len(one), one[0]["input_features"].shape[1], frames)),
+                  "feature_attention_mask": torch.zeros((len(one), frames), dtype=torch.long)}
+        for i, o in enumerate(one):
+            n, f = o["input_ids"].shape[1], o["input_features"].shape[-1]
+            inputs["input_ids"][i, width - n:] = o["input_ids"][0]
+            inputs["attention_mask"][i, width - n:] = o["attention_mask"][0]
+            inputs["input_features"][i, :, :f] = o["input_features"][0]
+            inputs["feature_attention_mask"][i, :f] = o["feature_attention_mask"][0]
+        inputs = {k: v.to(w.model.device, dtype=w.model.dtype) if v.is_floating_point() else v.to(w.model.device)
+                  for k, v in inputs.items()}
+        with torch.inference_mode():
+            logits = w.model.thinker(**inputs).logits
+            out = []
+            for i in range(len(one)):
+                slots = logits[i][inputs["input_ids"][i] == w.timestamp_token_id].float()
+                p, idx = torch.softmax(slots, dim=-1).max(dim=-1)
+                out.append((idx.cpu().numpy(), p.cpu().numpy()))
+        return out
+
+    def result(self, row: Row, idx: np.ndarray, prob: np.ndarray):
+        """(words, times [n, 2] in seconds, scores [n]) from the slot classes: class x 80 ms, then the package's
+        monotonic fix."""
+        if len(idx) != 2 * len(row.words):
+            raise RuntimeError(f"{len(idx)} timestamp slots for {len(row.words)} words")
+        fixed = self.wrapper.aligner_processor.fix_timestamp(idx * self.wrapper.timestamp_segment_time)
         times = np.asarray(fixed, np.float32).reshape(-1, 2) / 1000.0
-        scores = prob.reshape(-1, 2).mean(axis=1).astype(np.float32)
-        return list(word_list), times, scores
+        return list(row.words), times, prob.reshape(-1, 2).mean(axis=1).astype(np.float32)
+
+    def align_rows(self, rows: list[Row], run=None) -> list[tuple]:
+        """Results of many rows; `run` runs the slot classes of rows with words (default: one batch of them all)."""
+        todo = [r for r in rows if r.words]
+        classes = iter((run or self.slot_classes_batch)(todo) if todo else [])
+        return [self.result(r, *next(classes)) if r.words else EMPTY for r in rows]
+
+    def align(self, audio: np.ndarray, sample_rate: int, text: str, language: str):
+        """One clip: (words, times, scores)."""
+        return self.align_rows([self.row(audio, sample_rate, text, language)])[0]

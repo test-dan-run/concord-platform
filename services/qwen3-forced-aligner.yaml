@@ -9,11 +9,12 @@ gpu:
   vram_gb: 4                       # measured 2026-10-19: 2.3 GB loaded, ~3.7 GB peak on a 173 s clip (requests capped at 180 s)
 description: "Word-level forced alignment, Qwen3-ForcedAligner 0.6B (80 ms steps, up to 180 s, 10 languages); per-word confidence"
 tasks: [forced-alignment, word-timestamps]
+batch:
+  max_item_s: 180                  # the server refuses rows longer than 180 s, so the batch sweep stops there
 build:
   context: custom/qwen3-forced-aligner
-  image: "{registry}/qwen3-forced-aligner:0.1.0"
+  image: "{registry}/qwen3-forced-aligner:0.2.0"
   base: py-cuda-torch211           # one base for the phase C/D services
-  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/qwen3-forced-aligner/0.6b-c7cbfc2
   mount: /models
@@ -21,13 +22,15 @@ custom_reason: >-
   Checked 2026-10-18: vLLM v0.31.0 registers the aligner only as a token classifier, so callers would have to
   build the timestamp-slot prompt and decode classes themselves; no OpenAI route returns word timings. Retire when
   an engine returns word-level alignment for it behind an OIP route. See custom/qwen3-forced-aligner/WHY.md.
-signature:
+signature:                         # a batch of clips; the 0.1.0 single clip still works (README)
   inputs:
-    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1]}
     - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
-    - {name: TEXT, datatype: BYTES, shape: [1], example: ["hello there"]}
-    - {name: LANGUAGE, datatype: BYTES, shape: [1], example: ["en"]}
+    - {name: TEXT, datatype: BYTES, shape: [-1], example: ["hello there"]}
+    - {name: LANGUAGE, datatype: BYTES, shape: [-1], example: ["en"]}
   outputs:
     - {name: WORDS, datatype: BYTES, shape: [-1]}
     - {name: TIMES, datatype: FP32, shape: [-1, 2]}
     - {name: SCORES, datatype: FP32, shape: [-1]}
+    - {name: ROWS, datatype: INT32, shape: [-1]}      # the input row of each word

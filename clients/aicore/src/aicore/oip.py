@@ -84,11 +84,21 @@ class OIPClient:
             self.signature = {"inputs": meta["inputs"], "outputs": meta["outputs"]}
         return self.signature
 
+    @staticmethod
+    def _single_clip(specs: dict[str, Any], inputs: dict[str, Any]) -> bool:
+        """One clip for a padded audio batch signature: AUDIO [-1] and no LENGTHS where the signature has AUDIO
+        [-1, -1] + LENGTHS. It is sent as it is: a server that kept its single-clip form answers it as one row
+        (qwen3-forced-aligner 0.2.0 does, for callers written for 0.1.0); any other server returns a 400."""
+        audio = specs.get("AUDIO")
+        return (audio is not None and len(audio["shape"]) == 2 and "LENGTHS" in specs and "LENGTHS" not in inputs
+                and "AUDIO" in inputs and np.ndim(inputs["AUDIO"]) == 1)
+
     def encode(self, inputs: dict[str, Any]) -> list[dict[str, Any]]:
         """Validate numpy inputs against the signature and encode them as OIP JSON tensors."""
         specs = {t["name"]: t for t in self._signature()["inputs"]}
+        single = self._single_clip(specs, inputs)
         unknown = sorted(set(inputs) - set(specs))
-        missing = sorted(set(specs) - set(inputs))
+        missing = sorted(set(specs) - set(inputs) - ({"LENGTHS"} if single else set()))
         if unknown or missing:
             raise AicoreError(f"inputs do not match signature: unknown {unknown}, missing {missing}; expected {sorted(specs)}")
         tensors = []
@@ -98,7 +108,7 @@ class OIPClient:
             if dt != spec["datatype"]:
                 raise AicoreError(f"input {name!r}: dtype {arr.dtype} ({dt}) but signature needs {spec['datatype']}; "
                                   f"use .astype({OIP_TO_NP[spec['datatype']]})")
-            if not _shape_ok(spec["shape"], arr.shape):
+            if not _shape_ok(spec["shape"], arr.shape) and not (single and name == "AUDIO"):
                 raise AicoreError(f"input {name!r}: shape {list(arr.shape)} does not match signature {spec['shape']}")
             flat = arr.reshape(-1)
             data = [x.decode() if isinstance(x, bytes) else str(x) for x in flat.tolist()] if dt == "BYTES" else flat.tolist()
