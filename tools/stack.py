@@ -20,7 +20,7 @@ leases the requested services to ID for --ttl seconds (default 120); `lease --ho
 them and `release --holder ID` ends them. `up` never stops a leased service: if the request does
 not fit next to leased services it refuses, with or without --holder.
 
-When the model catalog is running (catalog/README.md), it owns the GPU: `up`, `down`, `lease`,
+When the Model Catalog is running (catalog/README.md), it owns the GPU: `up`, `down`, `lease`,
 `release` and `leases` go through its API instead, so its queue and leases stay the only ones.
 `up` then waits its turn in the catalog's queue (no --no-evict: the catalog decides what to stop).
 AI_STACK_DIRECT=1 skips the catalog.
@@ -370,7 +370,7 @@ def logs(name: str) -> None:
 # ----------------------------------------------------------------------------- catalog mode
 
 def catalog():
-    """The running model catalog's client, or None (then this tool drives Docker itself)."""
+    """The running Model Catalog's client, or None (then this tool drives Docker itself)."""
     if os.environ.get("AI_STACK_DIRECT") == "1":
         return None
     try:

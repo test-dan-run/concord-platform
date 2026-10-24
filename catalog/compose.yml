@@ -1,4 +1,4 @@
-# The model catalog service. Use `just catalog-up` / `just catalog-down`, which set the variables below.
+# The catalog service (the Model Catalog and the Dataset Catalog). Use `just catalog-up` / `just catalog-down`, which set the variables below.
 # Its own Compose project, so `just down` (the model services' project) never stops it.
 name: aiplatform-catalog
 

@@ -1,6 +1,6 @@
 ---
 name: register-model
-description: Register a new model on the personal AI service platform (services/*.yaml) so it can be started with `just up` and called through aicore, or register a model a provider already serves online as a hosted endpoint in the model catalog. Use when a user or agent wants to add, register, onboard or serve a model (a Hugging Face id, a local checkpoint in $AI_ASSETS, a model name like "Llama 3.1 8B", or a provider URL and API key), give it a port/alias/profile, or work out its gpu.util. Covers choosing the API contract (including speech enhancement and text.itn), engine vs custom server, VRAM sizing, writing the manifest, updating the pinned tests and README, validating, and catalog registration and verification.
+description: Register a new model on the personal AI service platform (services/*.yaml) so it can be started with `just up` and called through aicore, or register a model a provider already serves online as a hosted endpoint in the Model Catalog. Use when a user or agent wants to add, register, onboard or serve a model (a Hugging Face id, a local checkpoint in $AI_ASSETS, a model name like "Llama 3.1 8B", or a provider URL and API key), give it a port/alias/profile, or work out its gpu.util. Covers choosing the API contract (including speech enhancement and text.itn), engine vs custom server, VRAM sizing, writing the manifest, updating the pinned tests and README, validating, and catalog registration and verification.
 ---
 
 # Register a model on the platform
@@ -47,7 +47,7 @@ going over budget, downloading, or escalating past a stock engine. Derive everyt
 
 If a provider already serves the model online (a base URL and an API key) and the user wants it
 called from here rather than run here, it is a **hosted endpoint**: no manifest, port, VRAM or image.
-It is registered in the model catalog only. Follow
+It is registered in the Model Catalog only. Follow
 [references/hosted-endpoint.md](references/hosted-endpoint.md) instead of the steps below. Everything
 else is a platform service: continue at step 1.
 
@@ -235,7 +235,7 @@ If startup fails with no memory for cache blocks, lower `--max-model-len` before
 runs, replace the estimate in the `util` comment with what was measured, as `faster-whisper-large-v3`
 does (`measured 4.1 GB loaded`).
 
-**Catalog.** Apps list only models registered in the model catalog (`catalog/README.md`,
+**Catalog.** Apps list only models registered in the Model Catalog (`catalog/README.md`,
 http://127.0.0.1:8700). When the user wants the model listed, and the catalog is running
 (`curl -s localhost:8700/api/health`), register it; the catalog picks up the new manifest by itself:
 

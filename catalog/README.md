@@ -7,6 +7,10 @@ leases for their jobs, and send inference through the catalog's gateway. The des
 [../MODEL_CATALOG_REDESIGN.md](../MODEL_CATALOG_REDESIGN.md); this file is the contract apps build
 against.
 
+The same service also runs the Dataset Catalog, which keeps versioned datasets and their audio for both
+Concord apps. It has its own section, [Dataset Catalog](#dataset-catalog), near the end of this file. In
+this file, "the catalog" means the catalog service.
+
 - **Address:** `http://127.0.0.1:8700` from the host, `http://catalog:8700` from containers on
   `ai-net`. Apps read it from `AICORE_CATALOG` (set the same value in `CATALOG_URL` if an app has its
   own setting).
@@ -16,6 +20,7 @@ against.
   `services/*.yaml`; the catalog adds only registration (display name, tags, "derived from"),
   verification results, measured timings, leases, usage, the output index, hosted endpoints and
   export jobs.
+  The Dataset Catalog keeps its state apart, in the dataset store (see [The store](#the-store)).
 - **Secrets:** hosted endpoints' API keys are encrypted (Fernet) under a master key at
   `~/.config/aiplatform/catalog.key` (mode 0600, outside `PLATFORM_DIR`), created by `just catalog-up`
   and mounted as a Compose secret; `CATALOG_MASTER_KEY_FILE` points elsewhere. Without it the catalog
@@ -335,7 +340,8 @@ Response:
 
 `GET /api/events` is a server-sent event stream: `model` events (`{id, state, build_key,
 capabilities_status}`), `lease` events (the lease JSON), `queue` events (`{queue: [{id, holder,
-position, waiting_for}]}`) and `export` events (the export job JSON). App backends can relay these or poll `GET /api/models` and
+position, waiting_for}]}`), `export` events (the export job JSON) and `dataset` events (`{id, n,
+action}`, see [Dataset Catalog](#dataset-catalog)). App backends can relay these or poll `GET /api/models` and
 `GET /api/leases/{id}`.
 
 ## UI
@@ -343,7 +349,8 @@ position, waiting_for}]}`) and `export` events (the export job JSON). App backen
 `http://127.0.0.1:8700/` (AeroAudio design system): Models (`?group=none` turns off grouping by model
 type), a model's page at `/models/{id}` (apps link there; hosted models get their own layout), Add model
 (`/add?name={id}`, `/add?source=hosted`), Export (`/export?model={id}`), Queue and leases, Output index,
-Model contract, Docs. Live through `/api/events`.
+Model contract, Docs. Live through `/api/events`. A switch at the top of the Nav moves between the
+Model Catalog and the Dataset Catalog, whose pages are under `/datasets` (see [Pages](#pages)).
 
 ## Other calls
 
@@ -372,7 +379,124 @@ plan = cat.plan(stages=[...])
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are
 granted at once; models and capabilities come from the constructor).
 
-### Dataset Catalog client (aicore.datasets)
+## Dataset Catalog
+
+The Dataset Catalog keeps versioned datasets that Concord Bench and Concord Label both read. It runs in the
+same catalog service as the Model Catalog, on the same port, and its code is in `catalog/datasets/`. The
+design is in [../DATASET_CATALOG_PLAN.md](../DATASET_CATALOG_PLAN.md), and the version format is in
+[../contracts/datasets/version.md](../contracts/datasets/version.md).
+
+- A **dataset** has a name, a language, a description, tags and numbered versions. Its id is a 32 character
+  hex string.
+- A **version** records which audio files the dataset has, plus its references and labels. It is a
+  reference package without `audio/` and `outputs/`. A version never changes. Publishing the same content
+  as the latest version again returns that version, so a double click doesn't make two versions.
+- **Audio** is stored once, under the sha256 of the original bytes, and both apps read it from the same
+  folder. No audio is copied between the apps.
+- **Only the catalog service writes** to the store. The apps read audio and version folders straight from
+  the store. They never write to it.
+
+### The store
+
+All of the Dataset Catalog's state is in one folder, the store:
+
+```
+${DATASET_STORE}/
+  datasets.db                     SQLite: datasets, versions, audio, holds and uses
+  audio/<sha256[0:2]>/<sha256>    the original audio bytes, with no extension
+  versions/<dataset_id>/<n>/      one folder per version
+  tmp/                            uploads in progress
+```
+
+- **Where it is.** The folder is `DATASET_STORE`. When that isn't set, it is `${AI_DATA}/datasets`, and
+  `AI_DATA` defaults to `~/ai-data`. Set either one in `.env` (see `.env.example`). The apps and
+  `aicore.datasets` use the same default.
+- **In Docker.** `just catalog-up` works out the path, creates the folder, and mounts it read-write in the
+  container at the same path as on the host. A path the catalog reports is then the same path on the host.
+  Bench and Label containers mount the same folder read-only, and they set `DATASET_STORE` to the path they
+  see. `just catalog-serve` and apps run on the host read the host folder directly.
+- **Audio files.** A file in `audio/` has no extension, because two uploads of the same bytes can arrive as
+  `.wav` and `.WAV`. `datasets.db` keeps each file's extension, size, duration, sample rate and channels.
+  The catalog reads those with ffprobe when a file is uploaded, so the catalog image includes ffmpeg.
+- **Backup.** The records in the store can't be rebuilt, unlike `run/catalog/catalog.db`. That is why the
+  store lives outside `PLATFORM_DIR`, in its own folder. Back up the whole folder as one unit.
+  `datasets.db` runs in SQLite's WAL mode, so stop the catalog service (`just catalog-down`) before you
+  copy the folder. The database and the audio then match.
+
+### API
+
+Every path is under `/api`. Errors have the same shape as the rest of the catalog, `{"error": {"message",
+"type", "code"}}`, and some add fields such as `latest`, `missing` or `problems`.
+
+| Call | Does |
+|---|---|
+| `POST /api/store/missing` | `{"sha256": [...]}` -> `{"missing": [...]}`, the files the store doesn't have. A file that is still uploading counts as missing. |
+| `PUT /api/store/audio/{sha256}?ext=&offset=` | Takes raw bytes from `offset` -> `{"size"}`. 409 with the current `size` when `offset` is wrong, so an upload can resume. |
+| `POST /api/store/audio/{sha256}/commit` | Checks the sha256 and stores the file -> its audio record. 422 when the bytes don't match, and the partial file is removed. |
+| `GET /api/store/audio/{sha256}` | The original bytes, for the UI's player. |
+| `POST /api/store/unpack` | `{"sha256"}` of a committed zip -> the audio files in it, each stored and probed, and the files it skipped. |
+| `POST /api/store/holds` | `{"app", "add": [...], "remove": [...]}` -> `{"held"}`, the number of files this app holds. |
+| `GET /api/store/stats` | Sizes and counts for the Storage page, holds per app and free disk space. |
+| `POST /api/store/gc` | `{"dry_run": true}` -> what clean-up would delete. The same call with `false` deletes it. |
+| `GET /api/datasets` | `?q=&language=&label_type=&app=` -> datasets, each with its latest version. |
+| `POST /api/datasets` | `{"name", "language"?, "description"?, "tags"?, "app"}` -> 201 dataset. |
+| `GET`, `PATCH`, `DELETE /api/datasets/{id}` | The dataset with its versions, newest first. PATCH changes the name, description and tags. DELETE removes the dataset and every version. |
+| `POST /api/datasets/{id}/versions` | Multipart: a zip of a version folder (or of a whole reference package), plus `parent`, `app` and `force`. 201 for a new version, 200 when it matches the latest version, 409 `stale_parent` with `latest`, 422 when the folder is invalid or audio is missing. |
+| `POST /api/datasets/{id}/versions/audio` | `{"files": [{"path", "sha256"}], "parent"}` -> a version with audio only. 409 when the latest version has references. |
+| `GET`, `DELETE /api/datasets/{id}/versions/{n}` | The version with its manifest and counts. DELETE removes it, 204. |
+| `GET /api/datasets/{id}/versions/{n}/files` | `?offset=&limit=` -> the files, with their segment counts and labels. |
+| `GET /api/datasets/{id}/versions/{n}/refs?path=` | The reference segments of one file. |
+| `GET /api/datasets/{id}/versions/{n}/package?audio=` | The version as a reference package zip, with or without `audio/`. |
+| `POST`, `DELETE /api/datasets/{id}/versions/{n}/uses` | Records `{"app", "ref"}`, an app's dataset made from this version, or removes it with `?app=&ref=`. 204. |
+| `GET /api/datasets/{id}/compare?a=&b=` | Files added and removed, and changes to references and labels between two versions. |
+| `POST /api/datasets/import` | Multipart reference package zip, plus `dataset_id`?, `app`? and `preview`?. With `preview` it stores nothing and returns what an import would do. |
+
+A version's number is never used again after it is deleted. A later version whose parent was deleted shows
+`parent_deleted`. A publish whose `parent` isn't the latest version gets a 409, and the app asks the person
+whether to publish anyway with `force`. Each change sends a `dataset` event on `/api/events`, with
+`action` set to `created`, `updated`, `published` or `deleted`. `n` is null when the event is about the
+whole dataset.
+
+### Pages
+
+The UI's Dataset Catalog tab has these pages. The Storage widget in the Nav takes the place of the GPU
+widget while the tab is open.
+
+| Page | Path | Shows and does |
+|---|---|---|
+| Datasets | `/datasets` | Every dataset with its latest version, files, hours and label types. Search, and filter by language, label type and app. |
+| Dataset | `/datasets/:id` | The version history, with the apps' datasets made from each version. Edit the name, description and tags, download a version with or without audio, add audio, and delete a version or the dataset. |
+| Version | `/datasets/:id/v/:n` | The files with a player, one file's references, and label statistics. "Open in Label" opens the same file in Concord Label. |
+| Compare | `/datasets/:id/compare?a=&b=` | What changed between two versions, with a text diff for each edited segment. |
+| Upload audio | `/datasets/upload` | Takes files, a folder or zips of audio without references. The browser hashes each file, sends only what the store lacks in 16 MB chunks, and resumes after a dropped connection. It then makes version 1 of a new dataset, or adds the files to a dataset whose latest version has audio only. |
+| Import package | `/datasets/import` | Previews a reference package zip, then imports it as a new dataset or a new version of one. |
+| Storage | `/datasets/storage` | The store's size, audio that is in versions, held only, or in neither, and holds per app. Runs clean-up. |
+
+"Open in Label" shows only when Concord Label has registered with the catalog (`POST /api/apps`) at an
+address a browser can reach, such as `localhost` or a name with a dot in it. A Label container registers
+under its name on `ai-net` (`http://concord-label:8620`), which a browser can't open, so the button is
+hidden in that case.
+
+### Holds and clean-up
+
+Audio is uploaded before any version lists it. Label, for example, stores audio when a person uploads it,
+and the person may label it for weeks before they publish. So each app places a **hold** on every file one
+of its datasets keeps, and it releases the hold when it deletes that dataset. A dataset an app made from a
+version holds its audio too. Deleting a version therefore never removes audio an app still reads.
+
+Clean-up deletes an audio file only when all of these are true:
+
+- No version lists it.
+- No app holds it.
+- It has been in the store for more than 24 hours. For an upload that stopped partway, the 24 hours count
+  from its last write.
+
+Clean-up runs only when a person starts it, and it always shows a dry run first. Start it from the Storage
+page, or run `just datasets-gc`. The recipe asks the running catalog service for a dry run, prints the
+files and bytes it would delete, and deletes them only when you answer yes. Deleting a version or a
+dataset never deletes audio by itself.
+
+### Python client (aicore.datasets)
 
 `aicore.datasets.DatasetCatalog` calls the Dataset Catalog's API on the same catalog service, so it uses the
 same URL as `Catalog`. Each app passes its own name as `app`, and the client sends that name with every dataset

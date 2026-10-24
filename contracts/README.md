@@ -27,7 +27,9 @@ Rules:
 `api_types.yaml` is the machine-readable registry the schema validates against.
 
 The Dataset Catalog's version format is not a service contract. It is in
-[`datasets/version.md`](datasets/version.md), and `just validate` checks its samples.
+[`datasets/version.md`](datasets/version.md), and `just validate` checks its samples. Concord Bench's
+and Concord Label's CONTRACTS.md §2 define a reference package zip as a dataset version plus `audio/`,
+and they link to that file.
 
 ## 2. Universal requirement: `GET /health`
 

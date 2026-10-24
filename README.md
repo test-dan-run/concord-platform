@@ -2,7 +2,10 @@
 
 This file lists every service the platform defines, and each service has one manifest in
 `services/*.yaml`. The platform guide in [`../README.md`](../README.md) explains how to run, add and
-serve models, and [`catalog/README.md`](catalog/README.md) describes the Model Catalog's API.
+serve models, and [`catalog/README.md`](catalog/README.md) describes the Model Catalog's API. The same
+catalog service also runs the Dataset Catalog, which keeps versioned datasets and their audio for Concord
+Bench and Concord Label. Its section in [`catalog/README.md`](catalog/README.md#dataset-catalog) covers
+the store, the API and the UI pages.
 
 ## Services by group
 
@@ -131,5 +134,6 @@ port is outside its range.
 | `84xx` | Other models, usually on the OIP contract |
 | `85xx` | Utilities |
 
-The catalog service, which serves the Model Catalog, listens on port `8700`, outside these ranges.
+The catalog service, which serves the Model Catalog and the Dataset Catalog, listens on port `8700`,
+outside these ranges.
 Concord Bench, Synthetics and Concord Label use ports `8600`, `8610` and `8620`.

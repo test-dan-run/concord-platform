@@ -1,4 +1,4 @@
-"""Client for the model catalog's API (platform/catalog/README.md): models, leases, output index, plans.
+"""Client for the Model Catalog's API (platform/catalog/README.md): models, leases, output index, plans.
 
     from aicore.catalog import Catalog
     cat = Catalog()                                   # AICORE_CATALOG, else http://127.0.0.1:8700

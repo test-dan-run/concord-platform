@@ -79,12 +79,12 @@ bundle +names:
 test:
     uv run pytest
 
-# model catalog (catalog/README.md): build its UI, then run it as a host process on :8700 (development)
+# catalog service (catalog/README.md): build its UI, then run it as a host process on :8700 (development)
 catalog-serve: catalog-ui
     {{py}} -m catalog
 
 # The first run creates the master key for hosted endpoints' API keys at ~/.config/aiplatform/catalog.key (0600).
-# model catalog as a container on ai-net (restarts with Docker; recreated to pick up code changes); http://127.0.0.1:8700
+# catalog service as a container on ai-net (restarts with Docker; recreated to pick up code changes); http://127.0.0.1:8700
 catalog-up:
     key="${CATALOG_MASTER_KEY_HOST:-$HOME/.config/aiplatform/catalog.key}"; \
     if [ ! -s "$key" ]; then mkdir -p "$(dirname "$key")"; (umask 077; head -c 32 /dev/urandom | base64 | tr '+/' '-_' > "$key"); echo "created the catalog master key at $key"; fi; \

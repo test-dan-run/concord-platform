@@ -1,6 +1,6 @@
 """What makes a build: the config hash of a manifest and where its weights come from.
 
-The model catalog keys verification results and indexed outputs on a *build key* =
+The Model Catalog keys verification results and indexed outputs on a *build key* =
 sha256(image id, config hash, weights hash). This module has the parts that need only the manifests,
 so `render.py` can stamp the config hash on each container (label `aiplatform.config_hash`) and a
 running container reports the config it was started with.

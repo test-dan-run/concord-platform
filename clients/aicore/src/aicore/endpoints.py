@@ -66,7 +66,7 @@ def resolve_base(entry: dict[str, Any], host: str | None = None) -> str:
 
 
 def catalog_url() -> str | None:
-    """The model catalog's root URL from AICORE_CATALOG, or None when apps call services directly."""
+    """The Model Catalog's root URL from AICORE_CATALOG, or None when apps call services directly."""
     url = os.environ.get("AICORE_CATALOG", "").strip().rstrip("/")
     return url or None
 
