@@ -9,9 +9,10 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from aisvc import create_oip_app
+from aisvc import MicroBatcher, create_oip_app
+from aisvc.batch import audio_ms
 
-from .dnsmos import Dnsmos
+from .dnsmos import SR, Dnsmos, prepare
 
 NAME = os.environ.get("AISVC_NAME", "dnsmos")
 SIGNATURE = {
@@ -30,6 +31,8 @@ SIGNATURE = {
 
 def build_app(model: Dnsmos | None = None):
     model = model or Dnsmos(os.environ.get("WEIGHTS_DIR", "/models"))
+    # Any number of rows: sorted by length, run in batches within AISVC_MAX_BATCH / AISVC_MAX_BATCH_LEN (ms of audio)
+    batch = MicroBatcher(model.score_batch, length=lambda x: audio_ms(x, SR), name="score")
 
     def handler(inputs: dict[str, np.ndarray], parameters: dict) -> dict[str, np.ndarray]:
         if parameters:
@@ -42,7 +45,7 @@ def build_app(model: Dnsmos | None = None):
             raise ValueError(f"AUDIO has {audio.shape[0]} rows but LENGTHS has {len(lengths)} entries")
         if np.any(lengths <= 0) or np.any(lengths > audio.shape[1]):
             raise ValueError("every LENGTHS entry must be in [1, AUDIO.shape[1]]")
-        scores = [model.score(audio[i, : int(n)], sr) for i, n in enumerate(lengths)]
+        scores = batch([prepare(audio[i, : int(n)], sr) for i, n in enumerate(lengths)])
         arr = np.asarray(scores, dtype=np.float32).reshape(-1, 3)
         return {"MOS": arr[:, 0], "SIG": arr[:, 1], "BAK": arr[:, 2]}
 

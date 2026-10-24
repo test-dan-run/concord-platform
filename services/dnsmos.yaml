@@ -9,9 +9,8 @@ description: "Speech quality, DNSMOS P.835 (OVRL as MOS, plus SIG and BAK) ONNX 
 tasks: [speech-quality-assessment]
 build:
   context: custom/dnsmos
-  image: "{registry}/dnsmos:0.1.0"
+  image: "{registry}/dnsmos:0.2.0"
   base: py-cpu
-  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/dnsmos/p835-82f1b17
   mount: /models

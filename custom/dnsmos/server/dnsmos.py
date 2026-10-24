@@ -3,11 +3,11 @@
 Follows microsoft/DNS-Challenge DNSMOS/dnsmos_local.py (commit 6412bc5): 16 kHz input, clips shorter than
 9.01 s are repeated to that length, windows of 9.01 s every 1 s are scored and averaged, and the raw outputs
 are mapped through the published polynomial fits. The P.808 head (needs a librosa mel front end) is not used.
+Every window has the same length, so the windows of a whole batch of clips go through the model in one run.
 """
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +38,6 @@ class Dnsmos:
     def __init__(self, weights_dir):
         self.weights_dir = Path(weights_dir)
         self.session = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         import onnxruntime as ort
@@ -52,24 +51,37 @@ class Dnsmos:
 
     def raw(self, segment: np.ndarray) -> np.ndarray:
         """(sig, bak, ovr) raw outputs for one 9.01 s window."""
-        with self._lock:
-            return self.session.run(None, {"input_1": segment.astype(np.float32)[None, :]})[0][0]
+        return self.raw_batch([segment])[0]
+
+    def raw_batch(self, segments: list[np.ndarray]) -> np.ndarray:
+        """[N, 3] raw outputs for N windows of 9.01 s, in one run."""
+        return self.session.run(None, {"input_1": np.stack(segments).astype(np.float32)})[0]
 
     def score(self, audio: np.ndarray, sample_rate: int) -> tuple[float, float, float]:
         """(OVRL, SIG, BAK) for one clip."""
-        import soxr
+        return self.score_batch([prepare(audio, sample_rate)])[0]
 
+    def score_batch(self, clips: list[np.ndarray]) -> list[tuple[float, float, float]]:
+        """(OVRL, SIG, BAK) for each prepared clip (`prepare`). Callers serialise calls (aisvc.batch.MicroBatcher)."""
         if self.session is None:
             raise RuntimeError("model not loaded")
-        x = np.asarray(audio, dtype=np.float32).reshape(-1)
-        if len(x) == 0:
-            raise ValueError("empty clip")
-        if sample_rate != SR:
-            x = soxr.resample(x, sample_rate, SR).astype(np.float32)
-        sig, bak, ovr = [], [], []
-        for seg in windows(x):
-            s, b, o = self.raw(seg)
-            sig.append(P_SIG(s))
-            bak.append(P_BAK(b))
-            ovr.append(P_OVR(o))
-        return float(np.mean(ovr)), float(np.mean(sig)), float(np.mean(bak))
+        wins = [windows(x) for x in clips]
+        raw = self.raw_batch([w for ws in wins for w in ws])
+        out, k = [], 0
+        for ws in wins:
+            s, b, o = raw[k:k + len(ws)].T
+            k += len(ws)
+            out.append((float(np.mean(P_OVR(o))), float(np.mean(P_SIG(s))), float(np.mean(P_BAK(b)))))
+        return out
+
+
+def prepare(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Mono float32 at 16 kHz."""
+    x = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if len(x) == 0:
+        raise ValueError("empty clip")
+    if sample_rate != SR:
+        import soxr
+
+        x = soxr.resample(x, sample_rate, SR).astype(np.float32)
+    return x

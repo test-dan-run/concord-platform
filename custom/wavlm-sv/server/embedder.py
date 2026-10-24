@@ -1,4 +1,4 @@
-"""WavLM-Large + ECAPA-TDNN speaker embeddings (256-d) for one clip: UniSpeech's speaker-verification model, the
+"""WavLM-Large + ECAPA-TDNN speaker embeddings (256-d), a padded batch of clips at a time: UniSpeech's speaker-verification model, the
 SIM model of Seed-TTS-eval.
 
 The model code ships with the weights (transformers remote code, `modeling_wavlm_speaker_verification.py`), so it
@@ -11,7 +11,6 @@ than enough to identify a speaker.
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -42,7 +41,6 @@ class WavLMEmbedder:
         self.model = None
         self.device = "cpu"
         self._torch = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         import torch
@@ -60,11 +58,19 @@ class WavLMEmbedder:
                                                local_files_only=True).eval().to(self.device)
 
     def embed(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        return self.embed_batch([prepare(audio, sample_rate)])[0]
+
+    def embed_batch(self, clips: list[np.ndarray]) -> list[np.ndarray]:
+        """Embeddings of prepared clips (`prepare`) in one padded forward pass; the model masks the padding.
+        Callers serialise calls (aisvc.batch.MicroBatcher)."""
         if self.model is None:
             raise RuntimeError("model not loaded")
+        from aisvc.batch import pad
+
         torch = self._torch
-        x = torch.from_numpy(prepare(audio, sample_rate))[None, :].to(self.device)
-        with self._lock, torch.inference_mode():
-            e = self.model(x, sampling_rate=SR, input_lengths=torch.tensor([x.shape[1]], device=self.device)).embeddings.float()
+        x, lengths = pad(clips)
+        with torch.inference_mode():
+            e = self.model(torch.from_numpy(x).to(self.device), sampling_rate=SR,
+                           input_lengths=torch.from_numpy(lengths).to(self.device)).embeddings.float()
             e = torch.nn.functional.normalize(e, dim=-1)
-        return e[0].cpu().numpy()
+        return list(e.cpu().numpy())

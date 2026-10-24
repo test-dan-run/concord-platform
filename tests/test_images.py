@@ -85,7 +85,13 @@ def test_services_kept_on_the_old_base_keep_their_build_identity(name):
     assert (config, p.base_image(s), p.image(s), identity.build_key("sha256:fake", config, "w")) == PINNED_BEFORE[name]
 
 
+# Batching waves move services to the 0.2.0 bases (aisvc batching); kokoro-tts and voxcpm2 stay on 0.1.1.
+BATCHED = {"wavlm-sv", "redimnet2-sv", "utmos", "dnsmos"}  # wave A
+
+
 def test_every_custom_service_stays_on_base_0_1_1_until_its_wave():
     p = load_platform()
     versions = {s.name: p.base_version(s) for s in p.services if s.is_custom and s.base != "none"}
-    assert versions and set(versions.values()) == {"0.1.1"}
+    assert {n for n, v in versions.items() if v == "0.2.0"} == BATCHED
+    assert {v for n, v in versions.items() if n not in BATCHED} == {"0.1.1"}
+    assert versions["kokoro-tts"] == versions["voxcpm2"] == "0.1.1"

@@ -23,9 +23,9 @@ class FakeUtmos(mos_mod.Utmos):
     def load(self):
         self.model = object()
 
-    def score(self, audio, sample_rate):
-        self.seen.append((len(audio), sample_rate))
-        return 2.0 + float(np.sqrt(np.mean(np.asarray(audio, np.float32) ** 2)))
+    def score_batch(self, clips):
+        self.seen.extend((len(a), sr) for a, sr in clips)
+        return [2.0 + float(np.sqrt(np.mean(np.asarray(a, np.float32) ** 2))) for a, _ in clips]
 
 
 @pytest.fixture(scope="module")
@@ -92,3 +92,25 @@ def test_real_model_prefers_clean_over_noisy():
     noisy = clean + np.random.default_rng(0).normal(0, 0.3, len(t)).astype(np.float32)
     assert m.score(clean, 16000) > m.score(noisy, 16000)
     assert m.score(clean, 16000) == pytest.approx(m.score(clean, 16000))  # deterministic
+
+
+def _speechlike(seconds: float, f0: float, seed: int) -> np.ndarray:
+    t = np.arange(int(16000 * seconds)) / 16000
+    a = 0.3 * np.sin(2 * np.pi * f0 * t) * (1 + np.sin(2 * np.pi * 3.7 * t))
+    return (a + np.random.default_rng(seed).normal(0, 0.02, len(t))).astype(np.float32)
+
+
+MIXED = [_speechlike(s, f, k) for k, (s, f) in enumerate([(1.3, 140), (4.0, 210), (7.5, 120), (25.0, 180), (0.3, 160)])]
+
+
+@pytest.mark.weights
+@pytest.mark.skipif(not (WEIGHTS / "model.safetensors").is_file(), reason=f"no checkpoint in {WEIGHTS}")
+def test_real_model_batch_matches_one_by_one():
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    m = mos_mod.Utmos(WEIGHTS)
+    m.load()
+    clips = [(a, 16000) for a in MIXED] + [(MIXED[1], 24000)]
+    batched = m.score_batch(clips)
+    for c, b in zip(clips, batched, strict=True):
+        assert abs(m.score_batch([c])[0] - b) < 0.02
