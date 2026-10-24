@@ -6,9 +6,11 @@ serve models, and [`catalog/README.md`](catalog/README.md) describes the model c
 
 ## Services by group
 
-The tables below group the services by what they do. The GPU column shows the share of GPU memory that
-a vLLM service reserves (`util`), the GPU memory in GB that a custom service may use, or `CPU` for a
-service that doesn't use the GPU.
+The tables below group the services by what they do. The GPU column shows the least GPU memory a
+service needs to load, as a share of the GPU for a vLLM service (`util`) or in GB for a custom service,
+or `CPU` for a service that doesn't use the GPU. Only one GPU service runs at a time. When it starts, it
+gets the GPU memory that is free at that moment less 1 GiB, and at most `util_limit` of the GPU.
+`just up` and `just vram` refuse a set that names two or more GPU services.
 
 ### Chat and vision language models
 

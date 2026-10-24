@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS usage (
     errors INTEGER NOT NULL DEFAULT 0,
     last_used REAL
 );
+CREATE TABLE IF NOT EXISTS counter (
+    name TEXT PRIMARY KEY,
+    value INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS output_index (
     build_key TEXT NOT NULL,
     audio_sha256 TEXT NOT NULL,

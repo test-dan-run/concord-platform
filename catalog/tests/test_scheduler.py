@@ -1,11 +1,13 @@
-"""Scheduler rules: leases, strict first-come-first-served queue, fit, cost-aware eviction."""
+"""Scheduler rules: leases, strict first-come-first-served queue, one GPU model at a time, memory at start."""
 
 import time
 
+import pytest
 from catalog_helpers import drain, step
 
 from catalog.db import now_iso
-from catalog.scheduler import Scheduler
+from catalog.scheduler import Scheduler, SchedulerError
+from tools.vram_check import UTIL_VAR, VRAM_VAR
 
 
 def cold(c, model: str, seconds: float) -> None:
@@ -23,6 +25,15 @@ def run_unleased(c, *models: str) -> None:
         step(c)
         assert c.scheduler.get(r.id).state == "done"
         c.scheduler.runs[m].ready_at = time.time() - 3600  # up for an hour: settled
+
+
+def found_running(c, runtime, *models: str) -> None:
+    """Models found running outside the catalog (several GPU models at once, as before one-at-a-time)."""
+    for m in models:
+        runtime.running[m] = 0.0
+    c.scheduler.tick()
+    for m in models:
+        c.scheduler.runs[m].ready_at = time.time() - 3600
 
 
 def test_lease_starts_its_models_and_becomes_active(cat, runtime):
@@ -47,34 +58,46 @@ def test_a_leased_model_is_never_stopped_and_the_waiter_explains_why(cat, runtim
     assert s.model_view("whisper-large-v3")["state"] == "queued" and "qwen3-32b-awq" in runtime.running
     s.release(a.id)
     step(cat)
-    assert s.get(b.id).state == "active" and "qwen3-32b-awq" in runtime.stopped
+    assert s.get(b.id).state == "active" and runtime.stopped == ["qwen3-32b-awq"]
+    assert runtime.started == ["qwen3-32b-awq", "whisper-large-v3"] and s.swaps == 1
 
 
-def test_eviction_stops_the_cheapest_reload_and_only_enough(cat, runtime):
-    run_unleased(cat, "qwen3-8b", "qwen2-5-14b-instruct-awq")
-    cold(cat, "qwen3-8b", 100.0)
-    cold(cat, "qwen2-5-14b-instruct-awq", 40.0)
- # 0.35 + 0.45 of the GPU
-    r = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])  # + 0.15 > util_limit 0.93
+def test_a_gpu_model_stops_the_running_one_and_cpu_models_stay(cat, runtime):
+    run_unleased(cat, "qwen3-8b", "silero-vad")
+    r = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])  # 0.35 + 0.15 would have fit side by side
     step(cat)
     assert cat.scheduler.get(r.id).state == "active"
-    assert runtime.stopped == ["qwen2-5-14b-instruct-awq"] and "qwen3-8b" in runtime.running
+    assert runtime.stopped == ["qwen3-8b"] and "silero-vad" in runtime.running and cat.scheduler.swaps == 1
+
+
+def test_every_other_gpu_model_is_stopped_or_none(cat, runtime):
+    found_running(cat, runtime, "qwen3-8b", "qwen2-5-14b-instruct-awq")
+    cat.scheduler.begin_call("qwen2-5-14b-instruct-awq")  # busy: so nothing is stopped yet
+    r = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])
+    step(cat)
+    r = cat.scheduler.get(r.id)
+    assert r.state == "queued" and "qwen2-5-14b-instruct-awq (1 call(s) in flight)" in r.waiting_for
+    assert runtime.stopped == []
+    cat.scheduler.end_call("qwen2-5-14b-instruct-awq", error=False)
+    step(cat)
+    assert cat.scheduler.get(r.id).state == "active"
+    assert sorted(runtime.stopped) == ["qwen2-5-14b-instruct-awq", "qwen3-8b"] and cat.scheduler.swaps == 1
 
 
 def test_calls_in_flight_protect_a_model(cat, runtime):
-    run_unleased(cat, "qwen3-8b", "qwen2-5-14b-instruct-awq")
-    cold(cat, "qwen3-8b", 100.0)
-    cold(cat, "qwen2-5-14b-instruct-awq", 40.0)
-    cat.scheduler.begin_call("qwen2-5-14b-instruct-awq")  # the cheap one is busy
-    step(cat)
+    run_unleased(cat, "qwen3-8b")
+    cat.scheduler.begin_call("qwen3-8b")
     r = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])
+    step(cat)
+    assert cat.scheduler.get(r.id).state == "queued" and runtime.stopped == []
+    cat.scheduler.end_call("qwen3-8b", error=False)
     step(cat)
     assert cat.scheduler.get(r.id).state == "active" and runtime.stopped == ["qwen3-8b"]
 
 
 def test_settle_time_keeps_a_fresh_model_running(cat, runtime):
-    run_unleased(cat, "qwen2-5-14b-instruct-awq", "qwen3-8b")
-    cat.settings.settle_min_s = 7200.0
+    run_unleased(cat, "qwen2-5-14b-instruct-awq")  # up for an hour
+    cold(cat, "qwen2-5-14b-instruct-awq", 3600.0)  # settle time: 2 x cold start
     r = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])
     step(cat)
     r = cat.scheduler.get(r.id)
@@ -83,31 +106,53 @@ def test_settle_time_keeps_a_fresh_model_running(cat, runtime):
 
 def test_queue_is_strictly_first_come_first_served(cat, runtime):
     s = cat.scheduler
-    s.request("label:job-3", ["qwen2-5-14b-instruct-awq", "qwen3-8b"])  # 0.80, leased
+    s.request("label:job-3", ["qwen2-5-14b-instruct-awq"])  # leased
     step(cat)
-    head = s.request("bench:job-1", ["qwen3-32b-awq"])  # cannot fit while that lease lives
-    later = s.request("bench:job-2", ["bge-m3"])  # 0.08 would fit, but must wait its turn
+    head = s.request("bench:job-1", ["qwen3-32b-awq"])  # cannot start while that lease lives
+    later = s.request("bench:job-2", ["bge-m3"])  # must wait its turn
     cpu = s.request("bench:job-3", ["silero-vad"])  # takes no GPU memory: may pass
+    same = s.request("bench:job-4", ["qwen2-5-14b-instruct-awq"])  # already up and held: may pass
     step(cat)
     assert s.get(head.id).state == "queued" and s.get(head.id).position == 1
     later = s.get(later.id)
     assert later.state == "queued" and later.position == 2 and later.waiting_for.startswith("queued behind bench:job-1")
-    assert s.get(cpu.id).state == "active"
+    assert s.get(cpu.id).state == "active" and s.get(same.id).state == "active"
 
 
 def test_a_holder_cannot_wait_on_its_own_lease(cat):
     s = cat.scheduler
-    s.request("label:job-3", ["qwen2-5-14b-instruct-awq", "qwen3-8b"])
+    s.request("label:job-3", ["qwen3-4b-instruct-2507"])
     step(cat)
-    r = s.request("label:job-3", ["qwen3-32b-awq"])
+    r = s.request("label:job-3", ["whisper-large-v3"])  # 0.25 + 0.15 would have fit side by side
     step(cat)
     r = s.get(r.id)
     assert r.state == "failed" and "release that lease" in r.error
 
 
-def test_a_set_that_can_never_fit_fails_at_once(cat):
-    r = cat.scheduler.request("bench:job-1", ["qwen3-32b-awq", "whisper-large-v3"])
-    assert cat.scheduler.get(r.id).state == "failed" and "never run at once" in cat.scheduler.get(r.id).error
+def test_two_gpu_models_in_one_request_are_refused(cat):
+    with pytest.raises(SchedulerError) as exc:
+        cat.scheduler.request("bench:job-1", ["qwen3-4b-instruct-2507", "default-asr"])  # small enough to pack
+    assert exc.value.status == 422 and "lease one GPU model per stage" in str(exc.value)
+    assert cat.scheduler.live_requests() == []
+
+
+def test_a_gpu_model_and_cpu_models_are_granted_together(cat, runtime):
+    r = cat.scheduler.request("bench:job-1", ["whisper-large-v3", "silero-vad"])
+    step(cat)
+    assert cat.scheduler.get(r.id).state == "active" and sorted(runtime.running) == ["silero-vad", "whisper-large-v3"]
+
+
+def test_the_swap_count_survives_a_restart(cat, settings, runtime):
+    s = cat.scheduler
+    cat.settings.release_linger_s = 3600.0
+    for holder, model in [("a", "qwen3-8b"), ("b", "whisper-large-v3"), ("c", "whisper-large-v3"), ("d", "bge-m3")]:
+        r = s.request(holder, [model])
+        step(cat)
+        assert s.get(r.id).state == "active"
+        s.release(r.id)
+    assert s.swaps == 2  # 8b -> whisper, whisper -> bge-m3; the second whisper lease found it loaded
+    again = Scheduler(cat.db, settings, runtime, cat.builds, cat.events)
+    assert again.swaps == 2
 
 
 def test_missed_heartbeats_expire_a_lease_and_free_its_models(cat):
@@ -244,16 +289,29 @@ def test_a_released_model_is_stopped_for_room_before_its_settle_time(cat, runtim
     assert s.get(r.id).state == "active" and runtime.stopped == ["qwen2-5-14b-instruct-awq"]
 
 
-# Measured GPU memory: a model starts only when its whole budget is free on the device.
+# Measured GPU memory: a model starts only when its minimum is free, and gets what is free then.
 
-def test_measured_memory_stops_more_than_declared_footprints_would(cat, runtime):
+def test_a_gpu_model_gets_the_memory_measured_free_at_its_start(cat, runtime):
     runtime.gpu_total_gib = 31.84
-    runtime.gpu_other_gib = 8.0  # another process on the GPU
-    run_unleased(cat, "qwen3-8b")  # 0.35 = 11.1 GiB
-    # 0.35 + 0.45 fits util_limit, but 14.3 GiB + margin is not free next to 8 GiB of other use
-    r = cat.scheduler.request("bench:job-1", ["qwen2-5-14b-instruct-awq"])
+    runtime.gpu_other_gib = 8.0  # another process on the GPU (Windows keeps some for the display)
+    run_unleased(cat, "qwen3-8b")
+    assert runtime.envs["qwen3-8b"] == {UTIL_VAR: "0.717", VRAM_VAR: "22.82"}  # (31.84 - 8 - 1) / 31.84
+    r = cat.scheduler.request("bench:job-1", ["qwen2-5-14b-instruct-awq", "silero-vad"])
     step(cat)
     assert cat.scheduler.get(r.id).state == "active" and runtime.stopped == ["qwen3-8b"]
+    assert runtime.envs["qwen2-5-14b-instruct-awq"][UTIL_VAR] == "0.717" and runtime.envs["silero-vad"] == {}
+    runtime.gpu_other_gib = 0.0
+    cat.settings.release_linger_s = 0.0
+    cat.scheduler.release(r.id)
+    step(cat)
+    run_unleased(cat, "kokoro-tts")  # custom: AISVC_VRAM_GB, capped at util_limit
+    assert runtime.envs["kokoro-tts"] == {UTIL_VAR: "0.930", VRAM_VAR: "29.61"}
+
+
+def test_without_a_measurement_a_gpu_model_gets_util_limit(cat, runtime):
+    run_unleased(cat, "whisper-large-v3")
+    assert runtime.envs["whisper-large-v3"] == {UTIL_VAR: "0.930", VRAM_VAR: "29.76"}  # 0.93 x gpu_total_gb 32
+    assert cat.scheduler.runs["whisper-large-v3"].given == pytest.approx(0.93)
 
 
 def test_a_model_waits_rather_than_loading_partly(cat, runtime):
@@ -263,7 +321,7 @@ def test_a_model_waits_rather_than_loading_partly(cat, runtime):
     r = s.request("bench:job-1", ["qwen2-5-14b-instruct-awq"])
     step(cat)
     r = s.get(r.id)
-    assert r.state == "queued" and "to load entirely" in r.waiting_for and "outside the platform" in r.waiting_for
+    assert r.state == "queued" and "to load" in r.waiting_for and "outside the platform" in r.waiting_for
     assert runtime.started == []
     runtime.gpu_other_gib = 1.5
     step(cat)
@@ -276,7 +334,7 @@ def test_no_gpu_model_starts_while_another_is_loading(cat, runtime):
     s.tick()
     s.runs["bge-m3"].starting = True
     r = s.request("bench:job-1", ["whisper-large-v3"])
-    assert r.state == "queued" and "bge-m3 to finish loading" in r.waiting_for
+    assert r.state == "queued" and "waits for bge-m3 (starting)" in r.waiting_for
     s.runs["bge-m3"].starting = False
     step(cat)
     assert s.get(r.id).state == "active"
@@ -293,7 +351,7 @@ def test_a_start_that_finds_too_little_free_memory_queues_again(cat, runtime):
     drain(cat)
     s.tick()
     r = s.get(r.id)
-    assert r.state == "queued" and "to load entirely" in r.waiting_for and runtime.started == []
+    assert r.state == "queued" and "needs at least 4.8 GiB of the GPU to load" in r.waiting_for and runtime.started == []
     runtime.gpu_other_gib = 0.0
     step(cat)
     assert s.get(r.id).state == "active"

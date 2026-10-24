@@ -62,8 +62,9 @@ before writing anything.
   10,000 characters each).
 
   Read `NAME` from `AISVC_NAME` and the weights dir from `WEIGHTS_DIR`, both set by render. GPU
-  services call `aisvc.gpu.limit_torch_memory(torch)` in `load()`, which caps torch at the manifest's
-  `gpu.vram_gb` (passed in as `AISVC_VRAM_GB`). Bad input raises `OIPError` / `OpenAIError` with a
+  services call `aisvc.gpu.limit_torch_memory(torch)` in `load()`, which caps torch at `AISVC_VRAM_GB`.
+  The service runs alone on the GPU, so `AISVC_VRAM_GB` is the memory measured free at start less 1 GiB
+  (at most `util_limit` of the GPU), not the manifest's `gpu.vram_gb`. Bad input raises `OIPError` / `OpenAIError` with a
   400, and the factory formats the response.
 - **`weights.yaml`** (when weights are fetched rather than already in `$AI_ASSETS`):
 
@@ -143,13 +144,14 @@ signature:                          # oip-v2 only
   apps can switch between them. Speech enhancement uses `deepfilternet3`'s: `AUDIO` + `SAMPLE_RATE` in,
   `AUDIO` + `SAMPLE_RATE` out, with the same rate and length as the input (the catalog fails a length
   more than 10 ms off). The output signature is what makes the catalog verify it as an enhancer.
-- `gpu` takes `vram_gb` only (never `util`). It counts as `vram_gb / 32` in the profile budget.
+- `gpu` takes `vram_gb` only (never `util`). It is the least memory the service needs to load (the
+  measured peak, rounded up), and at run time the service gets the whole GPU.
 
 ## Verify
 
 ```bash
 just test                 # in-process conformance with the fake model
-just validate && just vram <profile> && just render
+just validate && just vram <name> && just render
 just fetch-weights <name> # only if the user agreed to download
 just build <name>         # builds the base image too if it is missing
 just up <profile> && just conform <name>

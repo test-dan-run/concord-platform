@@ -122,11 +122,11 @@ class Engine(_Strict):
             raise ValueError(f"engine image {v!r} uses :latest; pin an exact tag")
         return v
 
-    def render_command(self, *, model: str, name: str, util: float | None) -> list[str]:
+    def render_command(self, *, model: str, name: str, util: float | str | None) -> list[str]:
         values = {
             "model": model,
             "name": name,
-            "util": "" if util is None else f"{util:g}",
+            "util": "" if util is None else util if isinstance(util, str) else f"{util:g}",
             "internal_port": str(self.internal_port),
         }
         return [part.format_map(values) for part in self.command]
@@ -476,7 +476,7 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
         if s.port in seen_ports:
             errors.append(f"port {s.port} collision: {seen_ports[s.port].name} and {path.name}")
         seen_ports.setdefault(s.port, path)
-        # Any set of services may run together if it fits (tools/vram_check.py); each one must fit alone.
+        # gpu.util / vram_gb is the least a service needs to load; it runs alone on the GPU (tools/vram_check.py).
         if s.vram_fraction(config.gpu_total_gb) > config.util_limit + 1e-9:
             errors.append(f"{path.name}: needs {s.vram_fraction(config.gpu_total_gb):.3f} of the GPU, "
                           f"over util_limit {config.util_limit} even when running alone")

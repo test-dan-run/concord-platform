@@ -177,12 +177,14 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     def platform() -> dict[str, Any]:
         p = sched.platform()
         with sched.lock:
-            occupying = sorted(sched._occupying(p))
+            # What each start was given (the whole GPU as measured), else the minimum to load.
+            held = {m: sched.runs[m].given or sched.frac(p, m) for m in sorted(sched._occupying(p))}
+            swaps = sched.swaps
         return {"gpu_total_gb": p.config.gpu_total_gb, "util_limit": p.config.util_limit,
                 "reserve_gb": round((1 - p.config.util_limit) * p.config.gpu_total_gb, 2),
-                "used_fraction": round(sum(sched.frac(p, m) for m in occupying), 4),
-                "gpu_models": [{"id": m, "fraction": round(sched.frac(p, m), 4)} for m in occupying],
-                "platform_error": sched.platform_error}
+                "used_fraction": round(sum(held.values()), 4),
+                "gpu_models": [{"id": m, "fraction": round(f, 4)} for m, f in held.items()],
+                "swaps": swaps, "platform_error": sched.platform_error}
 
     @app.get("/api/models")
     def list_models(task: list[str] = Query(default=[]), tag: list[str] = Query(default=[]),

@@ -50,6 +50,20 @@ def test_lease_lifecycle_over_http(api, cat):
     assert api.post("/api/leases", json={"holder": "x", "models": ["nope"]}).status_code == 404
 
 
+def test_one_gpu_model_per_lease_and_the_swap_count(api, cat):
+    two = api.post("/api/leases", json={"holder": "x", "models": ["default-asr", "default-embed", "silero-vad"]})
+    assert two.status_code == 422 and "lease one GPU model per stage" in two.json()["error"]["message"]
+    assert api.get("/api/platform").json()["swaps"] == 0
+    cat.settings.release_linger_s = 3600.0
+    for model in ["whisper-large-v3", "bge-m3"]:
+        lid = api.post("/api/leases", json={"holder": "x", "models": [model]}).json()["id"]
+        step(cat)
+        assert api.get(f"/api/leases/{lid}").json()["state"] == "active"
+        api.delete(f"/api/leases/{lid}")
+    gpu = api.get("/api/platform").json()
+    assert gpu["swaps"] == 1 and gpu["gpu_models"] == [{"id": "bge-m3", "fraction": 0.93}]  # whole GPU, not 0.08
+
+
 def test_aicore_client_against_the_api(api, cat):
     c = Catalog("http://testserver", http=api)
     assert c.available()

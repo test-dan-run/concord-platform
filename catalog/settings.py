@@ -28,14 +28,12 @@ class Settings:
     lease_ttl_s: float = 90.0  # three missed 30 s heartbeats
     start_timeout_s: float = field(default_factory=lambda: float(_env("AI_STACK_TIMEOUT", str(15 * 60))))
     settle_min_s: float = 60.0
-    reuse_tau_s: float = 15 * 60.0  # recency decay for the likelihood of reuse
     # A model a lease brought up is stopped this long after its last lease ends, unless something else needs it
     # (a back-to-back lease on the same model keeps it loaded).
     release_linger_s: float = field(default_factory=lambda: float(_env("CATALOG_RELEASE_LINGER_S", "30")))
     # A model the gateway started for calls without a lease is stopped after this long without a call.
     gateway_idle_s: float = field(default_factory=lambda: float(_env("CATALOG_GATEWAY_IDLE_S", "600")))
-    # A GPU model starts only when the device has its whole budget free, plus this margin (CUDA context).
-    gpu_margin_gib: float = 0.5
+    # A GPU model starts only when the device has its minimum free besides 1 GiB (tools/vram_check.py RESERVE_GIB).
     gpu_free_wait_s: float = 30.0  # how long a start waits for stopped models to give their memory back
     gateway_unmeasured_wait_s: float = 600.0  # how long a call waits for a model whose start was never measured
     verify_on_new_build: bool = field(default_factory=lambda: _env("CATALOG_VERIFY_NEW_BUILDS", "1") == "1")
