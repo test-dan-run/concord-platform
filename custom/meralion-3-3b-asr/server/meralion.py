@@ -4,18 +4,22 @@ and removal of the speaker tag the model sometimes emits. The package itself is 
 vllm==0.16.0.
 
 Attention is "eager": the Gemma-2 decoder's logit softcapping is not applied under sdpa (the package's note).
+
+`transcribe_batch` runs many chunks in one `generate` call. The processor pads every chunk to the Whisper encoder's
+30 s window and gives each the same prompt with the same number of speech tokens, so a batch needs no extra padding
+and greedy decoding gives each chunk the text it gets alone (up to bf16 rounding in batched kernels).
 """
 
 from __future__ import annotations
 
 import io
-import threading
 from pathlib import Path
 
 import numpy as np
 
 SR = 16000
 MAX_CHUNK_S = 30.0  # the model is trained on <= 30 s windows
+CHUNK_MS = int(MAX_CHUNK_S * 1000)  # the batch length of every chunk: the encoder always sees a padded 30 s window
 # from meralion_3_asr/prompts.py (0.1.0)
 ASR_CONTENT = ("Instruction: Please transcribe this speech. \n"
                "Follow the text instruction based on the following audio: <SpeechHere>")
@@ -54,6 +58,11 @@ def strip_speaker_tag(text: str) -> str:
     return text
 
 
+def join(texts) -> str:
+    """The chunks of one file joined with spaces, as the package does."""
+    return " ".join(t for t in texts if t)
+
+
 class Meralion3Asr:
     def __init__(self, weights_dir):
         self.weights_dir = Path(weights_dir)
@@ -63,7 +72,6 @@ class Meralion3Asr:
         self.device = "cpu"
         self.dtype = None
         self._torch = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         import torch
@@ -87,21 +95,22 @@ class Meralion3Asr:
         self.prompt = self.processor.tokenizer.apply_chat_template([{"role": "user", "content": ASR_CONTENT}],
                                                                    tokenize=False, add_generation_prompt=True)
 
-    def transcribe_chunk(self, x: np.ndarray) -> str:
+    def transcribe_batch(self, pieces: list[np.ndarray]) -> list[str]:
+        """Text of each chunk (at most 30 s) from one `generate` call. Callers serialise calls (aisvc MicroBatcher)."""
+        if self.model is None:
+            raise RuntimeError("model not loaded")
         torch = self._torch
-        inputs = self.processor(text=[self.prompt], audios=[x], return_tensors="pt", padding=True).to(self.device)
+        inputs = self.processor(text=[self.prompt] * len(pieces), audios=list(pieces), return_tensors="pt",
+                                padding=True).to(self.device)
         for k, v in inputs.items():
             if v.dtype.is_floating_point:
                 inputs[k] = v.to(self.dtype)
         with torch.inference_mode():
             out = self.model.generate(**inputs, **GENERATION)
-        new = out[:, inputs["input_ids"].shape[1]:]
-        return strip_speaker_tag(self.processor.batch_decode(new, skip_special_tokens=True)[0])
+        new = out[:, inputs["input_ids"].shape[1]:]  # rows that stop early are filled with pad, which decoding skips
+        return [strip_speaker_tag(t) for t in self.processor.batch_decode(new, skip_special_tokens=True)]
 
     def transcribe(self, data: bytes) -> tuple[str, float]:
-        if self.model is None:
-            raise RuntimeError("model not loaded")
+        """One file, chunk by chunk (the app batches the chunks of concurrent requests instead)."""
         x = decode_audio(data)
-        with self._lock:
-            parts = [self.transcribe_chunk(c) for c in chunks(x)]
-        return " ".join(p for p in parts if p), round(len(x) / SR, 3)
+        return join(self.transcribe_batch([c])[0] for c in chunks(x)), round(len(x) / SR, 3)

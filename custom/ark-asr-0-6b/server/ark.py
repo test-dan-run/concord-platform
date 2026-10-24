@@ -2,13 +2,17 @@
 (AutoArk/open-audio-opd @012947b, scripts/infer/ark_asr_transformers.py): its fixed prompt, greedy decoding that stops
 at any turn marker, the logits processor that blocks ids >= 151670 and the control tokens, and its text cleanup.
 Audio is cut into 30 s non-overlapping chunks (the card's example caps one pass at 30 s; the script allows 40 s).
+
+`transcribe_batch` runs many chunks in one `generate` call. Each chunk is prepared alone, exactly as it would be on
+its own, and the prompts are padded on the left. The audio encoder has no padding mask, so `OwnLengths` encodes
+each chunk at its own length (chunks of equal length together); greedy decoding then gives each chunk the text it
+gets alone, up to bf16 rounding in batched kernels.
 """
 
 from __future__ import annotations
 
 import io
 import re
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -52,6 +56,11 @@ def decode_audio(data: bytes) -> np.ndarray:
 def chunks(x: np.ndarray, max_s: float = MAX_CHUNK_S) -> list[np.ndarray]:
     n = int(max_s * SR)
     return [x] if len(x) <= n else [x[s:s + n] for s in range(0, len(x), n)]
+
+
+def join(texts) -> str:
+    """The chunks of one file joined with spaces (also for Chinese and Japanese, as before)."""
+    return " ".join(t for t in texts if t)
 
 
 def normalize_prediction_text(text: str) -> str:
@@ -120,7 +129,7 @@ class ArkAsr:
         self.dtype = None
         self.generate_kwargs: dict = {}
         self._torch = None
-        self._lock = threading.Lock()
+        self.encoder = None
 
     def load(self) -> None:
         import torch
@@ -152,23 +161,73 @@ class ArkAsr:
             "logits_processor": LogitsProcessorList([BlockTokenIds(BLOCK_FROM_ID, blocked_token_ids(tok, keep))]),
         }
 
-    def transcribe_chunk(self, x: np.ndarray) -> str:
-        torch = self._torch
+        self.encoder = own_lengths(torch, self.model.audio_encoder)
+        self.model.audio_encoder = self.encoder
+
+    def chunk_inputs(self, x: np.ndarray):
+        """input_ids, attention_mask [1, S] and audios (mel) [1, 128, frames] of one chunk, as the script builds them."""
         conversation = [{"role": "user", "content": [{"type": "audio", "array": x}, {"type": "text", "text": PROMPT}]}]
-        inputs = self.processor.apply_chat_template(
+        return self.processor.apply_chat_template(
             conversation, add_generation_prompt=True, return_tensors="pt", sampling_rate=SR, audio_padding="longest",
             text_kwargs={"padding": "longest"}, audio_max_length=int(MAX_CHUNK_S * SR))
-        inputs = {k: v.to(self.device, dtype=self.dtype) if k == "audios" else v.to(self.device)
-                  for k, v in inputs.items()}
-        with torch.inference_mode():
-            out = self.model.generate(**inputs, **self.generate_kwargs)
-        new = out[0, inputs["input_ids"].shape[1]:]
-        return normalize_prediction_text(self.processor.tokenizer.decode(new, skip_special_tokens=False))
 
-    def transcribe(self, data: bytes) -> tuple[str, float]:
+    def transcribe_batch(self, pieces: list[np.ndarray]) -> list[str]:
+        """Text of each chunk (at most 30 s) from one `generate` call. Callers serialise calls (aisvc MicroBatcher)."""
         if self.model is None:
             raise RuntimeError("model not loaded")
+        torch, pad = self._torch, self.generate_kwargs["pad_token_id"]
+        rows = [self.chunk_inputs(x) for x in pieces]
+        width, frames = max(r["input_ids"].shape[1] for r in rows), [r["audios"].shape[-1] for r in rows]
+        ids = torch.full((len(rows), width), pad, dtype=torch.long)
+        mask = torch.zeros((len(rows), width), dtype=torch.long)
+        mel = torch.zeros((len(rows), rows[0]["audios"].shape[1], max(frames)), dtype=self.dtype)
+        for i, r in enumerate(rows):  # prompts padded on the left, so every row goes on from its last token
+            n = r["input_ids"].shape[1]
+            ids[i, width - n:], mask[i, width - n:] = r["input_ids"][0], r["attention_mask"][0]
+            mel[i, :, : frames[i]] = r["audios"][0]
+        self.encoder.frames = frames
+        try:
+            with torch.inference_mode():
+                out = self.model.generate(input_ids=ids.to(self.device), attention_mask=mask.to(self.device),
+                                          audios=mel.to(self.device), **self.generate_kwargs)
+        finally:
+            self.encoder.frames = None
+        texts = []
+        for row in out[:, width:].tolist():
+            while row and row[-1] == pad:  # rows that stop early are filled with pad (the model never emits it)
+                row.pop()
+            texts.append(normalize_prediction_text(self.processor.tokenizer.decode(row, skip_special_tokens=False)))
+        return texts
+
+    def transcribe(self, data: bytes) -> tuple[str, float]:
+        """One file, chunk by chunk (the app batches the chunks of concurrent requests instead)."""
         x = decode_audio(data)
-        with self._lock:
-            parts = [self.transcribe_chunk(c) for c in chunks(x)]
-        return " ".join(p for p in parts if p), round(len(x) / SR, 3)
+        return join(self.transcribe_batch([c])[0] for c in chunks(x)), round(len(x) / SR, 3)
+
+
+def own_lengths(torch, encoder):
+    """Wrap the audio encoder so each row of a padded mel batch is encoded at its own `frames` length.
+
+    The encoder has no padding mask, so padding would change a short chunk's features. Rows of equal length run
+    together; the outputs are padded back to one width, and the model keeps each row's own number of audio tokens.
+    With `frames` unset (None) it is the plain encoder.
+    """
+
+    class OwnLengths(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.inner, self.frames = encoder, None
+
+        def forward(self, mel):
+            frames = self.frames if self.frames is not None and len(self.frames) == mel.shape[0] else None
+            if frames is None or len(set(frames)) == 1 and frames[0] == mel.shape[-1]:
+                return self.inner(mel)
+            outs = [None] * mel.shape[0]
+            for n in sorted(set(frames)):
+                rows = [i for i, f in enumerate(frames) if f == n]
+                for i, o in zip(rows, self.inner(mel[rows, :, :n])):
+                    outs[i] = o
+            width = max(o.shape[0] for o in outs)
+            return torch.stack([torch.nn.functional.pad(o, (0, 0, 0, width - o.shape[0])) for o in outs])
+
+    return OwnLengths()

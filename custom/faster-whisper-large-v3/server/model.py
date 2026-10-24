@@ -1,4 +1,10 @@
-"""faster-whisper (CTranslate2) loaded from local files; returns OpenAI verbose_json-shaped dicts."""
+"""faster-whisper (CTranslate2) loaded from local files; returns OpenAI verbose_json-shaped dicts.
+
+A file runs through faster-whisper's BatchedInferencePipeline: Silero VAD cuts the speech into windows of up to 30 s,
+and the windows are decoded in batches of `batch_size()`. A window does not see the text of the window before it (no
+conditioning on previous text, and no temperature fallback), so a long file runs several times faster with almost the
+same words. Requests run one at a time: one batch of windows already fills the GPU, and memory stays predictable.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +15,11 @@ import threading
 from pathlib import Path
 
 import numpy as np
+from aisvc import Limits
+from aisvc import batch as aisvc_batch
 
 SAMPLE_RATE = 16000
+WINDOW_MS = 30000  # Whisper pads every window to 30 s, so a batch of n windows is n x 30 s of padded audio
 
 
 class FasterWhisper:
@@ -19,6 +28,10 @@ class FasterWhisper:
         self.model = None
         self.device = "cpu"
         self._lock = threading.Lock()
+        # AISVC_MAX_BATCH windows per batch and at most AISVC_MAX_BATCH_LEN ms of padded windows; out of memory lowers
+        # it for the rest of the process. Registered so /platform/memory and /platform/batch-limits see it.
+        self.limits = Limits.from_env()
+        aisvc_batch._LIMITS["transcribe"] = self.limits
 
     def load(self) -> None:
         import ctranslate2
@@ -49,6 +62,27 @@ class FasterWhisper:
         print(f"faster-whisper: loaded on {device} ({compute})", file=sys.stderr, flush=True)
         return model
 
+    def batch_size(self) -> int:
+        """Windows per batch: AISVC_MAX_BATCH, and no more 30 s windows than AISVC_MAX_BATCH_LEN allows."""
+        lim = self.limits
+        return max(1, min(lim.max_items, lim.max_len // WINDOW_MS if lim.max_len is not None else lim.max_items))
+
+    def run_batched(self, audio: np.ndarray, **kwargs):
+        """(segments, info) of one file. Out of memory halves the batch and tries again; a batch of one window that
+        still runs out of memory raises. The caller holds the lock."""
+        from faster_whisper import BatchedInferencePipeline
+
+        while True:
+            n = self.batch_size()
+            try:
+                # a new pipeline per call: it keeps the last word time of the file it works on
+                segments, info = BatchedInferencePipeline(self.model).transcribe(audio, batch_size=n, **kwargs)
+                return list(segments), info  # the generator runs the decoding
+            except Exception as exc:
+                if n == 1 or not aisvc_batch.is_oom(exc):
+                    raise
+            self.limits.lower(n * WINDOW_MS, n)  # max_len drops to n/2 windows
+
     def transcribe(self, audio_bytes: bytes, *, language: str | None = None, prompt: str | None = None,
                    temperature: float | None = None, word_timestamps: bool = False, vad_filter: bool = True) -> dict:
         from faster_whisper.audio import decode_audio
@@ -58,13 +92,14 @@ class FasterWhisper:
             audio = decode_audio(io.BytesIO(audio_bytes), sampling_rate=SAMPLE_RATE)
         except Exception as exc:  # PyAV raises its own error types for undecodable input
             raise ValueError(f"could not decode audio file: {exc}") from None
+        # without_timestamps=False: Whisper's timestamp tokens split each window into sentence-sized segments, as the
+        # sequential decoder does (the pipeline's default is one segment per window)
         kwargs = {"language": language, "initial_prompt": prompt, "word_timestamps": word_timestamps,
-                  "vad_filter": vad_filter, "beam_size": 5}
+                  "vad_filter": vad_filter, "beam_size": 5, "without_timestamps": False}
         if temperature is not None:
             kwargs["temperature"] = temperature
         with self._lock:
-            segments, info = self.model.transcribe(audio, **kwargs)
-            segments = list(segments)  # the generator runs the decoding
+            segments, info = self.run_batched(audio, **kwargs)
         return {
             "task": "transcribe",
             "language": info.language,

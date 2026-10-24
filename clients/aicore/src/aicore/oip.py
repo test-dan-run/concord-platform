@@ -84,6 +84,15 @@ class OIPClient:
             self.signature = {"inputs": meta["inputs"], "outputs": meta["outputs"]}
         return self.signature
 
+    @staticmethod
+    def _single_clip(specs: dict[str, Any], inputs: dict[str, Any]) -> bool:
+        """One clip for a padded audio batch signature: AUDIO [-1] and no LENGTHS where the signature has AUDIO
+        [-1, -1] + LENGTHS. It is sent as it is: a server that kept its single-clip form answers it as one row
+        (qwen3-forced-aligner 0.2.0 does, for callers written for 0.1.0); any other server returns a 400."""
+        audio = specs.get("AUDIO")
+        return (audio is not None and len(audio["shape"]) == 2 and "LENGTHS" in specs and "LENGTHS" not in inputs
+                and "AUDIO" in inputs and np.ndim(inputs["AUDIO"]) == 1)
+
     def encode(self, inputs: dict[str, Any]) -> list[dict[str, Any]]:
         """Validate numpy inputs against the signature and encode them as OIP JSON tensors.
 
@@ -91,7 +100,7 @@ class OIPClient:
         LENGTHS, sent as it is. The enhancer and diarizer servers answer it as one row in their old output shapes.
         """
         specs = {t["name"]: t for t in self._signature()["inputs"]}
-        single = "LENGTHS" in specs and "LENGTHS" not in inputs
+        single = self._single_clip(specs, inputs)
         unknown = sorted(set(inputs) - set(specs))
         missing = sorted(set(specs) - set(inputs) - ({"LENGTHS"} if single else set()))
         if unknown or missing:

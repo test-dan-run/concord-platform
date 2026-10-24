@@ -132,8 +132,12 @@ def oip_metadata_matches_signature(c: httpx.Client, meta: dict) -> None:
 
 
 def _example_inputs(signature: dict) -> list[dict]:
-    """Inputs built from the signature: `example` values if declared, else zeros with -1 -> 16000."""
+    """Inputs built from the signature: `example` values if declared, else zeros with -1 -> 16000.
+
+    A padded audio batch (AUDIO [-1, -1] with LENGTHS) without examples is one row of 16000 zeros, and LENGTHS
+    then gives that row's length."""
     inputs = []
+    batch = {t["name"] for t in signature["inputs"]} >= {"AUDIO", "LENGTHS"}
     for t in signature["inputs"]:
         if t.get("example") is not None and len(t["shape"]) > 1 and isinstance(t["example"][0], list):
             # nested example (batch-shaped inputs such as AUDIO [-1, -1]): its nesting gives the shape
@@ -145,9 +149,16 @@ def _example_inputs(signature: dict) -> list[dict]:
             shape = [len(data) if d == -1 else d for d in t["shape"]]
         else:
             shape = [16000 if d == -1 else d for d in t["shape"]]
+            if batch and t["name"] == "AUDIO" and len(shape) == 2 and t["shape"][0] == -1:
+                shape[0] = 1
             n = math.prod(shape)
             data = [""] * n if t["datatype"] == "BYTES" else [False] * n if t["datatype"] == "BOOL" else [0] * n
         inputs.append({"name": t["name"], "datatype": t["datatype"], "shape": shape, "data": data})
+    by_name = {i["name"]: i for i in inputs}
+    lengths = next((t for t in signature["inputs"] if t["name"] == "LENGTHS"), None)
+    if batch and lengths is not None and lengths.get("example") is None and len(by_name["AUDIO"]["shape"]) == 2:
+        rows, width = by_name["AUDIO"]["shape"]
+        by_name["LENGTHS"].update(shape=[rows], data=[width] * rows)
     return inputs
 
 

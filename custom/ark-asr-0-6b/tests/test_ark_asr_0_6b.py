@@ -1,8 +1,12 @@
-"""ark-asr-0-6b: audio.transcriptions conformance with a fake model behind the real decoding and chunking, the authors'
-text cleanup and token blocking, and the real model when weights exist."""
+"""ark-asr-0-6b: audio.transcriptions conformance with a fake model behind the real decoding, chunking and batching
+of concurrent requests, the authors' text cleanup and token blocking, the encoder wrapper, and the real model when
+weights exist."""
 
 import io
+import json
 import os
+import threading
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -21,14 +25,15 @@ class FakeArk(asr_mod.ArkAsr):
 
     def __init__(self):
         super().__init__("/nonexistent")
-        self.chunks = []
+        self.chunks, self.batches = [], []
 
     def load(self):
         self.model = object()
 
-    def transcribe_chunk(self, x):
-        self.chunks.append(len(x))
-        return asr_mod.normalize_prediction_text(f", chunk{len(x)}<|im_end|><|user|>")
+    def transcribe_batch(self, pieces):
+        self.batches.append([len(x) for x in pieces])
+        self.chunks += [len(x) for x in pieces]
+        return [asr_mod.normalize_prediction_text(f", chunk{len(x)}<|im_end|><|user|>") for x in pieces]
 
 
 @pytest.fixture(scope="module")
@@ -70,8 +75,8 @@ def test_json_has_only_text(client):
 def test_long_audio_is_cut_into_30_s_chunks(client, model):
     model.chunks.clear()
     out = post(client, wav(65.0, sr=48000), response_format="verbose_json").json()
-    assert model.chunks == [480000, 480000, 80000]  # resampled to 16 kHz, then 30 + 30 + 5 s
-    assert out["text"] == "chunk480000 chunk480000 chunk80000" and out["duration"] == 65.0
+    assert sorted(model.chunks) == [80000, 480000, 480000]  # resampled to 16 kHz, then 30 + 30 + 5 s (run shortest first)
+    assert out["text"] == "chunk480000 chunk480000 chunk80000" and out["duration"] == 65.0  # joined in file order
 
 
 def test_text_format(client):
@@ -81,6 +86,66 @@ def test_text_format(client):
 
 def test_undecodable_audio_is_400(client):
     assert post(client, b"not audio at all").status_code == 400
+
+
+def post_together(client, payloads):
+    """One thread per payload, all released at once; responses in payload order."""
+    out, start = [None] * len(payloads), threading.Barrier(len(payloads))
+
+    def call(i):
+        start.wait()
+        out[i] = post(client, payloads[i])
+
+    threads = [threading.Thread(target=call, args=(i,)) for i in range(len(payloads))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    return out
+
+
+def test_concurrent_requests_share_one_batch(monkeypatch):
+    monkeypatch.setenv("AISVC_BATCH_WAIT_MS", "500")
+    model = FakeArk()
+    with running(app_mod.build_app(model)) as c:
+        rs = post_together(c, [wav(1.0), wav(65.0), b"not audio", wav(3.0, sr=8000)])
+    assert [r.status_code for r in rs] == [200, 200, 400, 200]  # a bad file fails only its own request
+    assert [rs[i].json()["text"] for i in (0, 1, 3)] == ["chunk16000", "chunk480000 chunk480000 chunk80000", "chunk48000"]
+    assert model.batches == [[16000, 48000, 80000, 480000, 480000]]  # one generate, sorted by length
+
+
+def test_chunks_run_in_batches_within_the_limits(monkeypatch):
+    monkeypatch.setenv("AISVC_MAX_BATCH", "3")
+    monkeypatch.setenv("AISVC_MAX_BATCH_LEN", "60000")  # ms: 3 x 20 s, or 2 x 30 s
+    model = FakeArk()
+    with running(app_mod.build_app(model)) as c:
+        out = post(c, wav(95.0)).json()
+    assert model.batches == [[80000, 480000], [480000, 480000]]
+    assert out["text"] == "chunk480000 chunk480000 chunk480000 chunk80000"
+
+
+def test_encoder_wrapper_encodes_each_row_at_its_own_length():
+    """A padded row must give what it gives alone; the stand-in encoder (mean over all frames) shows any padding."""
+    torch = pytest.importorskip("torch")
+
+    class MeanEncoder(torch.nn.Module):  # (B, mel, T) -> (B, T // 4, 2): a function of every frame, like attention
+        def forward(self, mel):
+            m = mel.mean(dim=(1, 2), keepdim=True).squeeze(1)
+            return m.unsqueeze(-1).expand(mel.shape[0], mel.shape[-1] // 4, 2) + 0
+
+    enc = asr_mod.own_lengths(torch, MeanEncoder())
+    rows = [torch.rand(1, 3, n) for n in (8, 16, 8)]
+    mel = torch.zeros(3, 3, 16)
+    for i, r in enumerate(rows):
+        mel[i, :, : r.shape[-1]] = r[0]
+    enc.frames = [8, 16, 8]
+    out = enc(mel)
+    assert out.shape == (3, 4, 2)
+    for i, r in enumerate(rows):
+        alone = MeanEncoder()(r)[0]
+        assert torch.allclose(out[i, : alone.shape[0]], alone) and not out[i, alone.shape[0]:].any()
+    enc.frames = None
+    assert torch.allclose(enc(mel), MeanEncoder()(mel))  # unset: the plain encoder
 
 
 @pytest.mark.parametrize("raw, clean", [
@@ -132,3 +197,30 @@ def test_real_model_loads_and_transcribes():
     m.load()
     text, duration = m.transcribe(wav(1.0))
     assert isinstance(text, str) and duration == 1.0
+
+
+CHECK_CLIP = Path(__file__).resolve().parents[3] / "catalog" / "fixtures" / "check_clip.wav"
+
+
+@pytest.mark.weights
+@pytest.mark.skipif(not (WEIGHTS / "model.safetensors").is_file(), reason=f"no weights in {WEIGHTS}")
+def test_real_model_batch_matches_one_by_one():
+    """Greedy decoding of a batch of chunks of different lengths (left-padded prompts, each chunk encoded at its own
+    length) gives each chunk its own text."""
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    pytest.importorskip("librosa")
+    from catalog.verifier.metrics import wer
+
+    with wave.open(str(CHECK_CLIP)) as w:
+        a = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768.0
+    pieces = [a, a[: 16000 * 4], a[16000 * 3 : 16000 * 9], np.tile(a, 3)[: 16000 * 28], a[: 16000 * 4]]
+    m = asr_mod.ArkAsr(WEIGHTS)
+    m.load()
+    batched = m.transcribe_batch(pieces)
+    alone = [m.transcribe_batch([p])[0] for p in pieces]
+    assert all(t for t in alone), alone
+    truth = json.loads(CHECK_CLIP.with_suffix(".json").read_text())["transcript"]
+    assert wer(truth, alone[0]) < 0.5, alone[0]  # the verifier's warning level: the model really hears the clip
+    for one, b in zip(alone, batched, strict=True):
+        assert one == b or wer(one, b) <= 0.05, (one, b)

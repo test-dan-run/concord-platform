@@ -222,10 +222,31 @@ def test_oip_batch_signature_also_takes_one_clip_without_lengths():
     assert one == {"AUDIO": [5], "SAMPLE_RATE": [1]}  # sent as it is; the server takes it as one row
     rows = c.encode({"AUDIO": np.zeros((2, 5), np.float32), "LENGTHS": np.array([5, 3], np.int32), "SAMPLE_RATE": sr})
     assert [t["shape"] for t in rows] == [[2, 5], [2], [1]]
-    with pytest.raises(AicoreError, match=r"or \[-1\] for one clip without LENGTHS"):
+    with pytest.raises(AicoreError, match="missing \\['LENGTHS'\\]"):  # a 2-D batch still needs its lengths
         c.encode({"AUDIO": np.zeros((2, 5), np.float32), "SAMPLE_RATE": sr})
     with pytest.raises(AicoreError, match="does not match"):
         c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "SAMPLE_RATE": sr})
+
+
+ALIGN_SIG = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]},
+                        {"name": "LENGTHS", "datatype": "INT32", "shape": [-1]},
+                        {"name": "TEXT", "datatype": "BYTES", "shape": [-1]}],
+             "outputs": [{"name": "WORDS", "datatype": "BYTES", "shape": [-1]}]}
+
+
+def test_oip_client_sends_one_clip_to_a_batch_signature_as_it_is():
+    """Callers written for a single-clip signature keep working when it becomes a padded batch (AUDIO [-1, -1] +
+    LENGTHS): AUDIO [-1] without LENGTHS goes to the server unchanged, which answers it as one row."""
+    c = aicore.OIPClient("http://x", "m", ALIGN_SIG, http=object())
+    one = c.encode({"AUDIO": np.zeros(5, np.float32), "TEXT": np.array(["hi"])})
+    assert [(t["name"], t["shape"]) for t in one] == [("AUDIO", [5]), ("TEXT", [1])]
+    batch = c.encode({"AUDIO": np.zeros((2, 5), np.float32), "LENGTHS": np.array([5, 3], np.int32),
+                      "TEXT": np.array(["a", "b"])})
+    assert [t["shape"] for t in batch] == [[2, 5], [2], [2]]
+    with pytest.raises(AicoreError, match="missing \\['LENGTHS'\\]"):  # a 2-D batch still needs its lengths
+        c.encode({"AUDIO": np.zeros((2, 5), np.float32), "TEXT": np.array(["a", "b"])})
+    with pytest.raises(AicoreError, match="shape \\[5\\] does not match"):  # with LENGTHS, AUDIO must be 2-D
+        c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "TEXT": np.array(["a"])})
 
 
 def test_oip_error_response_raises(oip_stub):
