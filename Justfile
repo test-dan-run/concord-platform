@@ -107,6 +107,10 @@ catalog-logs:
 catalog-import bundle *flags:
     {{py}} -m catalog import "{{bundle}}" {{flags}}
 
+# Dataset Catalog clean-up (catalog/datasets/gc.py): a dry run first, then asks before it deletes anything
+datasets-gc:
+    {{py}} -m catalog.datasets.gc
+
 # build the catalog UI into catalog/ui/dist
 catalog-ui:
     cd catalog/ui && npm ci --no-audit --no-fund && npm run build

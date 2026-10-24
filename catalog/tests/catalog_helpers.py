@@ -11,6 +11,8 @@ import time
 import wave
 import zipfile
 
+from catalog.db import iso
+
 
 def drain(c) -> None:
     """Run the starter thread's queued stops and starts in this thread."""
@@ -109,6 +111,11 @@ def publish(api, did: str, data: bytes, parent=None, app: str = "concord-label",
     if parent is not None:
         form["parent"] = str(parent)
     return api.post(f"/api/datasets/{did}/versions", files={"file": ("v.zip", data, "application/zip")}, data=form)
+
+
+def age(api, sha256: str, hours: float = 25) -> None:
+    """Make a stored file look older, for clean-up."""
+    api.dc.db.execute("UPDATE audio SET created_at = ? WHERE sha256 = ?", (iso(time.time() - hours * 3600), sha256))
 
 
 ASR = {"segments.jsonl": jsonl([{"file": "a.wav", "start": 0.0, "end": 0.2, "text": "hello there"},

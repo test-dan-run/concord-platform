@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from ..db import DB
-from . import SCHEMA, DatasetError
+from . import SCHEMA, DatasetError, gc
 from .store import COPY_CHUNK, AudioStore
 from .versions import Versions
 
@@ -31,6 +31,10 @@ class HoldsIn(BaseModel):
     app: str = Field(min_length=1)
     add: list[str] = []
     remove: list[str] = []
+
+
+class GcIn(BaseModel):
+    dry_run: bool = True
 
 
 class UnpackIn(BaseModel):
@@ -138,6 +142,10 @@ def add_dataset_routes(app: FastAPI, cat: Catalog) -> DatasetCatalog:
     @app.get("/api/store/stats")
     def store_stats() -> dict[str, Any]:
         return store.stats()
+
+    @app.post("/api/store/gc")
+    def store_gc(body: GcIn) -> dict[str, Any]:
+        return gc.collect(store, body.dry_run)
 
     @app.post("/api/store/unpack")
     def store_unpack(body: UnpackIn) -> dict[str, Any]:

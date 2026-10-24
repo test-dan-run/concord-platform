@@ -1,15 +1,19 @@
-"""The Dataset Catalog's audio store (catalog/datasets/store.py), through the HTTP API on a temporary store."""
+"""The Dataset Catalog's audio store (catalog/datasets/store.py) and clean-up (gc.py), through the HTTP API on a
+temporary store."""
 
 import io
+import os
 import shutil
 import stat
+import time
 import zipfile
 
 import pytest
-from catalog_helpers import sha, upload, wav
+from catalog_helpers import ASR, age, new_dataset, publish, sha, upload, version_zip, wav
 from fastapi.testclient import TestClient
 
 from catalog.app import create_app
+from catalog.datasets import gc
 from catalog.settings import Settings
 
 needs_ffprobe = pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffprobe is not installed")
@@ -109,3 +113,84 @@ def test_unpack_stores_and_probes_the_audio_of_a_zip(api, tmp_path):
     assert api.post("/api/store/missing", json={"sha256": [rec["sha256"], sha(B)]}).json() == {"missing": [rec["sha256"]]}
     assert list((tmp_path / "datasets" / "tmp").iterdir()) == []
     assert api.post("/api/store/unpack", json={"sha256": sha(A)}).status_code == 422  # not a zip
+
+
+# ----------------------------------------------------------------------------- clean-up (§4.3)
+
+def test_clean_up_deletes_only_audio_no_version_lists_no_app_holds_and_older_than_a_day(api, tmp_path):
+    did = new_dataset(api)
+    listed, held, young, orphan = wav(10), wav(11), wav(12), wav(13)
+    for d in (listed, held, young, orphan):
+        upload(api, d)
+    for d in (listed, held, orphan):
+        age(api, sha(d))
+    publish(api, did, version_zip([("a.wav", listed)], ASR))
+    api.post("/api/store/holds", json={"app": "concord-label", "add": [sha(held)]})
+    # A partial upload whose last write was more than a day ago is cleaned up too.
+    stale = wav(14)
+    api.put(f"/api/store/audio/{sha(stale)}", params={"offset": 0}, content=stale[:100])
+    age(api, sha(stale))
+    old = time.time() - 25 * 3600
+    os.utime(tmp_path / "datasets" / "tmp" / sha(stale), (old, old))
+
+    dry = api.post("/api/store/gc", json={"dry_run": True}).json()
+    assert dry["dry_run"] is True and dry["files"] == 2 and dry["bytes"] == len(orphan) + 100
+    assert {s["sha256"] for s in dry["sample"]} == {sha(orphan), sha(stale)}
+    assert (tmp_path / "datasets" / "audio" / sha(orphan)[:2] / sha(orphan)).is_file()  # a dry run deletes nothing
+
+    done = api.post("/api/store/gc", json={"dry_run": False}).json()
+    assert done["files"] == 2 and done["dry_run"] is False
+    assert not (tmp_path / "datasets" / "audio" / sha(orphan)[:2] / sha(orphan)).exists()
+    assert not (tmp_path / "datasets" / "tmp" / sha(stale)).exists()
+    assert api.post("/api/store/missing", json={"sha256": [sha(d) for d in (listed, held, young, orphan)]}).json() == {
+        "missing": [sha(orphan)]}
+    # Deleting the version leaves its audio to clean-up; releasing the hold does the same.
+    api.delete(f"/api/datasets/{did}/versions/1")
+    api.post("/api/store/holds", json={"app": "concord-label", "remove": [sha(held)]})
+    assert {s["sha256"] for s in api.post("/api/store/gc", json={}).json()["sample"]} == {sha(listed), sha(held)}
+
+
+def test_a_partial_upload_with_a_recent_write_is_kept(api):
+    d = wav(20)
+    api.put(f"/api/store/audio/{sha(d)}", params={"offset": 0}, content=d[:100])
+    age(api, sha(d))
+    assert gc.collect(api.dc.store)["files"] == 0
+
+
+def test_store_stats_group_audio_by_what_keeps_it(api):
+    did = new_dataset(api)
+    for d in (A, B, C):
+        upload(api, d)
+    publish(api, did, version_zip([("a.wav", A)], ASR))
+    api.post("/api/store/holds", json={"app": "concord-bench", "add": [sha(A), sha(B)]})
+    s = api.get("/api/store/stats").json()
+    assert s["audio"] == {"files": 3, "bytes": len(A) + len(B) + len(C)}
+    assert s["in_versions"] == {"files": 1, "bytes": len(A)}
+    assert s["held_only"] == {"files": 1, "bytes": len(B)}
+    assert s["neither"] == {"files": 1, "bytes": len(C)}
+    assert (s["datasets"], s["versions"]) == (1, 1) and s["disk"]["free"] > 0
+
+
+@pytest.mark.parametrize("answer", ["n", "y"])
+def test_just_datasets_gc_shows_the_dry_run_and_asks_first(api, monkeypatch, capsys, answer):
+    import httpx
+
+    old = wav(30)
+    upload(api, old)
+    age(api, sha(old))
+    calls = []
+
+    def post(url, json, timeout):
+        calls.append(json)
+        r = api.post(url.replace("http://catalog.test", ""), json=json)
+        return httpx.Response(r.status_code, json=r.json(), request=httpx.Request("POST", url))
+
+    monkeypatch.setenv("AICORE_CATALOG", "http://catalog.test")
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setattr("builtins.input", lambda prompt: answer)
+    assert gc.main() == 0
+    out = capsys.readouterr().out
+    assert f"would delete 1 audio files ({len(old) / 1024:.1f} KB)" in out and sha(old) in out
+    assert calls == [{"dry_run": True}] + ([{"dry_run": False}] if answer == "y" else [])
+    assert ("Deleted 1 audio files" in out) is (answer == "y")
+    assert api.post("/api/store/missing", json={"sha256": [sha(old)]}).json()["missing"] == ([sha(old)] if answer == "y" else [])
