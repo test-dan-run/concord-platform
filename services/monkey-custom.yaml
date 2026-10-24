@@ -11,6 +11,7 @@ build:
   context: custom/monkey-custom
   image: "{registry}/monkey-custom:0.1.0"
   base: py-cpu
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/monkey-custom/b26fd1c
   mount: /models

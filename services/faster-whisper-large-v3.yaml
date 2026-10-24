@@ -12,6 +12,7 @@ build:
   context: custom/faster-whisper-large-v3
   image: "{registry}/faster-whisper-large-v3:0.1.0"
   base: py-cpu                     # CUDA 12 libraries come from pip wheels; no CUDA image needed
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/faster-whisper-large-v3    # existing local copy (Systran/faster-whisper-large-v3 @edaa852)
   mount: /models

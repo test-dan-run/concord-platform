@@ -15,6 +15,7 @@ build:
   context: custom/voxcpm2
   image: "{registry}/voxcpm2:0.1.0"
   base: py-cuda-torch211           # voxcpm imports torchaudio, whose last release pairs with torch 2.11
+  base_version: "0.1.1"            # stays on the old base; this image must not change
 weights:
   path: ${AI_ASSETS}/custom-models/voxcpm2/32279ef
   mount: /models

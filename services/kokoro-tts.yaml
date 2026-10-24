@@ -13,6 +13,7 @@ build:
   context: custom/kokoro-tts
   image: "{registry}/kokoro-tts:0.1.0"
   base: py-cuda
+  base_version: "0.1.1"            # stays on the old base; this image must not change
 weights:
   path: ${AI_ASSETS}/custom-models/kokoro-tts/v1.0
   mount: /models

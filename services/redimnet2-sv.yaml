@@ -13,6 +13,7 @@ build:
   context: custom/redimnet2-sv
   image: "{registry}/redimnet2-sv:0.1.0"
   base: py-cuda-torch211           # torch 2.11 + torchaudio; one base for the phase C services
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/redimnet2-sv/b6-vb2-vox2-cnc2-lm-c5bbe0b
   mount: /models

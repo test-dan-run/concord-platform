@@ -1,18 +1,23 @@
 # Shared base images for custom services. Tagged {registry}/<name>-base:<version>.
-# A manifest picks one with build.base (default: py-cuda if it has gpu, else py-cpu).
-# `args` are passed to `docker build` as --build-arg, so variants share one Dockerfile.
+# A manifest picks one with build.base (default: py-cuda if it has gpu, else py-cpu) and gets `version`,
+# unless it pins one of `older_versions` with build.base_version. An older version is never rebuilt
+# when its image exists, so the services pinned to it keep their images; if it is missing, it is built
+# from the current files. `args` are passed to `docker build` as --build-arg, so variants share one Dockerfile.
 # Bump the version when a Dockerfile, its args or common/ change; `just build NAME` builds a base on demand.
 py-cuda:
   dockerfile: Dockerfile.py-cuda
-  version: 0.1.1
+  version: 0.2.0          # aisvc 0.2.0: aisvc.batch and GET /platform/memory
+  older_versions: [0.1.1]
 py-cuda-torch211:
   # torch 2.11 is the last release with a matching torchaudio (torchaudio stopped at 2.11);
   # for libraries that still need torchaudio, e.g. pyannote.audio 4.x.
   dockerfile: Dockerfile.py-cuda
-  version: 0.1.1
+  version: 0.2.0
+  older_versions: [0.1.1]
   args:
     TORCH_VERSION: "2.11.0"
     TORCH_EXTRA: "torchaudio==2.11.0"
 py-cpu:
   dockerfile: Dockerfile.py-cpu
-  version: 0.1.1
+  version: 0.2.0
+  older_versions: [0.1.1]

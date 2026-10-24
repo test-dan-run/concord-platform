@@ -11,6 +11,7 @@ build:
   context: custom/utmos
   image: "{registry}/utmos:0.1.0"
   base: py-cpu                     # CPU torch wheels are installed by the service Dockerfile
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/utmos/utmos22-strong-eecd3e6
   mount: /models

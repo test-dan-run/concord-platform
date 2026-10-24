@@ -11,6 +11,7 @@ build:
   context: custom/wpe-dereverb
   image: "{registry}/wpe-dereverb:0.1.0"
   base: py-cpu
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 signature:
   inputs:
     - {name: AUDIO, datatype: FP32, shape: [-1]}

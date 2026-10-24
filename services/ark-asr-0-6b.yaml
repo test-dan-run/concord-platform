@@ -12,6 +12,7 @@ build:
   context: custom/ark-asr-0-6b
   image: "{registry}/ark-asr-0-6b:0.1.0"
   base: py-cuda-torch211           # same base and transformers pin as meralion-3-3b-asr
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/ark-asr-0-6b/45776b5
   mount: /models

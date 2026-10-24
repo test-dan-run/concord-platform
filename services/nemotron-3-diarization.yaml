@@ -14,6 +14,7 @@ build:
   context: custom/nemotron-3-diarization
   image: "{registry}/nemotron-3-diarization:0.1.0"
   base: py-cpu
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/nemotron-3-diarization       # existing local copy (.nemo)
   mount: /models
