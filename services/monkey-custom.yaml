@@ -1,0 +1,20 @@
+name: monkey-custom                # user-chosen name; source: github.com/test-dan-run/transcript-normer @e98d4ae
+kind: model
+engine: custom
+contract: openai-inspired
+api: text.transform
+contract_reason: "Text in, text out; deletes fillers and particles, so no input/output spans for text.itn"
+port: 8412                         # kind model (it runs a neural punctuation model), so the 84xx band
+description: "ASR transcript normaliser (transcript-normer): removes fillers and Singlish particles, stitches acronyms; canonical (whisper ITN), verbatim or punctuated (ONNX) output"
+tasks: [text-normalization, disfluency-removal, inverse-text-normalization, punctuation-restoration, truecasing]
+build:
+  context: custom/monkey-custom
+  image: "{registry}/monkey-custom:0.1.0"
+  base: py-cpu
+weights:
+  path: ${AI_ASSETS}/custom-models/monkey-custom/b26fd1c
+  mount: /models
+custom_reason: >-
+  Checked 2026-10-24: a rule-based normalisation pipeline (regexes with context guards, whisper-normalizer)
+  plus a small ONNX punctuation model on onnxruntime; vLLM v0.31.0 and SGLang v0.5.21 serve neither. Retire
+  if transcript-normer serves text.transform itself.

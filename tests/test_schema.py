@@ -14,7 +14,7 @@ def test_sample_manifests_validate():
     p = load_platform()
     assert [s.name for s in p.services] == [
         "apertus-sea-lion-v4-8b-it", "ark-asr-0-6b", "bge-m3", "cohere-transcribe-03-2026", "deepfilternet3", "dnsmos", "faster-whisper-large-v3",
-        "gemma-sea-lion-v4-27b-it-nvfp4", "granite-speech-5-0-2b", "kokoro-tts", "meralion-3-3b-asr", "nemotron-3-diarization",
+        "gemma-sea-lion-v4-27b-it-nvfp4", "granite-speech-5-0-2b", "kokoro-tts", "meralion-3-3b-asr", "monkey-custom", "nemotron-3-diarization",
         "nemotronlabs-re-use",
         "pyannote-diarization", "qwen-sea-lion-v4-5-27b-it", "qwen2-5-14b-instruct-awq", "qwen3-32b-awq",
         "qwen3-4b-instruct-2507", "qwen3-5-4b", "qwen3-8b", "qwen3-asr-1-7b", "qwen3-forced-aligner", "redimnet2-sv",

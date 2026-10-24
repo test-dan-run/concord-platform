@@ -25,6 +25,8 @@ dev = [
     "soxr>=1.1.0",         # deepfilternet3 / dnsmos resampling in their tests
     "nara-wpe==0.0.11",    # wpe-dereverb runs for real in its tests (no weights needed)
     "scipy>=1.18.1",       # imported by nara_wpe without being declared
+    "whisper-normalizer==0.1.15", # monkey-custom runs its real normaliser in its tests
+    "sentencepiece==0.2.2",       # and its punctuation model when weights are present
 ]
 
 [tool.uv]

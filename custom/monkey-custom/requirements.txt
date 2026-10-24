@@ -1,0 +1,9 @@
+# On top of py-cpu-base (fastapi, uvicorn, numpy, aisvc). Pinned 2026-10-24 to the newest releases that satisfy
+# transcript-normer's requirements.txt (whisper-normalizer>=0.0.10, onnxruntime>=1.17, sentencepiece>=0.2).
+whisper-normalizer==0.1.15
+more-itertools==11.2.1
+regex==2026.9.29
+indic-numtowords==1.1.0
+text2num==3.1.0
+onnxruntime==1.31.0
+sentencepiece==0.2.2
