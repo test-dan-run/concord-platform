@@ -140,7 +140,7 @@ def dumps(obj: Any) -> str:
 
 
 class DB:
-    def __init__(self, path: Path | str):
+    def __init__(self, path: Path | str, schema: str = SCHEMA):
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +150,7 @@ class DB:
         with self._lock:
             if self.path != ":memory:":
                 self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(SCHEMA)
+            self._conn.executescript(schema)
 
     @contextlib.contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:

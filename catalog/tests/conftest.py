@@ -41,7 +41,8 @@ def master_key(tmp_path) -> Path:
 def settings(tmp_path, assets, master_key) -> Settings:
     return Settings(db_path=tmp_path / "catalog.db", docker=False, reconcile_s=0.05, settle_min_s=0.0,
                     verify_on_new_build=False, ui_dir=tmp_path / "no-ui", public_url="http://catalog.test",
-                    master_key_file=master_key, export_dir=tmp_path / "exports")
+                    master_key_file=master_key, export_dir=tmp_path / "exports",
+                    dataset_store=tmp_path / "datasets")
 
 
 @pytest.fixture

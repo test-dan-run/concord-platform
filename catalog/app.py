@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .builds import Builds
+from .datasets.routes import add_dataset_routes
 from .db import DB
 from .events import Events
 from .exporter import Exporter
@@ -384,6 +385,8 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     @app.api_route("/v2/models/{model_id}/{path:path}", methods=methods, include_in_schema=False)
     async def gateway_oip(model_id: str, path: str, request: Request) -> Response:
         return await cat.gateway.forward(request, model_id, f"v2/models/{model_id}/{path}")
+
+    add_dataset_routes(app, cat)  # the Dataset Catalog (catalog/datasets): before the UI's catch-all route
 
     # ------------------------------------------------------------------------- UI
 

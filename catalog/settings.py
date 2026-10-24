@@ -1,4 +1,5 @@
-"""Catalog settings, from CATALOG_* environment variables (and AI_HOST for the gateway's upstream)."""
+"""Catalog settings, from CATALOG_* environment variables (and AI_HOST for the gateway's upstream, and
+DATASET_STORE or AI_DATA for the Dataset Catalog's store)."""
 
 from __future__ import annotations
 
@@ -13,6 +14,11 @@ DEFAULT_PORT = 8700
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name) or default
+
+
+def _dataset_store() -> Path:
+    data = Path(_env("AI_DATA", str(Path.home() / "ai-data"))).expanduser()
+    return Path(_env("DATASET_STORE", str(data / "datasets"))).expanduser()
 
 
 @dataclass
@@ -47,6 +53,10 @@ class Settings:
     hosted_reverify_s: float = 24 * 3600.0  # a provider can change the model behind the same name
     # Export bundles; keep it out of the dev/.backups tarballs (or outside PLATFORM_DIR): bundles are tens of GB.
     export_dir: Path = field(default_factory=lambda: Path(_env("CATALOG_EXPORT_DIR", str(PLATFORM_DIR / "run" / "catalog" / "exports"))))
+
+    # The Dataset Catalog's store (catalog/datasets): datasets.db, audio/, versions/ and tmp/. Its records can't be
+    # rebuilt, so it lives outside PLATFORM_DIR's run/ folder and is backed up as one folder.
+    dataset_store: Path = field(default_factory=lambda: _dataset_store())
 
     # Cold-start estimates before a build has been measured, seconds.
     estimate_engine_s: float = 180.0
