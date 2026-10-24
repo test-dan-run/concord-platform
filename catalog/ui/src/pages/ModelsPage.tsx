@@ -1,22 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, probeFor, type ConnectionTest, type Model, type PlatformInfo } from "../lib/api";
+import { api, isTextNormaliser, probeFor, type ConnectionTest, type Model, type PlatformInfo } from "../lib/api";
 import { ago, rtf, secs } from "../lib/format";
 import * as I from "../components/icons";
 import { CapabilityChips, gpuLabel, GpuBar, StateCell, VerifyChip } from "../components/model";
 import { Button, Chip, cx, Empty, ErrorNote, LinkButton, PageHeader, Panel, Spinner, Toggle } from "../components/ui";
 
-/** Model-type groups, by the probe that applies (capabilities.usable_as, or probeFor before verification). */
+/** Model-type groups, by the probe that applies (capabilities.usable_as, or probeFor before verification);
+ * text.transform normalisers join Text normalisation by their declared task (isTextNormaliser). */
 const GROUPS = [
   { key: "asr", label: "ASR", desc: "openai / audio.transcriptions · text out", empty: "No ASR models registered.", match: ["asr", "chat-audio"] },
   { key: "seg", label: "VAD and diarisation", desc: "oip-v2 / infer · SEGMENTS out", empty: "No VAD or diarisation models registered.", match: ["segmenter"] },
   { key: "se", label: "Speech enhancement", desc: "oip-v2 / infer · AUDIO out", empty: "No speech enhancement models registered yet.", match: ["enhancer"] },
-  { key: "itn", label: "Text normalisation", desc: "openai-inspired / text.itn · written form out", empty: "No text normalisation models registered yet.", match: ["itn"] },
+  { key: "itn", label: "Text normalisation", desc: "openai-inspired / text.itn or text.transform · written form out", empty: "No text normalisation models registered yet.", match: ["itn"] },
 ] as const;
 const OTHER = { key: "other", label: "Other models", desc: "verified on their protocol", empty: "" };
 
 function groupOf(m: Model): string {
+  if (isTextNormaliser(m)) return "itn";
   const probe = m.capabilities?.usable_as ?? probeFor(m);
   return GROUPS.find((g) => (g.match as readonly string[]).includes(probe ?? ""))?.key ?? OTHER.key;
 }

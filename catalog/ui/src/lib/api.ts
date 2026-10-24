@@ -188,6 +188,13 @@ export type ExportJob = {
   finished_at: string | null;
 };
 
+/** A text normaliser: an ITN service, or a text.transform service whose manifest declares text normalisation.
+ * text.transform alone is the general text-to-text API (redaction, transliteration, ...), so the task decides. */
+export function isTextNormaliser(m: Model): boolean {
+  if ((m.capabilities?.usable_as ?? probeFor(m)) === "itn") return true;
+  return m.contract === "openai-inspired" && m.api === "text.transform" && m.tasks.includes("text-normalization");
+}
+
 /** Which capability probe applies to a service, before it is verified (catalog/verifier/probes.py). */
 export function probeFor(m: Model): Capabilities["usable_as"] {
   if (m.contract === "openai" && m.api === "audio.transcriptions") return "asr";
@@ -201,3 +208,37 @@ export function probeFor(m: Model): Capabilities["usable_as"] {
   if (m.contract === "openai-inspired" && m.api === "text.itn") return "itn";
   return null;
 }
+
+export type ModelCardSection = {
+  key: "upstream" | "service";
+  title: string;
+  markdown: string;
+  evaluation: string | null; // the upstream card's results, shown collapsed
+  full_url: string | null; // the whole upstream card at the same revision
+  origin: string;
+  fetched_at?: string | null;
+};
+
+/** GET /api/models/{id}/card (catalog/cards.py): provenance, license, upstream metadata, checkpoint facts, docs. */
+export type ModelCard = {
+  id: string;
+  description: string | null;
+  tasks: string[];
+  model_weights: boolean;
+  source: {
+    host: "huggingface" | "github" | "provider";
+    repo: string;
+    revision: string | null;
+    pinned: boolean;
+    origin: string;
+    url: string;
+    downloaded: string | null;
+    subpath: string | null;
+    version: string | null;
+  } | null;
+  license: { name: string | null; link: string | null; text: string | null; file: string | null };
+  upstream: { base_model: string[]; languages: string[]; datasets: string[] };
+  facts: { label: string; value: string }[];
+  sections: ModelCardSection[];
+  gaps: string[];
+};

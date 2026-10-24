@@ -259,3 +259,15 @@ def test_hosted_chat_without_audio_is_verified_as_a_text_model(api, cat, provide
     caps = api.get("/api/models/remote-chat").json()["capabilities"]
     assert caps["status"] == "verified" and caps["usable_as"] is None, caps["report"]
     assert any(x["name"] == "audio" and x["status"] == "info" for x in caps["report"]["lines"])
+
+
+def test_model_cards_for_platform_and_hosted_models(api, provider):
+    card = api.get("/api/models/silero-vad/card").json()
+    assert card["id"] == "silero-vad" and card["source"]["host"] == "github" and card["source"]["repo"] == "snakers4/silero-vad"
+    assert card["sections"] == []  # no fetched upstream card in the test assets; the service README is not the model's card
+    assert any("fetch-cards silero-vad" in g for g in card["gaps"])
+    api.post("/api/hosted", json=ASR)
+    hosted = api.get("/api/models/hosted-asr/card").json()
+    assert hosted["source"]["host"] == "provider" and hosted["facts"][1] == {"label": "Model at the provider", "value": "whisper-1"}
+    assert KEY not in str(hosted)
+    assert api.get("/api/models/nope/card").status_code == 404
