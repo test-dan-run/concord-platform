@@ -9,6 +9,7 @@ import { TagInput } from "../components/TagInput";
 import { Button, Chip, ErrorNote, Fact, LinkButton, PageHeader, Panel, Select, Spinner } from "../components/ui";
 import { DetailTabs, useDetailTab } from "../components/DetailTabs";
 import { ModelCard } from "../components/ModelCard";
+import { BatchPanel } from "../components/BatchPanel";
 import { HostedDetail } from "./HostedDetail";
 
 export function usage(m: Model): string {
@@ -74,6 +75,7 @@ export function ModelDetail() {
               </div>
             )}
           </Panel>
+          {d.gpu && <BatchPanel id={d.id} />}
           <Panel title="Calling it" subtitle="Through the catalog's gateway: the same protocol as the service, started on demand">
             <Fact k="Gateway URL" v={<span className="text-[11px] break-all">{d.endpoint.gateway_url}{d.endpoint.base_path}</span>} />
             <pre className="m-0 text-[11px] num bg-canvas border border-track rounded-md p-2.5 whitespace-pre-wrap">{usage(d)}</pre>
@@ -82,7 +84,7 @@ export function ModelDetail() {
         <div className="flex flex-col gap-5">
           <Panel title="State">
             <StateCell m={d} />
-            <Fact k="GPU footprint" v={gpuLabel(d)} />
+            <Fact k="GPU minimum to load" v={gpuLabel(d)} />
             <Fact k="Cold start" v={d.cold_start_measured ? secs(d.cold_start_s) : `~${secs(d.cold_start_s, 0)} (estimate)`} />
             <Fact k="Real-time factor" v={rtf(c?.rtf)} />
             <Fact k="Calls" v={d.calls.toLocaleString("en-US")} />

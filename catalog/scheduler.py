@@ -38,7 +38,7 @@ from typing import Any
 
 from tools import render
 from tools.schema import Manifest, Platform, PlatformError, load_platform
-from tools.vram_check import RESERVE_GIB, UTIL_VAR, start_env
+from tools.vram_check import BATCH_VARS, RESERVE_GIB, UTIL_VAR, VRAM_VAR, start_env
 
 from .builds import Build, Builds
 from .db import DB, dumps, iso, now_iso
@@ -109,6 +109,7 @@ class Run:
     released_at: float | None = None  # when the last lease holding it ended: spun down once nothing needs it
     short: str | None = None  # the start found too little free GPU memory: its request queues again
     given: float | None = None  # fraction of the device its start was given (None: CPU, or started elsewhere)
+    gpu_used_before: float | None = None  # GiB the device had in use just before its start (batch measurement)
 
 
 @dataclass
@@ -141,6 +142,8 @@ class Scheduler:
         self._cold_cache: dict[str, list[float]] = {}
         self.gpu: tuple[float, float] | None = None  # (total, free) GiB at the last tick; None: not measurable
         self.hosted_ids: Callable[[], set[str]] = set  # set by the catalog: ids of hosted endpoints
+        # set by the catalog: batch limits (AISVC_MAX_BATCH, ...) for a start of (name, build key, GiB given)
+        self.batch_env: Callable[[str, str | None, float], dict[str, str]] = lambda name, build_key, gib: {}
         self.swaps = (db.one("SELECT value FROM counter WHERE name = 'swaps'") or {}).get("value") or 0
         self._load_requests()
 
@@ -588,14 +591,17 @@ class Scheduler:
                 return
             run.start_began = time.time()
         s = p.get(name)
-        short, env = self._wait_for_gpu(p, s)
+        short, env, gpu = self._wait_for_gpu(p, s)
         if short:
             log.warning("not starting %s: %s", name, short)
             with self.lock:
                 run.starting, run.short = False, short
             return
+        if VRAM_VAR in env:
+            env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
         with self.lock:
             run.given = float(env[UTIL_VAR]) if UTIL_VAR in env else None
+            run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
         url = self.upstream_url(name)
         t0 = time.monotonic()
         error = None
@@ -648,12 +654,21 @@ class Scheduler:
                 run.build = build
         log.info("%s healthy after %.1fs", name, seconds)
 
-    def _wait_for_gpu(self, p: Platform, s: Manifest) -> tuple[str | None, dict[str, str]]:
+    def _batch_env(self, p: Platform, s: Manifest, gib: float) -> dict[str, str]:
+        """Compose variables for the batch limits of this build's profile at `gib` (none without a profile)."""
+        try:
+            bk = self.builds.current(p, s, None).build_key
+            return {BATCH_VARS[k]: v for k, v in self.batch_env(s.name, bk, gib).items() if k in BATCH_VARS}
+        except Exception:  # noqa: BLE001 - a start never fails over batch limits
+            log.exception("batch limits for %s", s.name)
+            return {}
+
+    def _wait_for_gpu(self, p: Platform, s: Manifest) -> tuple[str | None, dict[str, str], tuple[float, float] | None]:
         """Wait until the device has the model's minimum free besides 1 GiB (stopped models give memory back a
         moment after they exit). Returns (why it was not started, or None; the compose variables that give it
-        the memory measured free now, or util_limit x gpu_total_gb when nothing can be measured)."""
+        the memory measured free now, or util_limit x gpu_total_gb when nothing can be measured; the reading)."""
         if not s.gpu:
-            return None, {}
+            return None, {}, None
         deadline = time.monotonic() + self.settings.gpu_free_wait_s
         while True:
             try:
@@ -661,10 +676,10 @@ class Scheduler:
             except Exception:  # noqa: BLE001
                 gpu = None
             try:
-                return None, start_env(p, s, gpu)
+                return None, start_env(p, s, gpu), gpu
             except ValueError as exc:
                 if time.monotonic() >= deadline or self._stop.wait(1.0):
-                    return str(exc), {}
+                    return str(exc), {}, gpu
 
     # ------------------------------------------------------------------------- timings
 

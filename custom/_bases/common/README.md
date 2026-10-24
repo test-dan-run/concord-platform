@@ -63,7 +63,7 @@ The limits come from environment variables, which the catalog will set from meas
 | Variable | Meaning | When unset |
 |---|---|---|
 | `AISVC_MAX_BATCH` | Most items in one batch. | 8, or the image's own default |
-| `AISVC_MAX_BATCH_LEN` | Most padded length in one batch, which is the item count times the longest item. The unit is the one the image's `length` function returns, which is samples at the model's sample rate for audio, or tokens for text. A single item longer than the limit still runs on its own. | No cap, or the image's own default |
+| `AISVC_MAX_BATCH_LEN` | Most padded length in one batch, which is the item count times the longest item. The unit is the one the image's `length` function returns. For audio it is milliseconds of audio (use `aisvc.batch.audio_ms`), so the catalog can set it without knowing the model's sample rate. For text it is tokens. A single item longer than the limit still runs on its own. | No cap, or the image's own default |
 | `AISVC_BATCH_WAIT_MS` | How long `DynamicBatcher` waits for more requests after the first one. | 10 |
 | `AISVC_VRAM_GB` | The memory cap that `aisvc.gpu.limit_torch_memory` sets for PyTorch. | No cap |
 
@@ -85,3 +85,9 @@ batcher in the process, with the configured values and the number of times the l
 `POST /platform/memory/reset` returns the same body and then resets the peak, so the catalog can reset
 the peak, send a test load, and read the new peak. When torch or CUDA is missing, the body says
 `"torch": false` or `"cuda": false` and still lists the batch limits.
+
+`POST /platform/batch-limits` changes the limits of every batcher while the service runs. The body
+`{"max_items": 512, "max_len": null}` sets them, and `{"restore": true}` goes back to the values the
+service started with. Either way the count of lowered limits starts again from zero. The catalog uses
+it while it measures an image: it lifts the limits so each test batch runs whole, and it treats a
+lowered limit as an out of memory point.

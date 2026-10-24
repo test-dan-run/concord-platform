@@ -64,6 +64,7 @@ class Runtime(Protocol):
     def stop(self, p: Platform, names: list[str]) -> None: ...
     def healthy(self, p: Platform, s: Manifest, url: str) -> bool: ...
     def failure_detail(self, p: Platform, name: str) -> str: ...
+    def logs(self, p: Platform, name: str, tail: int) -> str: ...  # the container's last `tail` log lines
     def gpu_memory(self, p: Platform) -> tuple[float, float] | None: ...  # (total, free) GiB; None: cannot measure
     # Export (catalog/exporter.py): sizes, one `docker save` for all images, and registry pushes.
     def image_size(self, ref: str) -> int | None: ...
@@ -165,6 +166,10 @@ class DockerRuntime:
         lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
         return "\n".join(lines[-15:])
 
+    def logs(self, p: Platform, name: str, tail: int) -> str:
+        r = stack.compose(p, "logs", "--no-color", "--tail", str(tail), name, capture=True, check=False)
+        return r.stdout or ""
+
     def gpu_memory(self, p: Platform) -> tuple[float, float] | None:
         # Device-wide, so it includes processes outside the platform. The catalog container gets
         # nvidia-smi from the NVIDIA runtime (utility capability, catalog/compose.yml).
@@ -221,6 +226,7 @@ class FakeRuntime:
         self.gpu_total_gib: float | None = None
         self.gpu_other_gib = 0.0
         self.envs: dict[str, dict[str, str]] = {}
+        self.log_text: dict[str, str] = {}  # name -> what logs() returns
         self._lock = threading.Lock()
 
     def containers(self, p: Platform) -> dict[str, ContainerInfo]:
@@ -283,6 +289,9 @@ class FakeRuntime:
 
     def failure_detail(self, p: Platform, name: str) -> str:
         return ""
+
+    def logs(self, p: Platform, name: str, tail: int) -> str:
+        return self.log_text.get(name, "")
 
     def gpu_memory(self, p: Platform) -> tuple[float, float] | None:
         if self.gpu_total_gib is None:

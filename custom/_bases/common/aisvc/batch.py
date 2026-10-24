@@ -4,7 +4,7 @@
     vectors = embed(clips)                                # any number of clips, results in input order
 
 `MicroBatcher` sorts items by length, runs chunks within `Limits` (max items, and max padded length =
-items x longest item, in the image's unit: samples at the model rate for audio, or tokens), and on an
+items x longest item, in the image's unit: milliseconds of audio (`audio_ms`), or tokens), and on an
 out of memory error empties the CUDA cache, halves the chunk, retries and keeps the lower limit.
 `DynamicBatcher` gathers single calls from concurrent request threads (one file per HTTP request) into
 one micro-batched call. Limits come from AISVC_MAX_BATCH and AISVC_MAX_BATCH_LEN; GET /platform/memory
@@ -121,6 +121,21 @@ class Limits:
 def limits_stats() -> dict[str, dict[str, Any]]:
     """Current limits of every batcher in this process, by name."""
     return {name: lim.stats() for name, lim in _LIMITS.items()}
+
+
+def set_limits(max_items: int | None = None, max_len: int | None = None, *, restore: bool = False) -> dict[str, dict]:
+    """Change every batcher's limits at run time (POST /platform/batch-limits): the catalog lifts them while it
+    measures the image. `restore` goes back to the configured values; the backoff count starts again either way."""
+    if (max_items is not None and max_items < 1) or (max_len is not None and max_len < 1):
+        raise ValueError("batch limits must be at least 1")
+    for lim in _LIMITS.values():
+        with lim._lock:
+            if restore:
+                lim.max_items, lim.max_len = lim.configured
+            else:
+                lim.max_items, lim.max_len = max_items or lim.max_items, max_len
+            lim.backoffs = 0
+    return limits_stats()
 
 
 class MicroBatcher:
@@ -240,6 +255,11 @@ class DynamicBatcher:
                     c.result = r
             for c in group:
                 c.done.set()
+
+
+def audio_ms(samples: Sequence[Any] | np.ndarray, sample_rate: int) -> int:
+    """The length unit for audio batches: milliseconds, so AISVC_MAX_BATCH_LEN means the same at any sample rate."""
+    return len(samples) * 1000 // int(sample_rate)
 
 
 def pad(rows: Sequence[np.ndarray], value: float = 0.0, dtype: Any = np.float32) -> tuple[np.ndarray, np.ndarray]:

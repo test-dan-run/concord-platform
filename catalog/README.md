@@ -161,6 +161,46 @@ Upstream cards come from the weights folder when it holds one, else from `just f
 which downloads only README and LICENSE at the recorded revision into `${AI_ASSETS}/model-cards/`
 (never into a weights folder: every file there is part of the build key).
 
+## Batch profiles
+
+The catalog measures how a GPU model's peak memory grows with batch size, so it can recommend the largest
+batch that fits a given amount of memory (`catalog/batching.py`). A profile is stored per build key,
+because a rebuilt image can use memory differently.
+
+| Call | What it does |
+|---|---|
+| `POST /api/models/{id}/batch-profile` | Queues a measurement. 202 with `measuring` (`pending` or `running`). |
+| `GET /api/models/{id}/batch?vram_gb=24&item_s=20&n=8` | The current build's profile and a `table` of item lengths against 16, 24 and 32 GB and the full budget. With `item_s` (or `item_tokens` for vLLM), `recommendation` is the largest batch for `vram_gb` (default: the full budget). With `n` too, `need` is the memory that batch needs. |
+
+For a custom audio image, the measurement takes a lease (holder `catalog:batch`), so it waits its turn.
+It lifts the server's batch limits (`POST /platform/batch-limits` in `aisvc`), resets the peak, and sends
+batches of 1, 2, 4 and so on up to 128 items at three lengths: a short clip, a typical clip and the
+longest clip the server takes (`batch.max_item_s` in the manifest, or `batch.lengths_s` to choose them).
+Each length stops at the first out of memory error, or when the server had to split a batch, or when a
+batch takes more than 120 s. It then fits
+
+    peak GiB ≈ base + a × N × L + b × N × L²
+
+where N is the number of items and L is the length of each in seconds. The L² term matters for attention
+models. The recommendation for V GB is the largest N whose predicted peak stays under 0.9 × V. Peak
+memory is read from `nvidia-smi` during each request, less what the GPU used before the model started.
+This is correct because only one GPU model runs at a time. For a PyTorch image it is also read from the
+image's own counters (`GET /platform/memory`), and the larger value is kept. CTranslate2 and ONNX images
+have only the first reading.
+
+When a build has a profile, each start passes limits for the memory the start was given:
+`AISVC_MAX_BATCH` (the batch for the shortest measured length) and `AISVC_MAX_BATCH_LEN` (the padded
+length, which is items times the longest item, in milliseconds of audio). Without a profile the image
+uses its own small defaults, and its out of memory backoff splits a batch that does not fit.
+
+A vLLM service is not measured, because vLLM batches by itself. Its profile comes from its startup log
+(the available KV cache memory and the KV cache size in tokens). The recommendation is the number of
+sequences of a given length that fit the KV cache, which is a value for `--max-num-seqs`.
+
+`just batch NAME [--vram GB] [--item-s S | --item-tokens T] [--n N]` prints the same numbers in the
+terminal, and `just batch-profile NAME [--wait]` asks for a measurement. The model's page has a Batching
+section with the table and a Measure button.
+
 ## Hosted endpoints
 
 A model a provider already serves online, registered with its contract, base URL, provider model name
@@ -401,6 +441,7 @@ with cat.lease("bench:job-12", ["whisper-large-v3"], on_wait=print) as lease:
 hits = cat.index_lookup("bench", keys)              # list[dict | None]
 cat.index_record("bench", entries)
 plan = cat.plan(stages=[...])
+cat.batch("wavlm-sv", item_s=20)["recommendation"]  # {"batch": ..., "vram_gb": ...} once a profile exists
 ```
 
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are

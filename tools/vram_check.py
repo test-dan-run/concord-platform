@@ -28,6 +28,8 @@ RESERVE_GIB = 1.0  # left free at start: vLLM fails when the memory it asks for 
 # Compose variables render.py puts in the GPU settings of every service; stack.py and the catalog set them
 # to the measured value on `docker compose up`. Unset, compose falls back to util_limit x gpu_total_gb.
 UTIL_VAR, VRAM_VAR = "AIPLATFORM_GPU_UTIL", "AIPLATFORM_VRAM_GB"
+# Batch limits a start passes to a custom image (AISVC_MAX_BATCH / _LEN); empty = the image's defaults
+BATCH_VARS = {"AISVC_MAX_BATCH": "AIPLATFORM_MAX_BATCH", "AISVC_MAX_BATCH_LEN": "AIPLATFORM_MAX_BATCH_LEN"}
 
 
 @dataclass(frozen=True)

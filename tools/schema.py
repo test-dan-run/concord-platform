@@ -173,6 +173,12 @@ class GPU(_Strict):
         return self
 
 
+class BatchHints(_Strict):
+    """How the catalog measures the service's batch profile (catalog/batching.py). Not part of the config hash."""
+    max_item_s: float | None = Field(default=None, gt=0)  # the longest input the server takes whole (it cuts longer ones)
+    lengths_s: list[float] | None = None  # item lengths to measure at, in seconds (default: short, typical, longest)
+
+
 class Build(_Strict):
     context: str
     image: str
@@ -221,6 +227,7 @@ class Manifest(_Strict):
     weights: Weights | None = None
     custom_reason: str | None = None
     signature: Signature | None = None
+    batch: BatchHints | None = None
 
     @field_validator("name")
     @classmethod

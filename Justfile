@@ -71,6 +71,14 @@ fetch-weights name *flags:
 fetch-cards *names:
     {{py}} tools/model_cards.py {{names}}
 
+# recommended batch size from the catalog's batch profile (--vram GB, --item-s S or --item-tokens T, --n N)
+batch name *flags:
+    {{py}} tools/batch.py show {{name}} {{flags}}
+
+# ask the catalog to measure a model's batch profile now (it leases the model; --wait prints the result)
+batch-profile name *flags:
+    {{py}} tools/batch.py profile {{name}} {{flags}}
+
 # run the contract conformance suite against a running service (all services if no NAME); skips when down
 conform name="": render
     uv run pytest contracts/conformance -rs {{ if name == "" { "" } else { "--service " + name } }}

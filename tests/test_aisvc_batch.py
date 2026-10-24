@@ -234,3 +234,26 @@ def test_memory_route_with_cuda_reports_and_resets_the_peak(fake_torch, monkeypa
         reset = c.post("/platform/memory/reset").json()
         assert reset["reset"] is True and reset["peak_allocated_gib"] == 5.0  # read, then cleared
         assert c.get("/platform/memory").json()["peak_allocated_bytes"] == 0
+
+
+def test_batch_limits_route_lifts_and_restores():
+    from fastapi.testclient import TestClient
+
+    from aisvc import batch
+    from aisvc._core import create_base_app
+
+    mb = batch.MicroBatcher(lambda xs: xs, length=lambda x: 1, limits=batch.Limits(4, 100), name="route-test")
+    with TestClient(create_base_app("t", title="t", load=None, background=False)) as c:
+        r = c.post("/platform/batch-limits", json={"max_items": 512, "max_len": None})
+        assert r.status_code == 200 and r.json()["route-test"]["max_items"] == 512
+        assert mb.limits.max_len is None and mb(list(range(300))) == list(range(300))
+        assert c.post("/platform/batch-limits", json={"max_items": 0}).status_code == 422
+        r = c.post("/platform/batch-limits", json={"restore": True})
+        assert r.json()["route-test"] == {**r.json()["route-test"], "max_items": 4, "max_len": 100, "backoffs": 0}
+    batch._LIMITS.pop("route-test", None)
+
+
+def test_audio_ms():
+    from aisvc.batch import audio_ms
+
+    assert audio_ms([0.0] * 16000, 16000) == 1000 and audio_ms([0.0] * 24000, 48000) == 500

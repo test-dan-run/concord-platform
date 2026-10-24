@@ -86,4 +86,14 @@ def create_base_app(name: str, *, title: str, load: LoadFn | None, background: b
     def memory_reset() -> dict:
         return memory_stats(reset=True)
 
+    @app.post("/platform/batch-limits", tags=["platform"])
+    def batch_limits(body: dict) -> JSONResponse:
+        """{"max_items": n, "max_len": n or null} sets every batcher's limits; {"restore": true} undoes it."""
+        from .batch import set_limits
+
+        try:
+            return JSONResponse(set_limits(body.get("max_items"), body.get("max_len"), restore=bool(body.get("restore"))))
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+
     return app
