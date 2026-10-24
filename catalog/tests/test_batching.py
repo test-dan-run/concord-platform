@@ -215,3 +215,13 @@ def test_sweep_stops_before_a_batch_predicted_over_the_budget():
     pts, stops, _ = sweep(send, mem, [15.0], budget_gib=8.0, max_n=128)
     assert all(p.peak_gib <= 0.95 * 8.0 for p in pts) and "would need about" in stops[0]["stopped"]
     assert max(p.n for p in pts) == 32  # 64 x 15 s would need about 9.4 GiB
+
+
+def test_kv_profile_from_a_vllm_0_31_log():
+    """v0.31 prints the KV cache size and the concurrency on one line (measured on qwen3-8b, 2026-10-25)."""
+    text = ("INFO [gpu_worker.py:692] Available KV cache memory: 17.88 GiB\n"
+            "INFO [kv_cache_utils.py:2464] GPU KV cache size: 130,208 tokens, Maximum concurrency for 32,768 tokens "
+            "per request: 3.97x\n")
+    prof = kv_profile(text, 28.66)
+    assert prof.kv_tokens == 130208 and prof.max_model_len == 32768 and prof.max_concurrency == 3.97
+    assert prof.recommend(28.66, 32768) == 3

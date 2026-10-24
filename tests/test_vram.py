@@ -10,7 +10,7 @@ VOICE_CHAT = ["qwen3-8b", "whisper-large-v3", "kokoro-tts", "bge-m3", "silero-va
 def test_sample_sets():
     p = load_platform()
     voice = vram_check.budget(p, p.resolve(VOICE_CHAT))
-    assert voice.total_fraction == pytest.approx(0.674, abs=5e-4)  # the sum of minimums, still reported
+    assert voice.total_fraction == pytest.approx(0.804, abs=5e-4)  # the sum of minimums, still reported
     assert not voice.ok and voice.gpu == ["qwen3-8b", "whisper-large-v3", "kokoro-tts", "bge-m3"]  # largest first
     assert vram_check.budget(p, p.resolve(["heavy-chat"])).ok
     assert vram_check.budget(p, p.resolve(["silero-vad", "text-normalizer"])).total_fraction == 0

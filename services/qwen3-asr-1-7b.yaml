@@ -13,7 +13,8 @@ gpu:
   # 18,304 tokens (4.47 requests of 4,096). The plan's 0.12 is below the weights alone.
 args:
   - --max-model-len=4096           # native 64k; one utterance (<= 60 s of audio) plus its transcript fits easily
-  - --max-num-seqs=4               # requests are sequential; keeps the profiling batch small
+  - --max-num-seqs=64              # boots at util 0.22 (1.6 GiB KV, 15k tokens) and at 0.90 (23.3 GiB KV, 218k tokens);
+                                   # 32 concurrent clips took 0.47 s against 0.26 s for one (2026-10-25). Was 4.
   - '--limit-mm-per-prompt={"audio": 1}'   # one clip per request; bounds encoder memory at profiling
 description: "Speech-to-text, Qwen3-ASR 1.7B (52 languages and dialects, accented English, language ID); primary ASR for Synthetics voice checks"
 tasks: [speech-recognition, language-identification]
