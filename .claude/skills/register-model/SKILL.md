@@ -207,8 +207,10 @@ Flags for the pinned vLLM. Verify each one against that version's docs before yo
     name sorts after the current one.
 - `tests/test_stack.py`: only if the service joins `voice-chat` (the expected start order and
   `stop` tuples are hard-coded there).
-- `README.md` (platform root): add a row to the services table (name, alias, kind, engine,
-  contract / api, port, `util 0.NN` or `N GB` or `CPU`, profiles).
+- `README.md` (platform root): add a row to the table of the service's group, e.g. "Speech to text
+  (ASR)" or "Text normalisation" (name, alias, kind, engine, contract / api, port, `util 0.NN` or
+  `N GB` or `CPU`), in port order. A service that fits no group goes in "Other audio analysis" or a
+  new group with a one-sentence description.
 
 ### 7. Verify
 
