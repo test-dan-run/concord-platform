@@ -1,5 +1,5 @@
 // Live updates: the catalog's server-sent events invalidate the cached queries they affect, so pages
-// refresh within a second of a model or lease changing instead of polling hard.
+// refresh within a second of a model, lease or dataset changing instead of polling hard.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -26,6 +26,9 @@ export function useCatalogEvents(): boolean {
     es.addEventListener("lease", () => touch("leases", "models", "model"));
     es.addEventListener("queue", () => touch("leases", "platform"));
     es.addEventListener("export", () => touch("exports"));
+    // A dataset was made, edited, published to or deleted. Version files, references and comparisons never
+    // change, so their queries ("version-files", "refs", "compare") aren't touched.
+    es.addEventListener("dataset", () => touch("datasets", "dataset", "store-stats"));
     return () => {
       es.close();
       if (timer) clearTimeout(timer);

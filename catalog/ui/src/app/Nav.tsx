@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api, type Lease, type PlatformInfo } from "../lib/api";
-import { pct } from "../lib/format";
+import type { StoreStats } from "../lib/datasets";
+import { bytes, pct } from "../lib/format";
 import * as I from "../components/icons";
 import { Bar, cx, Toggle } from "../components/ui";
 
@@ -18,13 +19,18 @@ export function catalogOf(pathname: string): Catalog {
   return pathname === "/datasets" || pathname.startsWith("/datasets/") ? "datasets" : "models";
 }
 
-function Item({ to, icon, children, end = true }: { to: string; icon: ReactNode; children: ReactNode; end?: boolean }) {
+/** The Datasets item covers the list and every dataset's pages, but not the other pages under /datasets. */
+function datasetPage(pathname: string): boolean {
+  return catalogOf(pathname) === "datasets" && !/^\/datasets\/(upload|import|storage)\/?$/.test(pathname);
+}
+
+function Item({ to, icon, children, end = true, active }: { to: string; icon: ReactNode; children: ReactNode; end?: boolean; active?: boolean }) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
-        cx("flex items-center gap-2.5 px-2.5 min-h-10 rounded-md no-underline", isActive ? "bg-active !text-fg" : "!text-muted hover:!text-fg hover:bg-track")
+        cx("flex items-center gap-2.5 px-2.5 min-h-10 rounded-md no-underline", active ?? isActive ? "bg-active !text-fg" : "!text-muted hover:!text-fg hover:bg-track")
       }
     >
       {icon}
@@ -68,14 +74,29 @@ function Compute({ live }: { live: boolean }) {
   );
 }
 
-/** Where the Storage widget goes while the Dataset Catalog is open (store size, audio held only, clean-up).
- *  The dataset store's API isn't served yet, so this only keeps the spot. */
-function Storage() {
+/** The dataset store at a glance: its size against the disk, and what clean-up could delete. */
+function Storage({ live }: { live: boolean }) {
+  const s = useQuery({ queryKey: ["store-stats"], queryFn: () => api.get<StoreStats>("/store/stats"), refetchInterval: 30_000 });
+  const d = s.data;
+  const used = d ? (d.disk.total - d.disk.free) / d.disk.total : 0;
   return (
-    <div className="mt-auto flex flex-col gap-2 p-3 border border-track rounded-md">
-      <span className="text-xs">Storage</span>
-      <span className="text-[11px] text-muted">Not set up yet</span>
-    </div>
+    <NavLink to="/datasets/storage" className="mt-auto flex flex-col gap-2 p-3 border border-track rounded-md no-underline !text-fg hover:bg-track">
+      <span className="flex items-center justify-between gap-2 text-xs whitespace-nowrap">
+        <span>Storage</span>
+        <span className="num text-[11px] text-muted">{d ? `${bytes(d.audio.bytes)} of audio` : s.error ? "not set up" : "..."}</span>
+      </span>
+      <Bar value={used} color={used > 0.9 ? "var(--color-warn)" : "var(--color-primary)"} />
+      <span className="flex items-center gap-2 text-[11px] text-muted">
+        <span className={cx("size-2 rounded-full", d?.neither.files ? "bg-warn" : "bg-subtle")} />
+        <span title={d?.neither.files ? "Audio that no version lists and no app holds" : undefined}>
+          {d ? (d.neither.files ? `${bytes(d.neither.bytes)} unused` : `${bytes(d.disk.free)} free`) : "Store not reachable"}
+        </span>
+        <span className="ml-auto num" title={live ? "Live updates connected" : "Live updates disconnected; refreshing every 30 s"}>
+          {live ? "live" : "polling"}
+        </span>
+      </span>
+      {d && <span className="sr-only">{pct(used)} of the disk in use</span>}
+    </NavLink>
   );
 }
 
@@ -138,9 +159,14 @@ export function Nav({ live }: { live: boolean }) {
           ) : (
             <>
               <Group title="Datasets">
-                <Item to="/datasets" icon={<I.Database />}>Datasets</Item>
+                <Item to="/datasets" icon={<I.Database />} active={datasetPage(loc.pathname)}>Datasets</Item>
+                <Item to="/datasets/upload" icon={<I.Upload />}>Upload audio</Item>
+                <Item to="/datasets/import" icon={<I.Download />}>Import package</Item>
               </Group>
-              <Storage />
+              <Group title="Store">
+                <Item to="/datasets/storage" icon={<I.Pulse />}>Storage</Item>
+              </Group>
+              <Storage live={live} />
             </>
           )}
         </div>
