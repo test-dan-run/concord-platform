@@ -1,33 +1,41 @@
 // Thin fetch wrapper + the response shapes the pages use. The catalog's README is the contract
 // (platform/catalog/README.md); field names follow catalog/registry.py and catalog/scheduler.py.
 
+/** An error answer. `body` is the catalog's error object ({message, type, code, ...}), with the extra fields some
+ *  routes add, e.g. `size` on a 409 from an upload or `missing` on a publish. */
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public body: { type?: string; [k: string]: unknown } = {},
   ) {
     super(message);
   }
 }
 
+export async function errorOf(r: Response): Promise<ApiError> {
+  let msg = r.statusText;
+  let body = {};
+  try {
+    const j = await r.json();
+    msg = j.error?.message ?? (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j));
+    body = j.error ?? {};
+  } catch {
+    /* not JSON */
+  }
+  return new ApiError(r.status, msg, body);
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   let payload: BodyInit | undefined;
-  if (body !== undefined) {
+  if (body instanceof FormData) payload = body;
+  else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
   const r = await fetch(`/api${path}`, { method, headers, body: payload });
-  if (!r.ok) {
-    let msg = r.statusText;
-    try {
-      const j = await r.json();
-      msg = j.error?.message ?? (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j));
-    } catch {
-      /* not JSON */
-    }
-    throw new ApiError(r.status, msg);
-  }
+  if (!r.ok) throw await errorOf(r);
   if (r.status === 204) return undefined as T;
   return (await r.json()) as T;
 }
