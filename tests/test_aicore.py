@@ -274,3 +274,43 @@ def test_text_service_client_itn():
 
 def test_generated_endpoints_file_location():
     assert aicore.endpoints.GENERATED == Path(aicore.__file__).with_name("endpoints.generated.yaml")
+
+
+def test_batch_size_from_the_catalog_or_the_default(monkeypatch):
+    from aicore.batching import batch_size
+    from aicore.catalog import FakeCatalog
+
+    cat = FakeCatalog([{"id": "wavlm-sv", "batch": {"recommendation": {"batch": 66}}}, {"id": "other"}])
+    assert batch_size("wavlm-sv", item_s=20, catalog=cat) == 66
+    assert batch_size("other", catalog=cat, default=4) == 4
+    assert cat.calls[0] == ("batch", ("wavlm-sv", None, 20, None, None))
+    monkeypatch.delenv("AICORE_CATALOG", raising=False)
+    assert batch_size("wavlm-sv") == 8  # no catalog: the default
+
+
+def test_map_batches_and_map_concurrent_keep_order():
+    import threading
+    import time
+
+    from aicore.batching import map_batches, map_concurrent
+
+    sizes = []
+    assert map_batches(lambda xs: (sizes.append(len(xs)), [x * 2 for x in xs])[1], list(range(7)), 3) == \
+        [0, 2, 4, 6, 8, 10, 12]
+    assert sizes == [3, 3, 1]
+    with pytest.raises(ValueError):
+        map_batches(lambda xs: xs[:1], [1, 2], 2)
+    active, peak = 0, 0
+    lock = threading.Lock()
+
+    def slow(x):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return -x
+
+    assert map_concurrent(slow, list(range(12)), 4) == [-x for x in range(12)] and peak == 4
