@@ -177,6 +177,7 @@ class BatchHints(_Strict):
     """How the catalog measures the service's batch profile (catalog/batching.py). Not part of the config hash."""
     max_item_s: float | None = Field(default=None, gt=0)  # the longest input the server takes whole (it cuts longer ones)
     lengths_s: list[float] | None = None  # item lengths to measure at, in seconds (default: short, typical, longest)
+    max_n: int | None = Field(default=None, ge=1)  # largest batch the sweep sends (1: the server batches inside one item)
 
 
 class Build(_Strict):

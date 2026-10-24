@@ -585,6 +585,7 @@ class BatchProfiler:
             try:
                 memory = Memory(url, http, lambda: self.runtime.gpu_memory(p), baseline)
                 points, stops, how = sweep(sender(meta, url, http), memory, lengths, budget_gib=given_gib,
+                                           max_n=(s.batch.max_n if s.batch and s.batch.max_n else SWEEP_MAX_N),
                                            stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m))
             finally:
                 beat.set()

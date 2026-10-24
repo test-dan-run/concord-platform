@@ -8,6 +8,9 @@ gpu:
   vram_gb: 5                       # measured 4.1 GB loaded, 4.25 GB peak (float16, RTX 5090)
 description: "Speech-to-text with word timestamps (verbose_json + timestamp_granularities[]=word), Whisper large-v3 on CTranslate2"
 tasks: [speech-recognition, speech-translation, language-identification, voice-activity-detection]
+batch:                             # one request at a time; its 30 s windows are the batch, so measure long files
+  lengths_s: [30, 120, 300, 600]
+  max_n: 1
 build:
   context: custom/faster-whisper-large-v3
   image: "{registry}/faster-whisper-large-v3:0.2.0"
