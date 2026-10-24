@@ -1,10 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api, type Lease, type PlatformInfo } from "../lib/api";
 import { pct } from "../lib/format";
 import * as I from "../components/icons";
-import { Bar, cx } from "../components/ui";
+import { Bar, cx, Toggle } from "../components/ui";
+
+/** The two catalogs the service shows. The tab follows the URL: everything under /datasets is the Dataset Catalog. */
+export type Catalog = "models" | "datasets";
+
+const CATALOGS: { value: Catalog; label: string; home: string }[] = [
+  { value: "models", label: "Model Catalog", home: "/" },
+  { value: "datasets", label: "Dataset Catalog", home: "/datasets" },
+];
+
+export function catalogOf(pathname: string): Catalog {
+  return pathname === "/datasets" || pathname.startsWith("/datasets/") ? "datasets" : "models";
+}
 
 function Item({ to, icon, children, end = true }: { to: string; icon: ReactNode; children: ReactNode; end?: boolean }) {
   return (
@@ -56,10 +68,27 @@ function Compute({ live }: { live: boolean }) {
   );
 }
 
+/** Where the Storage widget goes while the Dataset Catalog is open (store size, audio held only, clean-up).
+ *  The dataset store's API isn't served yet, so this only keeps the spot. */
+function Storage() {
+  return (
+    <div className="mt-auto flex flex-col gap-2 p-3 border border-track rounded-md">
+      <span className="text-xs">Storage</span>
+      <span className="text-[11px] text-muted">Not set up yet</span>
+    </div>
+  );
+}
+
 export function Nav({ live }: { live: boolean }) {
   const [open, setOpen] = useState(false);
   const loc = useLocation();
+  const navigate = useNavigate();
+  const catalog = catalogOf(loc.pathname);
+  const name = CATALOGS.find((c) => c.value === catalog)!.label;
   useEffect(() => setOpen(false), [loc.pathname]);
+  useEffect(() => {
+    document.title = name;
+  }, [name]);
   return (
     <div className="bg-panel border-b lg:border-b-0 lg:border-r border-track lg:w-[216px] lg:shrink-0">
       <nav aria-label="Primary" className="px-3 py-4 lg:py-5 flex flex-col gap-6 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto scroll-thin">
@@ -68,7 +97,7 @@ export function Nav({ live }: { live: boolean }) {
             <I.Logo size={22} />
           </span>
           <div className="flex flex-col">
-            <span className="font-semibold text-[15px] tracking-tight">Model catalog</span>
+            <span className="font-semibold text-[15px] tracking-tight">{name}</span>
             <span className="text-[11px] text-muted">AI platform control plane</span>
           </div>
           <button
@@ -81,21 +110,39 @@ export function Nav({ live }: { live: boolean }) {
             {open ? "Close" : "Menu"}
           </button>
         </div>
+        <Toggle
+          label="Catalog"
+          value={catalog}
+          onChange={(v) => navigate(CATALOGS.find((c) => c.value === v)!.home)}
+          options={CATALOGS}
+          className="-mt-2 [&>button]:grow [&>button]:px-1.5 [&>button]:text-[11px] [&>button]:whitespace-nowrap"
+        />
         <div id="nav-groups" className={cx("flex-col gap-6 flex-1", open ? "flex" : "hidden lg:flex")}>
-          <Group title="Models">
-            <Item to="/" icon={<I.Cpu />} end={false}>Models</Item>
-            <Item to="/add" icon={<I.Plus />}>Add model</Item>
-            <Item to="/export" icon={<I.Export />}>Export</Item>
-          </Group>
-          <Group title="Compute">
-            <Item to="/queue" icon={<I.List />}>Queue and leases</Item>
-            <Item to="/index" icon={<I.Database />}>Output index</Item>
-          </Group>
-          <Group title="Reference">
-            <Item to="/contract" icon={<I.Doc />}>Model contract</Item>
-            <Item to="/docs" icon={<I.Book />}>Docs</Item>
-          </Group>
-          <Compute live={live} />
+          {catalog === "models" ? (
+            <>
+              <Group title="Models">
+                <Item to="/" icon={<I.Cpu />} end={false}>Models</Item>
+                <Item to="/add" icon={<I.Plus />}>Add model</Item>
+                <Item to="/export" icon={<I.Export />}>Export</Item>
+              </Group>
+              <Group title="Compute">
+                <Item to="/queue" icon={<I.List />}>Queue and leases</Item>
+                <Item to="/index" icon={<I.Database />}>Output index</Item>
+              </Group>
+              <Group title="Reference">
+                <Item to="/contract" icon={<I.Doc />}>Model contract</Item>
+                <Item to="/docs" icon={<I.Book />}>Docs</Item>
+              </Group>
+              <Compute live={live} />
+            </>
+          ) : (
+            <>
+              <Group title="Datasets">
+                <Item to="/datasets" icon={<I.Database />}>Datasets</Item>
+              </Group>
+              <Storage />
+            </>
+          )}
         </div>
       </nav>
     </div>
