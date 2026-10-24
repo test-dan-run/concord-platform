@@ -1,4 +1,4 @@
-# Model catalog
+# Model Catalog
 
 The catalog is the platform's control plane: one service per compute host that registers, verifies,
 schedules and serves every model service. Apps (Concord Bench, Concord Label, Synthetics) never start
@@ -11,7 +11,7 @@ against.
   `ai-net`. Apps read it from `AICORE_CATALOG` (set the same value in `CATALOG_URL` if an app has its
   own setting).
 - **Run it:** `just catalog-up` (container, restarts with Docker) or `just catalog-serve` (host
-  process, for development). `just catalog` still opens the static catalog page.
+  process, for development). `just catalog` still opens the static AI service list.
 - **State:** SQLite at `platform/run/catalog/catalog.db`. Model definitions stay in
   `services/*.yaml`; the catalog adds only registration (display name, tags, "derived from"),
   verification results, measured timings, leases, usage, the output index, hosted endpoints and

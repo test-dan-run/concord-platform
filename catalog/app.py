@@ -151,7 +151,7 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
         if start:
             cat.shutdown()
 
-    app = FastAPI(title="Model catalog", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app = FastAPI(title="Model Catalog", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.catalog = cat
     sched, reg = cat.scheduler, cat.registry
 
