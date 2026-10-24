@@ -371,3 +371,48 @@ plan = cat.plan(stages=[...])
 
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are
 granted at once; models and capabilities come from the constructor).
+
+### Dataset Catalog client (aicore.datasets)
+
+`aicore.datasets.DatasetCatalog` calls the Dataset Catalog's API on the same catalog service, so it uses the
+same URL as `Catalog`. Each app passes its own name as `app`, and the client sends that name with every dataset
+it creates, every version it publishes, and every hold and use it records. The apps read audio and versions from
+the mounted store, which is `DATASET_STORE`, or `${AI_DATA}/datasets` when that isn't set, or
+`~/ai-data/datasets`. The catalog service uses the same default.
+
+```python
+from aicore.datasets import DatasetCatalog, MissingAudio, StaleParent
+
+dc = DatasetCatalog(app="concord-label")            # AICORE_CATALOG, else http://127.0.0.1:8700
+sha = dc.upload_audio("call.wav")                   # skips files the store already has
+dc.hold([sha])                                      # dc.release([sha]) when the app no longer needs it
+d = dc.create_dataset("Help desk calls", language="en")
+try:
+    v = dc.publish(d["id"], "out/version", parent=None)   # a version folder (contracts/datasets/version.md)
+except StaleParent as exc:
+    ...                                             # exc.latest is the latest version; publish again with force=True
+except MissingAudio as exc:
+    ...                                             # exc.missing lists the sha256s to upload first
+dc.version_dir(d["id"], v["n"])                     # the version's folder in the mounted store
+dc.audio_path(sha)                                  # the original audio in the mounted store
+dc.add_use(d["id"], v["n"], ref="12")               # the app made its dataset 12 from this version
+```
+
+`upload_audio` sends a file in 16 MB chunks and then commits it. When the connection drops, or when an earlier
+upload of the same file stopped partway, the store answers with the size it already has, and the client goes on
+from there. `publish` returns the version with `created` set to false when the folder has the same content as
+the latest version, and the catalog returns that version instead of making a new one. The other calls are
+`datasets`, `dataset`, `update_dataset`, `delete_dataset`, `version`, `files`, `publish_audio`,
+`delete_version`, `remove_use` and `missing`. Every error is a `DatasetCatalogError`, which is a
+`CatalogError`, and `NotFound`, `StaleParent`, `HasReferences`, `MissingAudio` and `InvalidVersion` are its
+subclasses for the cases an app handles.
+
+`aicore.datasets.FakeDatasetCatalog` has the same methods for app tests. It keeps its records in memory, and it
+writes audio and versions to a folder laid out like the real store, so `audio_path` and `version_dir` work. It
+follows the same rules as the catalog service for publishing, holds and uses. Pass a folder such as pytest's
+`tmp_path` as `root`, or leave it out to get a temporary folder that is removed with the fake. A test can put
+audio straight into the store with `add_audio(data)`, and it can publish a version with `add_version(dataset_id,
+{path: bytes}, {refs file name: text})`. The fake reads the duration and sample rate of WAV files only, so pass
+`duration` and `sample_rate` to `add_audio` for other formats. `calls` lists every call that changed something,
+and `held()` returns the sha256s the app holds. `catalog/tests/test_dataset_client.py` runs the same tests
+against the fake and against the real client, so the two stay in step.
