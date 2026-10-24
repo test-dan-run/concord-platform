@@ -1,7 +1,8 @@
 """DeepFilterNet3 through the official `deep-filter` CLI (Rust + tract, CPU).
 
 The model runs at 48 kHz: input is resampled to 48 kHz, enhanced with delay compensation, resampled back to
-the input rate and trimmed or zero-padded to the input length, so timing is preserved.
+the input rate and trimmed or zero-padded to the input length, so timing is preserved. The CLI crashes on very short
+inputs (960 samples at 48 kHz failed, 1,920 worked), so inputs under MIN_SAMPLES are padded with silence first.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import numpy as np
 MODEL_FILE = "DeepFilterNet3_onnx.tar.gz"
 BINARY = "deep-filter"
 MODEL_SR = 48000
+MIN_SAMPLES = 4800  # 0.1 s at MODEL_SR (checked 2026-10-25 with the 0.5.6 binary)
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,8 @@ class DeepFilter:
         if len(x) == 0:
             return x
         x48 = soxr.resample(x, sample_rate, MODEL_SR) if sample_rate != MODEL_SR else x
+        if len(x48) < MIN_SAMPLES:
+            x48 = np.concatenate([x48, np.zeros(MIN_SAMPLES - len(x48), dtype=np.float32)])
         with tempfile.TemporaryDirectory(prefix="df-") as tmp:
             src, out = Path(tmp) / "in.wav", Path(tmp) / "out"
             sf.write(src, x48, MODEL_SR, subtype="FLOAT")

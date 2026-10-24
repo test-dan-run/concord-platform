@@ -76,3 +76,24 @@ def test_bad_parameters_are_400(client):
                     {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1], "data": [16000]}],
          "parameters": {"taps": 100}}
     assert client.post("/v2/models/wpe-dereverb/infer", json=b).status_code == 400
+
+
+def test_single_clip_and_batch_requests(client):
+    _, wet = reverberant(n_bursts=4)
+    single = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [len(wet)], "data": wet.tolist()},
+                         {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1], "data": [16000]}]}
+    outs = {o["name"]: o for o in client.post("/v2/models/wpe-dereverb/infer", json=single).json()["outputs"]}
+    assert sorted(outs) == ["AUDIO", "SAMPLE_RATE"] and outs["AUDIO"]["shape"] == [len(wet)]
+    one = np.asarray(outs["AUDIO"]["data"], np.float32)
+    assert np.allclose(one, wpe_mod.dereverb(wet, 16000, wpe_mod.WpeParams()), atol=1e-5)
+    n, short = len(wet), 100
+    audio = np.zeros((2, n), np.float32)
+    audio[0, :short], audio[1] = wet[:short], wet
+    batch = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [2, n], "data": audio.reshape(-1).tolist()},
+                        {"name": "LENGTHS", "datatype": "INT32", "shape": [2], "data": [short, n]},
+                        {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1], "data": [16000]}]}
+    outs = {o["name"]: o for o in client.post("/v2/models/wpe-dereverb/infer", json=batch).json()["outputs"]}
+    assert outs["AUDIO"]["shape"] == [2, n] and outs["LENGTHS"]["data"] == [short, n]
+    rows = np.asarray(outs["AUDIO"]["data"], np.float32).reshape(2, n)
+    assert np.allclose(rows[0, :short], wet[:short]) and not np.any(rows[0, short:])  # too short: unchanged
+    assert np.allclose(rows[1], one, atol=1e-5)  # a row gives what the same clip gives alone

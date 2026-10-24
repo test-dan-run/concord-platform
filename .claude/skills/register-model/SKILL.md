@@ -87,8 +87,13 @@ the task matches (custom servers: [references/custom-model.md](references/custom
 | Task | Inputs | Outputs | Catalog verifies it as |
 |---|---|---|---|
 | VAD | `AUDIO` FP32 [-1], `SAMPLE_RATE` INT32 [1] | `SEGMENTS` FP32 [-1, 2] | VAD |
-| Diarization | same | `SEGMENTS` FP32 [-1, 2], `SPEAKERS` INT32 [-1] | diarisation |
-| Speech enhancement | same | `AUDIO` FP32 [-1], `SAMPLE_RATE` INT32 [1] (same rate and length as the input) | speech enhancement |
+| Diarization | `AUDIO` FP32 [-1, -1] (zero-padded rows), `LENGTHS` INT32 [-1], `SAMPLE_RATE` INT32 [1] | `SEGMENTS` FP32 [-1, 2], `SPEAKERS` INT32 [-1], `ROWS` INT32 [-1] (the row of each segment) | diarisation |
+| Speech enhancement | the same as diarization | `AUDIO` FP32 [-1, -1] (zero-padded), `LENGTHS` INT32 [-1], `SAMPLE_RATE` INT32 [1] (each row keeps its rate and length) | speech enhancement |
+
+The diarization and enhancement servers also take one clip as `AUDIO` [-1] without `LENGTHS` and answer
+it in the single-clip shapes, because the apps still send that form. A new server of either kind copies
+`server/rows.py` from `nemotronlabs-re-use` for that, and the copies must stay identical
+(`tests/test_images.py`). The catalog detects both forms by tensor names.
 
 Give `SAMPLE_RATE` `example: [16000]`. Tensors travel as JSON number arrays; the binary tensor
 extension is not implemented. For a dereverberation model, put `dereverberation` in `tasks`: the

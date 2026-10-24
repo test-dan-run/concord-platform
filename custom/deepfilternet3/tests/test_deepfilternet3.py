@@ -50,6 +50,7 @@ def test_server_signature_matches_manifest():
 
 
 def body(audio, sr=16000, parameters=None):
+    """The single-clip request that callers sent before the batch signature."""
     b = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [len(audio)], "data": list(map(float, audio))},
                     {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1], "data": [sr]}]}
     if parameters is not None:
@@ -57,12 +58,39 @@ def body(audio, sr=16000, parameters=None):
     return b
 
 
-def test_audio_round_trip_keeps_rate_and_length(client, fake):
+def test_single_clip_request_keeps_rate_length_and_the_old_shapes(client, fake):
     audio = np.linspace(-0.5, 0.5, 800, dtype=np.float32)
     r = client.post("/v2/models/deepfilternet3/infer", json=body(audio, 8000, {"atten_lim_db": 20}))
     outs = {o["name"]: o for o in r.json()["outputs"]}
-    assert outs["AUDIO"]["shape"] == [800] and outs["SAMPLE_RATE"]["data"] == [8000]
+    assert sorted(outs) == ["AUDIO", "SAMPLE_RATE"] and outs["AUDIO"]["shape"] == [800] and outs["SAMPLE_RATE"]["data"] == [8000]
     assert fake.calls[-1] == (8000, df_mod.DfParams(atten_lim_db=20))
+
+
+def test_batch_rows_run_one_by_one_and_come_back_padded(client, fake):
+    clips = [np.full(n, 0.2 * (k + 1), np.float32) for k, n in enumerate([300, 1600, 0, 800])]
+    audio = np.zeros((4, 1600), np.float32)
+    for row, c in zip(audio, clips):
+        row[: len(c)] = c
+    b = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [4, 1600], "data": audio.reshape(-1).tolist()},
+                    {"name": "LENGTHS", "datatype": "INT32", "shape": [4], "data": [300, 1600, 0, 800]},
+                    {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1], "data": [16000]}],
+         "parameters": {"post_filter": True}}
+    del fake.calls[:]
+    outs = {o["name"]: o for o in client.post("/v2/models/deepfilternet3/infer", json=b).json()["outputs"]}
+    assert outs["AUDIO"]["shape"] == [4, 1600] and outs["LENGTHS"]["data"] == [300, 1600, 0, 800]
+    assert fake.calls == [(16000, df_mod.DfParams(post_filter=True))] * 4
+    got = np.asarray(outs["AUDIO"]["data"], np.float32).reshape(4, 1600)
+    for row, c in zip(got, clips):
+        assert np.allclose(row[: len(c)], c * 0.5) and not np.any(row[len(c):])
+
+
+def test_aicore_client_with_the_batch_signature_still_sends_one_clip(client):
+    """What Bench and Synthetics do today: aicore.client(name).infer({"AUDIO": [-1], "SAMPLE_RATE": [1]})."""
+    from aicore.oip import OIPClient
+
+    c = OIPClient("http://testserver", META["name"], META["signature"], http=client)
+    out = c.infer({"AUDIO": np.linspace(-0.5, 0.5, 480, dtype=np.float32), "SAMPLE_RATE": np.array([16000], np.int32)})
+    assert sorted(out) == ["AUDIO", "SAMPLE_RATE"] and out["AUDIO"].shape == (480,) and int(out["SAMPLE_RATE"][0]) == 16000
 
 
 def test_bad_parameters_are_400(client):
@@ -91,3 +119,5 @@ def test_real_binary_denoises():
     assert out.shape == noisy.shape and out.dtype == np.float32
     quiet = np.sin(2 * np.pi * 3 * t) <= 0  # noise-only half
     assert np.std(out[quiet]) < 0.5 * np.std(noisy[quiet])
+    for n in (8, 300):  # the CLI crashes on very short input unless it is padded first
+        assert m.enhance(noisy[:n], 16000, df_mod.DfParams()).shape == (n,)

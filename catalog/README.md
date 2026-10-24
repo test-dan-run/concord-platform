@@ -98,7 +98,9 @@ Paths below are under `/api` unless they start with `/m/` or `/v2/` (the gateway
 - `usable_as` (the probe that applies): `asr` (openai `audio.transcriptions`), `chat-audio` (openai
   `chat.completions` that accepts an `input_audio` part), `segmenter` (oip-v2 with AUDIO and
   SAMPLE_RATE inputs and a SEGMENTS output), `enhancer` (oip-v2 with AUDIO and SAMPLE_RATE in and
-  AUDIO out), `itn` (openai-inspired `text.itn`), or `null` (protocol checks only).
+  AUDIO out), `itn` (openai-inspired `text.itn`), or `null` (protocol checks only). AUDIO may be one
+  clip (`[-1]`) or a batch (`[-1, -1]` with LENGTHS). The probe sends a batch signature a batch of one
+  row, and it checks that a diarizer's ROWS output puts every segment in row 0.
 - `tasks` inside `capabilities` are what the verifier observed: `asr`, `diar` (segments with
   speakers), `vad` (speech-only segments), `enhance` (speech enhancement), `itn`. KWS joins when a KWS
   model exists. The top-level `tasks` are the manifest's declared tasks.

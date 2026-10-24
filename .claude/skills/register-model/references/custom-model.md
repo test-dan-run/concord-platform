@@ -141,9 +141,12 @@ signature:                          # oip-v2 only
 - Give scalar or constrained inputs an `example`. Without one, conformance sends zeros, which a
   `SAMPLE_RATE` check would reject.
 - Reuse an existing signature when the task matches. The two diarization services share theirs, so
-  apps can switch between them. Speech enhancement uses `deepfilternet3`'s: `AUDIO` + `SAMPLE_RATE` in,
-  `AUDIO` + `SAMPLE_RATE` out, with the same rate and length as the input (the catalog fails a length
-  more than 10 ms off). The output signature is what makes the catalog verify it as an enhancer.
+  apps can switch between them. Speech enhancement uses the batch signature of `deepfilternet3`,
+  `nemotronlabs-re-use` and `wpe-dereverb`: `AUDIO` [-1, -1] + `LENGTHS` + `SAMPLE_RATE` in, and the
+  same three out, with each row at the rate and length of its input (the catalog fails a length more
+  than 10 ms off). The output signature is what makes the catalog verify it as an enhancer. A batch
+  `AUDIO` input needs a nested `example` (one short row) and a `LENGTHS` example, or conformance
+  sends a 16000 x 16000 array of zeros.
 - `gpu` takes `vram_gb` only (never `util`). It is the least memory the service needs to load (the
   measured peak, rounded up), and at run time the service gets the whole GPU.
 

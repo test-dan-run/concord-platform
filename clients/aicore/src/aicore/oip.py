@@ -85,10 +85,15 @@ class OIPClient:
         return self.signature
 
     def encode(self, inputs: dict[str, Any]) -> list[dict[str, Any]]:
-        """Validate numpy inputs against the signature and encode them as OIP JSON tensors."""
+        """Validate numpy inputs against the signature and encode them as OIP JSON tensors.
+
+        A batch signature (AUDIO [-1, -1] with LENGTHS [-1]) also takes its single-clip form: AUDIO [-1] without
+        LENGTHS, sent as it is. The enhancer and diarizer servers answer it as one row in their old output shapes.
+        """
         specs = {t["name"]: t for t in self._signature()["inputs"]}
+        single = "LENGTHS" in specs and "LENGTHS" not in inputs
         unknown = sorted(set(inputs) - set(specs))
-        missing = sorted(set(specs) - set(inputs))
+        missing = sorted(set(specs) - set(inputs) - ({"LENGTHS"} if single else set()))
         if unknown or missing:
             raise AicoreError(f"inputs do not match signature: unknown {unknown}, missing {missing}; expected {sorted(specs)}")
         tensors = []
@@ -98,8 +103,10 @@ class OIPClient:
             if dt != spec["datatype"]:
                 raise AicoreError(f"input {name!r}: dtype {arr.dtype} ({dt}) but signature needs {spec['datatype']}; "
                                   f"use .astype({OIP_TO_NP[spec['datatype']]})")
-            if not _shape_ok(spec["shape"], arr.shape):
-                raise AicoreError(f"input {name!r}: shape {list(arr.shape)} does not match signature {spec['shape']}")
+            shape = spec["shape"][1:] if single and len(spec["shape"]) > 1 else spec["shape"]  # one row: no batch axis
+            if not _shape_ok(shape, arr.shape):
+                extra = f", or {shape} for one clip without LENGTHS" if shape != spec["shape"] else ""
+                raise AicoreError(f"input {name!r}: shape {list(arr.shape)} does not match signature {spec['shape']}{extra}")
             flat = arr.reshape(-1)
             data = [x.decode() if isinstance(x, bytes) else str(x) for x in flat.tolist()] if dt == "BYTES" else flat.tolist()
             tensors.append({"name": name, "datatype": dt, "shape": list(arr.shape), "data": data})

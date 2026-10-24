@@ -3,7 +3,7 @@ kind: model
 engine: custom
 contract: oip-v2
 api: infer
-contract_reason: "No OpenAI route for diarization alone; input is a float audio array"
+contract_reason: "No OpenAI route for diarization alone; input is a batch of float audio arrays"
 port: 8402
 gpu:
   vram_gb: 3                       # two small models (6 MB segmentation, 27 MB embedding) + batch activations
@@ -13,9 +13,8 @@ description: "Speaker diarization, pyannote speaker-diarization-3.1 (overlap-awa
 tasks: [speaker-diarization]
 build:
   context: custom/pyannote-diarization
-  image: "{registry}/pyannote-diarization:0.1.0"
+  image: "{registry}/pyannote-diarization:0.2.0"
   base: py-cuda-torch211           # pyannote.audio 4 needs torchaudio, whose last release pairs with torch 2.11
-  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/pyannote-speaker-diarization-3.1   # existing local copy
   mount: /models
@@ -23,10 +22,12 @@ custom_reason: >-
   Checked 2026-10-17: a multi-stage pyannote pipeline (segmentation, embeddings, clustering), not an LLM;
   vLLM and SGLang cannot run it. An OIP-native server (Triton/MLServer) would still need the pipeline's
   Python logic. Retire if an OIP engine is added with a pyannote runtime.
-signature:
+signature:                         # the same as nemotron-3-diarization; AUDIO [-1] without LENGTHS still works
   inputs:
-    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
     - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
-  outputs:
+  outputs:                         # every row's segments, row after row; ROWS is the row of each segment
     - {name: SEGMENTS, datatype: FP32, shape: [-1, 2]}
     - {name: SPEAKERS, datatype: INT32, shape: [-1]}
+    - {name: ROWS, datatype: INT32, shape: [-1]}
