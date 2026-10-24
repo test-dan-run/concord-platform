@@ -1,14 +1,20 @@
 import { createBrowserRouter, Navigate, Outlet, type RouteObject } from "react-router-dom";
 import { useCatalogEvents } from "../lib/events";
 import { AddModel } from "../pages/AddModel";
+import { ComparePage } from "../pages/ComparePage";
 import { ContractPage } from "../pages/ContractPage";
+import { DatasetDetail } from "../pages/DatasetDetail";
 import { DatasetsPage } from "../pages/DatasetsPage";
 import { DocsPage } from "../pages/DocsPage";
 import { ExportPage } from "../pages/ExportPage";
+import { ImportPage } from "../pages/ImportPage";
 import { IndexPage } from "../pages/IndexPage";
 import { ModelDetail } from "../pages/ModelDetail";
 import { ModelsPage } from "../pages/ModelsPage";
 import { QueuePage } from "../pages/QueuePage";
+import { StoragePage } from "../pages/StoragePage";
+import { UploadPage } from "../pages/UploadPage";
+import { VersionPage } from "../pages/VersionPage";
 import { Nav } from "./Nav";
 
 function Shell() {
@@ -38,6 +44,12 @@ export const routes: RouteObject[] = [
       { path: "/docs", element: <DocsPage /> },
       { path: "/export", element: <ExportPage /> },
       { path: "/datasets", element: <DatasetsPage /> },
+      { path: "/datasets/upload", element: <UploadPage /> },
+      { path: "/datasets/import", element: <ImportPage /> },
+      { path: "/datasets/storage", element: <StoragePage /> },
+      { path: "/datasets/:id", element: <DatasetDetail /> },
+      { path: "/datasets/:id/v/:n", element: <VersionPage /> },
+      { path: "/datasets/:id/compare", element: <ComparePage /> },
       { path: "/datasets/*", element: <Navigate to="/datasets" replace /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],

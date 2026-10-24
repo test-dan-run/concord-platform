@@ -1,16 +1,16 @@
-// Free-form tags with suggestions from tags already used on catalog models.
+// Free-form tags with suggestions from tags already in use: on catalog models, or the `pool` given (dataset tags).
 
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { api, type Model } from "../lib/api";
 import * as I from "./icons";
 
-export function TagInput({ value, onChange, label = "Tags", placeholder = "e.g. call-centre, en-SG, telephony-8k" }: { value: string[]; onChange: (v: string[]) => void; label?: string; placeholder?: string }) {
+export function TagInput({ value, onChange, label = "Tags", placeholder = "e.g. call-centre, en-SG, telephony-8k", pool }: { value: string[]; onChange: (v: string[]) => void; label?: string; placeholder?: string; pool?: string[] }) {
   const id = useId();
   const [text, setText] = useState("");
-  const { data: models } = useQuery({ queryKey: ["models"], queryFn: () => api.get<Model[]>("/models") });
+  const { data: models } = useQuery({ queryKey: ["models"], queryFn: () => api.get<Model[]>("/models"), enabled: !pool });
   const counts = new Map<string, number>();
-  for (const m of models ?? []) for (const t of m.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+  for (const t of pool ?? (models ?? []).flatMap((m) => m.tags)) counts.set(t, (counts.get(t) ?? 0) + 1);
   const data = [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count);
   const add = (raw: string) => {
     const parts = raw.split(/[,\s]+/).map((t) => t.trim().replace(/^#/, "")).filter(Boolean);
