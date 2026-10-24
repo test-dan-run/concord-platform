@@ -13,6 +13,7 @@ build:
   context: custom/wavlm-sv
   image: "{registry}/wavlm-sv:0.1.0"
   base: py-cuda-torch211           # torch 2.11 + torchaudio; one base for the phase C services
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/wavlm-sv/large-ecapa-13ad4fc
   mount: /models

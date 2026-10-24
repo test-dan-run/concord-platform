@@ -15,6 +15,7 @@ build:
   context: custom/pyannote-diarization
   image: "{registry}/pyannote-diarization:0.1.0"
   base: py-cuda-torch211           # pyannote.audio 4 needs torchaudio, whose last release pairs with torch 2.11
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/pyannote-speaker-diarization-3.1   # existing local copy
   mount: /models

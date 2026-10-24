@@ -12,6 +12,7 @@ build:
   context: custom/meralion-3-3b-asr
   image: "{registry}/meralion-3-3b-asr:0.1.0"
   base: py-cuda-torch211           # one base for the phase C services
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/meralion-3-3b-asr/9f226d7
   mount: /models

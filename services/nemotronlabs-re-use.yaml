@@ -14,6 +14,7 @@ build:
   context: custom/nemotronlabs-re-use
   image: "{registry}/nemotronlabs-re-use:0.1.0"
   base: py-cuda                    # torch 2.14; the Dockerfile compiles mamba-ssm's kernel against it
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/nemotronlabs-re-use/31f82f2
   mount: /models

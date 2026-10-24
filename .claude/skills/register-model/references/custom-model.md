@@ -28,7 +28,7 @@ before writing anything.
 
   ```dockerfile
   # <name>: <contract> <what> on <CPU|GPU>. Weights are mounted at /models, never baked in.
-  ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+  ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
   FROM ${BASE_IMAGE}
   COPY requirements.txt /app/requirements.txt
   RUN pip install -r /app/requirements.txt
@@ -123,6 +123,7 @@ build:
   context: custom/<name>
   image: "{registry}/<name>:0.1.0"
   base: py-cpu                      # key in custom/_bases/bases.yaml: py-cpu | py-cuda | py-cuda-torch211 | none
+                                    # a new service takes the current version; build.base_version pins an older one
 weights:
   path: ${AI_ASSETS}/custom-models/<name>/<version>   # or an existing dir under ${AI_ASSETS}
   mount: /models

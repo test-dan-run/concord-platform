@@ -13,6 +13,7 @@ build:
   context: custom/qwen3-forced-aligner
   image: "{registry}/qwen3-forced-aligner:0.1.0"
   base: py-cuda-torch211           # one base for the phase C/D services
+  base_version: "0.1.1"            # moves to the current base in its batching wave
 weights:
   path: ${AI_ASSETS}/custom-models/qwen3-forced-aligner/0.6b-c7cbfc2
   mount: /models

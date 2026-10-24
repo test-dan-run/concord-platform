@@ -177,6 +177,14 @@ class Build(_Strict):
     context: str
     image: str
     base: str | None = None  # a key of custom/_bases/bases.yaml, or "none"; default: py-cuda if gpu else py-cpu
+    # One of that base's older_versions in bases.yaml, to stay on it; default: the base's current version.
+    # Left out of the config hash (tools/identity.py): the image id already changes when the base does.
+    base_version: str | None = None
+
+    @field_validator("base_version", mode="before")
+    @classmethod
+    def _version_text(cls, v: Any) -> Any:
+        return v if v is None or isinstance(v, str) else str(v)  # YAML reads 1.0 as a float
 
     @field_validator("image")
     @classmethod
@@ -360,8 +368,12 @@ class Platform:
     def base_image(self, s: Manifest) -> str | None:
         if not s.is_custom or s.base == "none":
             return None
-        bases = load_bases(self.root)
-        return f"{self.config.registry}/{s.base}-base:{bases[s.base]['version']}"
+        return f"{self.config.registry}/{s.base}-base:{self.base_version(s)}"
+
+    def base_version(self, s: Manifest) -> str:
+        """The base version a custom service builds on: its pinned build.base_version, else the base's current one."""
+        assert s.build is not None
+        return s.build.base_version or str(load_bases(self.root)[s.base]["version"])
 
     def weights_dir(self, s: Manifest) -> Path | None:
         """Host directory of a custom service's weights (${AI_ASSETS} resolved)."""
@@ -376,8 +388,13 @@ def load_yaml(path: Path) -> Any:
 
 
 def load_bases(root: Path) -> dict[str, dict]:
-    """custom/_bases/bases.yaml: base name -> {dockerfile, version, args}."""
+    """custom/_bases/bases.yaml: base name -> {dockerfile, version, older_versions, args}."""
     return load_yaml(Path(root) / "custom" / "_bases" / "bases.yaml") or {}
+
+
+def base_versions(spec: dict) -> list[str]:
+    """Every buildable version of one base: the current one first, then its older_versions."""
+    return [str(v) for v in [spec["version"], *(spec.get("older_versions") or [])]]
 
 
 def _fmt_validation(path: Path, exc: ValidationError) -> list[str]:
@@ -477,6 +494,11 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
             if s.base != "none" and s.base not in bases:
                 errors.append(f"{files[s.name].name}: build.base {s.base!r} is not in custom/_bases/bases.yaml "
                               f"(known: {', '.join(sorted(bases))}, or none)")
+            elif s.build.base_version is not None:
+                known = base_versions(bases[s.base]) if s.base != "none" else []
+                if s.build.base_version not in known:
+                    errors.append(f"{files[s.name].name}: build.base_version {s.build.base_version!r} is not a version of "
+                                  f"base {s.base!r} (known: {', '.join(known) or 'none'})")
             if (ctx_dir / "weights.yaml").is_file() and s.weights is None:
                 errors.append(f"{files[s.name].name}: {s.build.context}/weights.yaml exists, so the manifest needs `weights` "
                               "(where `just fetch-weights` puts them and the container mounts them from)")

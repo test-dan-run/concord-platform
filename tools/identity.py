@@ -36,6 +36,7 @@ def config_fields(p: Platform, s: Manifest) -> dict[str, Any]:
         fields["signature"] = s.signature.model_dump(exclude_none=True)
     if s.is_custom:
         assert s.build is not None
+        # The base's version (build.base_version) is left out: the image id changes when the base does.
         fields["build"] = {"context": s.build.context, "base": s.base}
         if s.weights:
             fields["weights"] = s.weights.model_dump()

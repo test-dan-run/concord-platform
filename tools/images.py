@@ -48,16 +48,23 @@ def _run(cmd: list[str]) -> None:
 
 
 def build_base(p: Platform, s: Manifest, force: bool = False) -> str | None:
-    """Build the service's base image if missing, stale (its inputs changed) or forced."""
+    """Build the service's base image if missing, stale (its inputs changed) or forced.
+
+    An older version a service pins (bases.yaml older_versions) is never stale: its files are gone, so
+    an existing image is kept as it is, and a missing one is built from the current files.
+    """
     ref = p.base_image(s)
     if ref is None:
         return None
     bases_dir = p.root / "custom" / "_bases"
     spec = load_bases(p.root)[s.base]
     digest = base_digest(bases_dir, spec)
-    if not force and image_label(ref, DIGEST_LABEL) == digest:
+    older = p.base_version(s) != str(spec["version"])
+    if not force and (image_label(ref, DIGEST_LABEL) == digest or (older and image_exists(ref))):
         return ref
-    if image_exists(ref) and not force:
+    if older and not force:
+        print(f"{ref} is an older base version and is missing; building it from the current files")
+    elif image_exists(ref) and not force:
         print(f"{ref} is stale (Dockerfile, args or common/ changed since it was built); rebuilding")
     args = [a for k, v in sorted((spec.get("args") or {}).items()) for a in ("--build-arg", f"{k}={v}")]
     _run(["docker", "build", "-f", str(bases_dir / spec["dockerfile"]), *args,
