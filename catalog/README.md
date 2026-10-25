@@ -398,7 +398,7 @@ gave always finds the entry.
 
 | Call | Body | Response |
 |---|---|---|
-| `POST /api/index/lookup` | `{"app": "label", "keys": [{"build_key", "audio_sha256", "span_start", "span_end", "params_hash"}]}` | `{"hits": [null \| {"owner": "bench", "output_id": 812, "owner_url": "http://…"}]}`, one per key, in order; the asking app's own entries are preferred |
+| `POST /api/index/lookup` | `{"app": "label", "keys": [{"build_key", "audio_sha256", "span_start", "span_end", "params_hash"}]}` | `{"hits": [null \| {"owner": "bench", "output_id": 812, "owner_url": "http://…"}]}`, one per key, in order; the asking app's own entries are preferred, then other owners by name |
 | `POST /api/index/record` | `{"app": "bench", "entries": [{…key, "output_id": 812}]}` | `{"recorded": n}` |
 | `POST /api/index/forget` | `{"app": "bench", "output_ids": [812]}` | `{"forgotten": n}` |
 | `GET /api/index/stats` | | `[{"owner": "bench", "outputs": n}]`, indexed outputs per app (the Output index page) |
@@ -506,8 +506,10 @@ end of the block.
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are
 granted at once; models and capabilities come from the constructor). It answers leases, the output index,
 apps and plans as the server does (an unknown lease is a 404, a heartbeat of an ended lease a 409, aliases
-resolve, digit output ids come back as ints), but it accepts models it does not know, and `register`
-creates them. `catalog/tests/test_catalog_client.py` runs the same cases on both.
+resolve, a lease names each model once, a release leaves a failed or expired lease as it is, a lookup takes
+the asking app's entry and then other owners by name, digit output ids come back as ints), but it accepts
+models it does not know, and `register` creates them. `catalog/tests/test_catalog_client.py` runs the same
+cases on both.
 
 ## Dataset Catalog
 

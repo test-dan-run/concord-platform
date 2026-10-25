@@ -9,7 +9,7 @@ def key(i: int, ph: str = "p" * 16) -> dict:
     return index_key("b" * 16, f"{i:064x}", None, None, ph)
 
 
-def test_lookup_prefers_the_asking_apps_entry_then_the_first_recorded():
+def test_lookup_prefers_the_asking_apps_entry_then_other_owners_by_name():
     cat = FakeCatalog()
     cat.register_app("bench", "http://bench")
     cat.index_record("zeta", [{**key(1), "output_id": 1}, {**key(2), "output_id": 2}])
@@ -17,8 +17,8 @@ def test_lookup_prefers_the_asking_apps_entry_then_the_first_recorded():
     cat.index_record("alpha", [{**key(2), "output_id": 4}])
     hits = cat.index_lookup("bench", [key(1), key(2), key(3), key(1, "q" * 16)])
     assert hits == [{"owner": "bench", "output_id": 3, "owner_url": "http://bench"},
-                    {"owner": "zeta", "output_id": 2, "owner_url": None}, None, None]
-    assert cat.index_lookup("label", [key(1)]) == [{"owner": "zeta", "output_id": 1, "owner_url": None}]
+                    {"owner": "alpha", "output_id": 4, "owner_url": None}, None, None]
+    assert cat.index_lookup("label", [key(1)]) == [{"owner": "bench", "output_id": 3, "owner_url": "http://bench"}]
     hits[0]["owner"] = "changed"  # hits are copies
     assert cat.index_lookup("bench", [key(1)])[0]["owner"] == "bench"
     assert [c for c in cat.calls if c[0] == "index_lookup"] == [

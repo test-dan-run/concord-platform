@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from aicore.catalog import Catalog, CatalogError, FakeCatalog, Lease, index_key
 from catalog.app import create_app
+from catalog_helpers import step
 
 KEY = index_key("b" * 16, "f" * 64, None, None, "p" * 16)
 
@@ -66,7 +67,38 @@ def test_lease_resolves_an_alias(c):
         assert c.calls[-1] == ("lease", ("x:1", ("default-vad",)))  # the call log keeps the models as given
 
 
+def test_lease_names_each_model_once(c):
+    lease = c.request_lease("x:1", ["default-vad", "silero-vad"])  # an alias and its id are the same model
+    assert lease["models"] == ["silero-vad"] and c.get_lease(lease["id"])["models"] == ["silero-vad"]
+    if isinstance(c, FakeCatalog):
+        assert c.calls[-1] == ("lease", ("x:1", ("default-vad", "silero-vad")))
+
+
+@pytest.mark.parametrize("ending", ["expired", "failed"])
+def test_release_leaves_an_ended_lease_as_it_ended(c, cat, runtime, ending):
+    if ending == "failed":
+        runtime.fail.add("silero-vad")
+    lid = c.request_lease("x:1", ["silero-vad"], ttl_s=0.05 if ending == "expired" else 90)["id"]
+    if isinstance(c, FakeCatalog):
+        c._leases[lid]["state"] = ending  # the fake has no clock or containers: an app test ends a lease this way
+    elif ending == "expired":
+        time.sleep(0.1)
+        cat.scheduler.tick()
+    else:
+        step(cat)
+    assert c.get_lease(lid)["state"] == ending
+    c.release(lid)
+    assert c.get_lease(lid)["state"] == ending
+
+
 # ----------------------------------------------------------------------------- output index and apps
+
+def test_lookup_prefers_the_asking_app_then_other_owners_by_name(c):
+    for owner, oid in (("zeta", 1), ("bench", 2), ("alpha", 3)):
+        c.index_record(owner, [{**KEY, "output_id": oid}])
+    assert c.index_lookup("bench", [KEY]) == [{"owner": "bench", "output_id": 2, "owner_url": None}]
+    assert c.index_lookup("label", [KEY]) == [{"owner": "alpha", "output_id": 3, "owner_url": None}]
+
 
 def test_lookup_gives_digit_string_output_ids_as_ints(c):
     c.index_record("bench", [{**KEY, "output_id": "7"}, {**KEY, "params_hash": "q" * 16, "output_id": "-3"},

@@ -412,7 +412,8 @@ class FakeCatalog:
 
     def request_lease(self, holder: str, models: list[str], ttl_s: float = TTL_S) -> dict[str, Any]:
         self._n += 1
-        names = [(self._find(m) or {}).get("id", m) for m in models]  # aliases resolved, unknown names kept
+        # Aliases resolved, unknown names kept, each model once (an alias and its id are the same model)
+        names = list(dict.fromkeys((self._find(m) or {}).get("id", m) for m in models))
         lease = {"id": f"l-{self._n}", "holder": holder, "models": names, "state": "active",
                  "position": None, "waiting_for": None, "error": None}
         self._leases[lease["id"]] = lease
@@ -435,7 +436,9 @@ class FakeCatalog:
         return dict(lease)
 
     def release(self, lease_id: str) -> None:
-        self._lease(lease_id)["state"] = "released"
+        lease = self._lease(lease_id)
+        if lease["state"] in LIVE:  # a lease that failed or expired keeps its state
+            lease["state"] = "released"
         self._log("release", lease_id)
 
     def leases(self) -> list[dict[str, Any]]:
@@ -451,14 +454,13 @@ class FakeCatalog:
 
     def index_lookup(self, app: str, keys: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
         self._log("index_lookup", app, len(keys))
-        by_key: dict[tuple, list[dict[str, Any]]] = {}  # one pass over the index, in the order entries were recorded
+        by_key: dict[tuple, list[dict[str, Any]]] = {}  # one pass over the index
         for (key, _), v in self._index.items():
             by_key.setdefault(key, []).append(v)
         out = []
         for k in keys:
-            owners = by_key.get(self._key(k), [])
-            mine = [v for v in owners if v["owner"] == app]
-            hit = (mine or owners or [None])[0]
+            # The asking app's own entry first, then the other owners by name, as the server sorts them
+            hit = min(by_key.get(self._key(k), []), key=lambda v: (v["owner"] != app, v["owner"]), default=None)
             out.append({**hit, "output_id": _output_id(hit["output_id"])} if hit else None)
         return out
 
