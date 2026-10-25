@@ -180,6 +180,7 @@ class Registry:
         self._check_hosted(h, key)
         if h.auth_type != "none" and not key:
             raise SchedulerError(422, "the API key is required")
+        parent = self._parent(body["parent_id"]) if body.get("parent_id") else None  # 404 before anything is stored
         if not self.hosted.keys.available:
             self.hosted.keys.encrypt("")  # raises KeyUnavailable: 503, naming the master key file
         if h.contract == "oip-v2":  # usable_as() needs the signature: take it from the provider's metadata
@@ -192,8 +193,7 @@ class Registry:
         tags = body.get("tags")
         self.db.execute("INSERT OR REPLACE INTO registration (model_id, display_name, tags, parent_id, registered_at) "
                         "VALUES (?, ?, ?, ?, ?)", (model_id, body.get("display_name") or None, json.dumps(_tags(tags)),
-                                                   self._parent(body["parent_id"]) if body.get("parent_id") else None,
-                                                   now_iso()))
+                                                   parent, now_iso()))
         self.verifier.enqueue(model_id)
         return self.record(model_id)
 
