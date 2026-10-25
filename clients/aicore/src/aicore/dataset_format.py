@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -169,10 +170,8 @@ def _files_problems(root: Path, m: dict[str, Any], *, package: bool, hash_audio:
         stems[stem] = rel
         if not HEX64.fullmatch(r.get("sha256") or ""):
             problems.append(f"files.csv: sha256 of {rel}")
-        for k, cast in (("duration", float), ("sample_rate", int)):
-            try:
-                cast(r.get(k) or "")
-            except ValueError:
+        for k, ok in (("duration", _duration_ok), ("sample_rate", _sample_rate_ok)):
+            if not ok(r.get(k) or ""):
                 problems.append(f"files.csv: {k} of {rel} is {r.get(k)!r}")
         audio = root / "audio" / rel
         if package and audio.is_file():
@@ -190,6 +189,24 @@ def _files_problems(root: Path, m: dict[str, Any], *, package: bool, hash_audio:
         if m.get("audio_included") == "partial" and not 0 < included < len(rows):
             problems.append("audio_included is 'partial' but audio/ has none or all of the files")
     return problems, set(stems.values())
+
+
+def _duration_ok(text: str) -> bool:
+    """Seconds as a finite number of 0 or more (0 is audio whose length isn't known). float() also takes "nan", "inf"
+    and "1_0", which would break the hours of the dataset or its JSON later."""
+    try:
+        d = float(text)
+    except ValueError:
+        return False
+    return "_" not in text and math.isfinite(d) and d >= 0
+
+
+def _sample_rate_ok(text: str) -> bool:
+    """Hz as a whole number above 0, without the "_" int() takes."""
+    try:
+        return "_" not in text and int(text) > 0
+    except ValueError:
+        return False
 
 
 def _refs_problems(root: Path, version: Any, types: list[Any], found: list[Path], paths: set[str]) -> list[str]:
