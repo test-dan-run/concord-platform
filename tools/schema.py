@@ -393,6 +393,12 @@ class Platform:
             return None
         return Path(s.weights.path.replace(ASSETS_VAR, str(self.config.assets_path())))
 
+    def model_dir(self, s: Manifest) -> Path | None:
+        """Host directory of a local model (model: /models/<dir>, which is <dir> in ${AI_ASSETS})."""
+        if not s.model or not s.model.startswith(MODELS_MOUNT + "/"):
+            return None
+        return self.config.assets_path() / s.model.removeprefix(MODELS_MOUNT + "/").strip("/")
+
 
 def load_yaml(path: Path) -> Any:
     with open(path, encoding="utf-8") as fh:

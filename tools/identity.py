@@ -21,7 +21,7 @@ from typing import Any
 
 import yaml
 
-from tools.schema import MODELS_MOUNT, Manifest, Platform
+from tools.schema import Manifest, Platform
 
 IGNORED_FILES = {"SOURCE.txt"}  # provenance notes, not weights
 PARTIAL = (".lock", ".incomplete", ".part")  # download leftovers: never weights, never copied (tools/bundle.py)
@@ -67,9 +67,8 @@ def weights_source(p: Platform, s: Manifest) -> WeightsSource:
         if s.weights:
             return WeightsSource("dir", p.weights_dir(s))
         return WeightsSource("none")
-    if s.model and s.model.startswith(MODELS_MOUNT + "/"):
-        return WeightsSource("dir", p.config.assets_path() / s.model.removeprefix(MODELS_MOUNT + "/").strip("/"))
-    return WeightsSource("none")
+    model = p.model_dir(s)
+    return WeightsSource("dir", model) if model is not None else WeightsSource("none")
 
 
 def weights_yaml_hash(spec: Path) -> str:

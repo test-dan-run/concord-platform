@@ -121,14 +121,12 @@ def ensure_network(name: str) -> None:
 def ensure_assets(p: Platform, services: list[Manifest]) -> None:
     assets = p.config.assets_path()
     for s in services:
-        if s.weights:
-            path = Path(s.weights.path.replace("${AI_ASSETS}", str(assets)))
-            if not path.is_dir():
-                raise StackError(f"{s.name}: weights not found at {path}; run `just fetch-weights {s.name}`")
-        if s.model and s.model.startswith("/models/"):
-            path = assets / s.model.removeprefix("/models/")
-            if not path.is_dir():
-                raise StackError(f"{s.name}: local model {s.model} not found at {path} (AI_ASSETS={assets})")
+        path = p.weights_dir(s)
+        if path is not None and not path.is_dir():
+            raise StackError(f"{s.name}: weights not found at {path}; run `just fetch-weights {s.name}`")
+        path = p.model_dir(s)
+        if path is not None and not path.is_dir():
+            raise StackError(f"{s.name}: local model {s.model} not found at {path} (AI_ASSETS={assets})")
 
 
 def _only_gone(stderr: str) -> bool:
