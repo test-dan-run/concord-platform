@@ -226,6 +226,10 @@ def usage_snippet(s: Manifest) -> str:
                             f'                           input="Hello there!", response_format="wav")\nr.write_to_file("hello.wav")',
         }[s.api]
         return head + body
+    if s.contract == "openai-inspired" and s.api == "text.itn":
+        return (f'from aicore import client\n\nsvc = client("{key}")\n'
+                f'svc.itn("meet at three thirty p m")                 # -> str\n'
+                f'svc.itn(["twenty one", "noon"], return_spans=True)  # -> list of {{output, spans}} items')
     if s.contract == "openai-inspired":
         return (f'from aicore import client\n\nsvc = client("{key}")\n'
                 f'svc.transform("hello world how are you")          # -> str\n'
