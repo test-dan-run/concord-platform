@@ -27,7 +27,8 @@ When the Model Catalog is running (catalog/README.md), it owns the GPU: `up`, `d
 takes a --ttl of at most 3600 seconds, `lease` ignores --ttl (a catalog lease keeps the TTL it was
 taken with) and `status` shows the catalog's lease holders.
 Only a refused connection means there is no catalog: one that answers with an error or times out stops
-the command. AI_STACK_DIRECT=1 skips the catalog.
+a command that changes state. `status` only reads, so it warns and shows LEASED BY as "?" instead.
+AI_STACK_DIRECT=1 skips the catalog.
 """
 
 from __future__ import annotations
@@ -350,22 +351,29 @@ def _table(rows: list[tuple[str, ...]]) -> None:
         print("  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip())
 
 
-def status(cat=None) -> None:
-    """The service table. With the catalog running (`cat`), LEASED BY comes from its leases, not run/leases."""
+def status(cat=None, wedged: bool = False) -> None:
+    """The service table. With the catalog running (`cat`), LEASED BY comes from its leases, not run/leases.
+    With a catalog that does not answer (`wedged`, or its model list fails), LEASED BY is "?"."""
     require_docker()
     p = prepare()
     cs = containers(p)
-    if cat is None:
+    if wedged:
+        leased = None
+    elif cat is None:
         leased = _leased()
     else:
-        with catalog_errors(cat):
-            leased = {m["id"]: list(m["leased_by"]) for m in cat.models(all=True) if m.get("leased_by")}
+        try:
+            with catalog_errors(cat):
+                leased = {m["id"]: list(m["leased_by"]) for m in cat.models(all=True) if m.get("leased_by")}
+        except StackError as exc:
+            print(f"warning: {exc}")
+            leased = None
     rows = [("NAME", "KIND", "CONTRACT", "VRAM", "STATE", "HEALTH", "PORT", "LEASED BY")]
     for s in p.services:
         c = cs.get(s.name)
         vram = f"{s.vram_fraction(p.config.gpu_total_gb) * p.config.gpu_total_gb:.1f}GB" if s.gpu else "CPU"
         rows.append((s.name, s.kind, s.contract, vram, c.state if c else "-", c.health if c else "-",
-                     f"127.0.0.1:{s.port}", ",".join(leased.get(s.name, [])) or "-"))
+                     f"127.0.0.1:{s.port}", "?" if leased is None else ",".join(leased.get(s.name, [])) or "-"))
     _table(rows)
 
 
@@ -589,7 +597,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "down":
             down(args.names)
         elif args.cmd == "status":
-            cat = catalog()
+            try:
+                cat = catalog()
+            except StackError as exc:  # status only reads: a catalog that does not answer costs only LEASED BY
+                print(f"warning: {exc}")
+                status(wedged=True)
+                return 0
             with cat if cat is not None else contextlib.nullcontext():
                 status(cat=cat)
         elif args.cmd == "logs":
