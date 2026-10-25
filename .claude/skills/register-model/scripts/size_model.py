@@ -34,8 +34,8 @@ POOLING_ARCH_HINTS = ("Model", "ForSequenceClassification", "ForMaskedLM", "ForT
 
 # ----------------------------------------------------------------------------- platform settings
 
-def platform_settings() -> tuple[float, Path]:
-    """(gpu_total_gb, assets dir) from config.yaml, with AI_ASSETS from the env or platform/.env."""
+def platform_settings() -> tuple[float, float, Path]:
+    """(gpu_total_gb, util_limit, assets dir) from config.yaml, with AI_ASSETS from the env or platform/.env."""
     cfg = yaml.safe_load((PLATFORM / "config.yaml").read_text()) or {}
     assets = os.environ.get("AI_ASSETS")
     env_file = PLATFORM / ".env"
@@ -44,7 +44,8 @@ def platform_settings() -> tuple[float, Path]:
             key, _, value = line.partition("=")
             if key.strip() == "AI_ASSETS" and value.strip():
                 assets = value.strip().strip("'\"")
-    return float(cfg.get("gpu_total_gb", 32)), Path(os.path.expanduser(assets or cfg.get("assets_dir", "~/ai-assets")))
+    assets_dir = Path(os.path.expanduser(assets or cfg.get("assets_dir", "~/ai-assets")))
+    return float(cfg.get("gpu_total_gb", 32)), float(cfg["util_limit"]), assets_dir
 
 
 # ----------------------------------------------------------------------------- sources
@@ -146,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--kv-cache-dtype", choices=["auto", "fp8"], default="auto")
     args = ap.parse_args(argv)
 
-    total_gb, assets = platform_settings()
+    total_gb, util_limit, assets = platform_settings()
     src = args.source
     local = Path(os.path.expanduser(src))
     if src.startswith("/models/"):
@@ -210,10 +211,10 @@ def main(argv: list[str] | None = None) -> int:
           f"= {need:.1f} GB  ->  gpu.util {util:.2f} ({util * total_gb:.1f} GB of {total_gb:g})")
     if max_pos and max_len < max_pos:
         print(f"  capped below the native {max_pos}: put --max-model-len={max_len} in args with a comment")
-    if (weights_gb + args.overhead_gb) / total_gb > 0.93:
-        print("  weights alone exceed the platform util_limit (0.93): needs a smaller checkpoint (AWQ/GPTQ 4-bit, FP8)")
-    elif util > 0.93:
-        print("  over the platform util_limit (0.93): shorten --max-model-len or add --kv-cache-dtype=fp8")
+    if (weights_gb + args.overhead_gb) / total_gb > util_limit:
+        print(f"  weights alone exceed the platform util_limit ({util_limit:g}): needs a smaller checkpoint (AWQ/GPTQ 4-bit, FP8)")
+    elif util > util_limit:
+        print(f"  over the platform util_limit ({util_limit:g}): shorten --max-model-len or add --kv-cache-dtype=fp8")
     return 0
 
 

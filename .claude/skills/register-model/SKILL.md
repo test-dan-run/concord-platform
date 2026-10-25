@@ -16,12 +16,12 @@ Two helpers ship with this skill (run them with the platform venv):
 
 ```bash
 S=.claude/skills/register-model/scripts
-uv run --quiet python $S/platform_state.py --api chat.completions --profile voice-chat
+uv run --quiet python $S/platform_state.py --api chat.completions
 uv run --quiet python $S/size_model.py Qwen/Qwen3-8B-FP8 --max-model-len 8192
 ```
 
 - `platform_state.py`: engines and pinned tags, every service with alias/port/source, used ports
-  and the **next free port** per band, every profile's VRAM total and headroom.
+  and the **next free port** per band, and the GPU budget (`util_limit`).
 - `size_model.py SOURCE`: reads `config.json` and file sizes (local dir, `/models/<dir>`, or an HF id,
   metadata only) and prints architecture, quantization, checkpoint GB, **KV bytes per token**, and a
   `gpu.util` for a given `--max-model-len` (or, with `--util`, how many KV tokens fit).
@@ -162,7 +162,7 @@ uv run --quiet python $S/size_model.py <source> --max-model-len <N> [--overhead-
 
 ### 5. Choose identity and write the manifest
 
-`platform_state.py --api <api> --profile <profile>` gives the next free port and the budget.
+`platform_state.py --api <api>` gives the next free port and the budget.
 
 - **name**: kebab-case from the repo name, lowercased, without the org, `.` → `-`, and the quant
   suffix kept when it distinguishes the checkpoint (`qwen3-32b-awq`, `qwen2-5-14b-instruct-awq`). The

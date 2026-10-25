@@ -415,16 +415,28 @@ def _fmt_validation(path: Path, exc: ValidationError) -> list[str]:
     return out
 
 
+# Port band (the hundreds of the port) -> what it holds. A port outside its band is a warning.
+PORT_BANDS: dict[int, str] = {
+    81: "audio models", 82: "chat/VLM models", 83: "embeddings/rerank models", 84: "other models", 85: "utilities",
+}
+
+
+def port_band(api: str, kind: str) -> int:
+    """The port band for a service with this api and kind (the register-model skill uses it too)."""
+    if kind == "utility":
+        return 85
+    if api.startswith("audio."):
+        return 81
+    if api in ("chat.completions", "completions"):
+        return 82
+    if api == "embeddings":
+        return 83
+    return 84
+
+
 def _port_band(s: Manifest) -> tuple[int, str]:
-    if s.kind == "utility":
-        return 85, "utilities"
-    if s.api.startswith("audio."):
-        return 81, "audio models"
-    if s.api in ("chat.completions", "completions"):
-        return 82, "chat/VLM models"
-    if s.api == "embeddings":
-        return 83, "embeddings/rerank models"
-    return 84, "other models"
+    band = port_band(s.api, s.kind)
+    return band, PORT_BANDS[band]
 
 
 def load_platform(root: Path | None = None, services_dir: Path | None = None) -> Platform:
