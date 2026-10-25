@@ -6,7 +6,7 @@ import { ago, rtf, secs } from "../lib/format";
 import * as I from "../components/icons";
 import { CapabilityChips, gpuLabel, Report, StateCell, VerifyChip } from "../components/model";
 import { TagInput } from "../components/TagInput";
-import { Button, Chip, ErrorNote, Fact, LinkButton, PageHeader, Panel, Select, Spinner } from "../components/ui";
+import { Button, Chip, ErrorNote, Fact, inputClass, LinkButton, PageHeader, Panel, Select, Spinner } from "../components/ui";
 import { DetailTabs, useDetailTab } from "../components/DetailTabs";
 import { ModelCard } from "../components/ModelCard";
 import { BatchPanel } from "../components/BatchPanel";
@@ -118,7 +118,7 @@ export function Registration({ m, models, onRemove, note }: { m: Model; models: 
     <Panel title="Registration" subtitle={m.registered_at ? `Added ${ago(m.registered_at)}${note ? ` · ${note}` : ""}` : undefined}>
       <label className="flex flex-col gap-1.5 text-xs text-muted">
         Display name
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={m.id} className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={m.id} className={inputClass} />
       </label>
       <Select label="Derived from" value={parent} onChange={(e) => setParent(e.target.value)} className="!min-h-10 flex-1">
         <option value="">None</option>

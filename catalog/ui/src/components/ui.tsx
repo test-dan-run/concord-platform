@@ -7,6 +7,9 @@ export function cx(...c: (string | false | null | undefined)[]): string {
   return c.filter(Boolean).join(" ");
 }
 
+/** The look of a text box, select or text area in a form. */
+export const inputClass = "min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg";
+
 type Variant = "primary" | "outline" | "ghost" | "danger";
 const VARIANTS: Record<Variant, string> = {
   primary: "bg-primary text-canvas font-semibold border-0 hover:brightness-110",

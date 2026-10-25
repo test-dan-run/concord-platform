@@ -11,7 +11,7 @@ import { ago, hours, num } from "../lib/format";
 import * as I from "../components/icons";
 import { ConfirmDelete, UseList } from "../components/dataset";
 import { TagInput } from "../components/TagInput";
-import { Button, Chip, Empty, ErrorNote, Fact, LinkButton, PageHeader, Panel, Spinner } from "../components/ui";
+import { Button, Chip, Empty, ErrorNote, Fact, inputClass, LinkButton, PageHeader, Panel, Spinner } from "../components/ui";
 import { LabelNames, LabelTypeChips } from "./DatasetsPage";
 
 const small = "inline-flex items-center gap-1.5 min-h-8 px-2.5 rounded-md text-xs no-underline border border-line !text-fg hover:bg-track";
@@ -143,17 +143,16 @@ function Details({ d }: { d: Dataset }) {
   });
   const changed = name.trim() !== d.name || description.trim() !== (d.description ?? "") || tags.join() !== d.tags.join();
   const uses = (d.versions ?? []).flatMap((v) => v.uses.map((u) => ({ ...u, n: v.n })));
-  const input = "min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg";
   return (
     <>
       <Panel title="Details">
         <label className="flex flex-col gap-1.5 text-xs text-muted">
           Name
-          <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
+          <input value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
         </label>
         <label className="flex flex-col gap-1.5 text-xs text-muted">
           Description
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${input} py-2 resize-y`} />
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inputClass} py-2 resize-y`} />
         </label>
         <TagInput value={tags} onChange={setTags} pool={(all.data ?? []).flatMap((x) => x.tags)} placeholder="e.g. call-centre, en-SG" />
         <ErrorNote error={save.error} />

@@ -6,7 +6,7 @@ import * as I from "../components/icons";
 import { AuthFields, body, contractOf, EndpointFields, TestLines, type Auth, type Endpoint } from "../components/hosted";
 import { gpuLabel, StateCell } from "../components/model";
 import { TagInput } from "../components/TagInput";
-import { Button, Chip, cx, Empty, ErrorNote, Fact, PageHeader, Panel, Select, Spinner } from "../components/ui";
+import { Button, Chip, cx, Empty, ErrorNote, Fact, inputClass, PageHeader, Panel, Select, Spinner } from "../components/ui";
 
 const GROUPS = [
   { key: "speech", title: "Speech models", note: "ASR, VAD, diarisation and speech enhancement: verified with a capability probe on the check clip" },
@@ -172,7 +172,7 @@ function EntryForm({ entry, models, onAdded }: { entry: Model; models: Model[]; 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5 text-xs text-muted">
               Display name
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={entry.id} className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg" />
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={entry.id} className={inputClass} />
             </label>
             <Select label="Derived from" value={parent} onChange={(e) => setParent(e.target.value)} className="!min-h-10 flex-1">
               <option value="">None</option>
@@ -259,11 +259,11 @@ function HostedForm({ models, onAdded }: { models: Model[]; onAdded: (m: Model) 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5 text-xs text-muted">
               Catalog name
-              <input value={id} onChange={(e) => setId(e.target.value.toLowerCase())} placeholder="e.g. hosted-asr-whisper-1" className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg num" />
+              <input value={id} onChange={(e) => setId(e.target.value.toLowerCase())} placeholder="e.g. hosted-asr-whisper-1" className={`${inputClass} num`} />
             </label>
             <label className="flex flex-col gap-1.5 text-xs text-muted">
               Display name
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={id || "optional"} className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg" />
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={id || "optional"} className={inputClass} />
             </label>
             <Select label="Derived from" value={parent} onChange={(e) => setParent(e.target.value)} className="!min-h-10 flex-1">
               <option value="">None</option>

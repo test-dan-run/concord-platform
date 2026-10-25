@@ -12,10 +12,9 @@ import { bytes, clock, hours, num } from "../lib/format";
 import { AUDIO_EXTS, BUSY, pickedFromDrop, pickedFromInput, planVersion, uploads, type PickedFile, type UploadItem } from "../lib/upload";
 import * as I from "../components/icons";
 import { TagInput } from "../components/TagInput";
-import { Bar, Button, cx, Empty, ErrorNote, PageHeader, Panel, Select, Toggle } from "../components/ui";
+import { Bar, Button, cx, Empty, ErrorNote, inputClass, PageHeader, Panel, Select, Toggle } from "../components/ui";
 
 const SHOW = 100;
-const input = "min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg";
 
 const finished = (i: UploadItem) => ["done", "unreadable", "skipped"].includes(i.state);
 
@@ -276,15 +275,15 @@ export function UploadPage() {
             <>
               <label className="flex flex-col gap-1.5 text-xs text-muted">
                 Name
-                <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
+                <input value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
               </label>
               <label className="flex flex-col gap-1.5 text-xs text-muted">
                 Language
-                <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="e.g. en, ms, zh" className={input} />
+                <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="e.g. en, ms, zh" className={inputClass} />
               </label>
               <label className="flex flex-col gap-1.5 text-xs text-muted">
                 Description
-                <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={`${input} py-2 resize-y`} />
+                <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={`${inputClass} py-2 resize-y`} />
               </label>
               <TagInput value={tags} onChange={setTags} pool={(datasets.data ?? []).flatMap((d) => d.tags)} placeholder="e.g. call-centre, en-SG" />
             </>

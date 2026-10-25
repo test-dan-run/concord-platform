@@ -8,7 +8,7 @@ import { api, type ExportJob, type ExportModel } from "../lib/api";
 import { ago, size } from "../lib/format";
 import * as I from "../components/icons";
 import { VerifyChip } from "../components/model";
-import { AnchorButton, Bar, Button, cx, Empty, ErrorNote, Fact, PageHeader, Panel, Spinner } from "../components/ui";
+import { AnchorButton, Bar, Button, cx, Empty, ErrorNote, Fact, inputClass, PageHeader, Panel, Spinner } from "../components/ui";
 
 type Options = { destination: "bundle" | "registry"; registry: string; images: boolean; weights: boolean; verification: boolean };
 
@@ -205,7 +205,7 @@ export function ExportPage() {
               <>
                 <label className="flex flex-col gap-1.5 text-xs text-muted">
                   Target registry
-                  <input type="text" value={o.registry} onChange={(e) => set({ registry: e.target.value })} disabled={locked} placeholder="registry.example.internal/models" className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg num" />
+                  <input type="text" value={o.registry} onChange={(e) => set({ registry: e.target.value })} disabled={locked} placeholder="registry.example.internal/models" className={`${inputClass} num`} />
                 </label>
                 <span className="text-[11px] text-subtle">Pushing uses this host's Docker login for the registry (~/.docker/config.json, mounted read-only into the catalog).</span>
               </>
