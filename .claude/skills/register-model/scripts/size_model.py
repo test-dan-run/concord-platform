@@ -21,6 +21,7 @@ import math
 import os
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import httpx
 import yaml
@@ -94,42 +95,74 @@ def from_hub(repo: str, revision: str) -> tuple[dict, dict[str, int], str]:
 
 # ----------------------------------------------------------------------------- KV cache
 
-def kv_bytes_per_token(cfg: dict, kv_dtype_bytes: int) -> tuple[int | None, str]:
-    """Bytes of KV cache per token across all layers that keep one, plus a note on how it was derived."""
-    t = cfg.get("text_config") or cfg
+class KV(NamedTuple):
+    """KV cache bytes per token: `full` in the layers that cache every token, `sliding` in sliding-window
+    layers, which cache at most `window` tokens."""
+
+    full: int
+    sliding: int = 0
+    window: int = 0
+
+    def bytes(self, tokens: int) -> int:
+        return self.full * tokens + self.sliding * min(tokens, self.window)
+
+    def tokens(self, budget: float) -> int | None:
+        """Tokens of one sequence that fit in `budget` bytes (None: any length, every layer is sliding)."""
+        if budget < self.bytes(self.window):
+            return int(budget / (self.full + self.sliding))
+        return int((budget - self.sliding * self.window) / self.full) if self.full else None
+
+
+def text_config(cfg: dict) -> dict:
+    """The language model's config: text_config (VLMs), thinker_config.text_config (Qwen3-ASR) or the top level."""
+    return cfg.get("text_config") or (cfg.get("thinker_config") or {}).get("text_config") or cfg
+
+
+def kv_cache(cfg: dict, kv_dtype_bytes: int) -> tuple[KV | None, str]:
+    """KV cache bytes per token across all layers that keep one, plus a note on how it was derived."""
+    t = text_config(cfg)
     if "kv_lora_rank" in t:  # MLA (DeepSeek-style): one compressed latent + rope key per layer
         layers = t["num_hidden_layers"]
         per = (t["kv_lora_rank"] + t.get("qk_rope_head_dim", 64)) * kv_dtype_bytes
-        return layers * per, f"MLA: {layers} layers x (kv_lora_rank {t['kv_lora_rank']} + rope {t.get('qk_rope_head_dim', 64)})"
+        return KV(layers * per), f"MLA: {layers} layers x (kv_lora_rank {t['kv_lora_rank']} + rope {t.get('qk_rope_head_dim', 64)})"
 
-    layers = t.get("num_hidden_layers") or t.get("decoder_layers") or t.get("n_layer")
-    heads = t.get("num_attention_heads") or t.get("decoder_attention_heads") or t.get("n_head")
+    if cfg.get("is_encoder_decoder"):  # only the decoder keeps a KV cache; num_hidden_layers is the encoder's
+        layers = t.get("decoder_layers") or t.get("num_hidden_layers")
+        heads = t.get("decoder_attention_heads") or t.get("num_attention_heads")
+    else:
+        layers = t.get("num_hidden_layers") or t.get("decoder_layers") or t.get("n_layer")
+        heads = t.get("num_attention_heads") or t.get("decoder_attention_heads") or t.get("n_head")
     kv_heads = t.get("num_key_value_heads") or heads
     hidden = t.get("hidden_size") or t.get("d_model") or t.get("n_embd")
     head_dim = t.get("head_dim") or (hidden // heads if hidden and heads else None)
     if not (layers and kv_heads and head_dim):
         return None, "could not read layers / kv heads / head_dim from config.json"
 
-    note = ""
+    note, sliding, window = "", 0, 0
+    per_layer = 2 * kv_heads * head_dim * kv_dtype_bytes
     layer_types = t.get("layer_types")
     if isinstance(layer_types, list) and layer_types:
         kv_layers = [lt for lt in layer_types if lt not in NO_KV_LAYER_TYPES]
         skipped = len(layer_types) - len(kv_layers)
         if skipped:
             note = f"; hybrid: {len(kv_layers)} of {len(layer_types)} layers keep a KV cache (others hold fixed-size state)"
-        if any("sliding" in lt for lt in kv_layers):
-            note += "; sliding-window layers cache only the window, so this is an upper bound"
         layers = len(kv_layers)
+        if n := sum("sliding" in lt for lt in kv_layers):
+            if t.get("sliding_window"):
+                layers, sliding, window = layers - n, n, t["sliding_window"]
+                note += (f"; plus {n} sliding-window layers that cache at most {t['sliding_window']} tokens "
+                         f"({n * per_layer / 1024:.0f} KB per token up to then)")
+            else:
+                note += "; sliding-window layers with no sliding_window in config.json: counted in full, an upper bound"
     if cfg.get("is_encoder_decoder"):
         note += "; encoder-decoder: decoder self-attention only (cross-attention cache is per request, small)"
-    per = 2 * layers * kv_heads * head_dim * kv_dtype_bytes
-    return per, f"2 (K,V) x {layers} layers x {kv_heads} kv heads x {head_dim} head_dim x {kv_dtype_bytes} B{note}"
+    return KV(layers * per_layer, sliding * per_layer, window), f"2 (K,V) x {layers} layers x {kv_heads} kv heads x {head_dim} head_dim x {kv_dtype_bytes} B{note}"
 
 
 def describe_quant(cfg: dict) -> str:
-    q = cfg.get("quantization_config") or (cfg.get("text_config") or {}).get("quantization_config")
+    q = cfg.get("quantization_config") or text_config(cfg).get("quantization_config")
     if not q:
-        return f"none (dtype {cfg.get('torch_dtype') or cfg.get('dtype') or (cfg.get('text_config') or {}).get('dtype') or '?'})"
+        return f"none (dtype {cfg.get('torch_dtype') or cfg.get('dtype') or text_config(cfg).get('dtype') or '?'})"
     keys = ("quant_method", "bits", "fmt", "weight_block_size", "group_size")
     return ", ".join(f"{k}={q[k]}" for k in keys if q.get(k) is not None)
 
@@ -164,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     weights = weight_files(files)
     weights_gb = sum(weights.values()) / GIB
     archs = cfg.get("architectures") or []
-    t = cfg.get("text_config") or cfg
+    t = text_config(cfg)
     max_pos = t.get("max_position_embeddings") or t.get("max_target_positions") or t.get("n_positions")
 
     print(f"source         {where}")
@@ -185,26 +218,27 @@ def main(argv: list[str] | None = None) -> int:
 
     pooling = any(a.endswith(POOLING_ARCH_HINTS) for a in archs) and not any("CausalLM" in a or "Generation" in a for a in archs)
     kv_dtype_bytes = 1 if args.kv_cache_dtype == "fp8" else 2
-    per_tok, how = kv_bytes_per_token(cfg, kv_dtype_bytes)
+    kv, how = kv_cache(cfg, kv_dtype_bytes)
     if pooling:
         print("kv cache       pooling/encoder model (embeddings, rerank): no decode KV cache; budget weights + overhead")
-        per_tok = 0
-    elif per_tok is None:
+        kv = KV(0)
+    elif kv is None:
         print(f"kv cache       unknown: {how}")
         return 0
     else:
-        print(f"kv per token   {per_tok / 1024:.0f} KB  = {how}")
+        print(f"kv per token   {kv.full / 1024:.0f} KB  = {how}")
 
     if args.util is not None:
         budget = args.util * total_gb - weights_gb - args.overhead_gb
+        fits = kv.tokens(budget * GIB) if (kv.full or kv.sliding) and budget > 0 else None
         print(f"\nat util {args.util:g} ({args.util * total_gb:.1f} GB): {budget:.2f} GB left for KV"
-              + (f" ~= {int(budget * GIB / per_tok):,} tokens" if per_tok and budget > 0 else ""))
+              + (f" ~= {fits:,} tokens" if fits else ""))
         if budget <= 0:
             print("  too small: weights + overhead alone exceed this budget")
         return 0
 
     max_len = args.max_model_len or min(max_pos or 8192, 32768)
-    kv_gb = per_tok * max_len / GIB
+    kv_gb = kv.bytes(max_len) / GIB
     need = weights_gb + kv_gb + args.overhead_gb
     util = math.ceil(need / total_gb * 100) / 100
     print(f"\nfor --max-model-len={max_len}: weights {weights_gb:.1f} + KV {kv_gb:.2f} + overhead {args.overhead_gb:g} "
