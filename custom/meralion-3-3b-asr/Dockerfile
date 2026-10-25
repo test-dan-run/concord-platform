@@ -1,6 +1,6 @@
 # meralion-3-3b-asr: OpenAI audio.transcriptions, MERaLiON-3-3B-ASR on transformers (GPU, bf16).
 # Weights and the model's remote code are mounted at /models, never baked in.
-ARG BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt /app/requirements.txt
