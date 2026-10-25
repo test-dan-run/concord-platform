@@ -72,7 +72,10 @@ class Hosted:
 
     @property
     def host(self) -> str:
-        return urlsplit(self.base_url).hostname or self.base_url
+        try:
+            return urlsplit(self.base_url).hostname or self.base_url
+        except ValueError:  # saved before base_url was checked: listing it must still work
+            return self.base_url
 
     def public(self) -> dict[str, Any]:
         """What records show: no key, only its last four characters."""
