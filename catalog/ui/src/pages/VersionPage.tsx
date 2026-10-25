@@ -6,7 +6,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, type App } from "../lib/api";
+import { api, notFound, type App } from "../lib/api";
 import {
   allFiles,
   appLabel,
@@ -53,7 +53,7 @@ export function VersionPage() {
   const pick = (path: string) => setParams((p) => ({ ...Object.fromEntries(p), file: path }), { replace: true });
 
   if (v.isLoading) return <Spinner />;
-  if (!v.data)
+  if (!v.data || notFound(v.error))
     return (
       <>
         <PageHeader crumbs={crumbs} title={`${name} v${nParam}`} />

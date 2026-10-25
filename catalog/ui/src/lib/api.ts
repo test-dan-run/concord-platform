@@ -13,6 +13,10 @@ export class ApiError extends Error {
   }
 }
 
+/** The catalog answered 404: the record is gone, e.g. deleted while a page showed it. react-query keeps the old
+ *  data after a failed refetch, so a page checks this as well as `data`. */
+export const notFound = (e: unknown): boolean => e instanceof ApiError && e.status === 404;
+
 export async function errorOf(r: Response): Promise<ApiError> {
   let msg = r.statusText;
   let body = {};

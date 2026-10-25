@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, notFound } from "../lib/api";
 import { appLabel, packageUrl, parentLabel, plural, takesAudio, versionPath, type Comparison, type Dataset, type Version } from "../lib/datasets";
 import { ago, hours, num } from "../lib/format";
 import * as I from "../components/icons";
@@ -195,7 +195,7 @@ export function DatasetDetail() {
   const { id = "" } = useParams();
   const q = useQuery({ queryKey: ["dataset", id], queryFn: () => api.get<Dataset>(`/datasets/${id}`), retry: false });
   if (q.isLoading) return <Spinner />;
-  if (!q.data)
+  if (!q.data || notFound(q.error))
     return (
       <>
         <PageHeader crumbs={<Link to="/datasets">Datasets</Link>} title="Dataset not found" />
