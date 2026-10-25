@@ -220,7 +220,8 @@ Flags for the pinned vLLM. Verify each one against that version's docs before yo
 - `README.md` (platform root): add a row to the table of the service's group, e.g. "Speech to text
   (ASR)" or "Text normalisation" (name, alias, kind, engine, contract / api, port, `util 0.NN` or
   `N GB` or `CPU`), in port order. A service that fits no group goes in "Other audio analysis" or a
-  new group with a one-sentence description.
+  new group with a one-sentence description. `tests/test_readme.py` checks every row against the
+  manifests, so change the row too when you change a manifest's alias, port or GPU value.
 
 ### 7. Verify
 
