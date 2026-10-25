@@ -147,7 +147,8 @@ class Catalog:
         if r.status_code >= 400:
             try:
                 body = r.json()
-                err = body.get("error") if isinstance(body, dict) else None
+                body = body if isinstance(body, dict) else {}  # a JSON list, string or number has no fields
+                err = body.get("error")
                 msg = (err.get("message") if isinstance(err, dict) else err) or body.get("detail") or r.text
             except ValueError:
                 msg = r.text
