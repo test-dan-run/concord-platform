@@ -3,7 +3,7 @@
 // changes. Versions never change, so a comparison is fetched once.
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { labelValue, plural, versionPath, type Comparison, type Dataset } from "../lib/datasets";
@@ -13,23 +13,34 @@ import { Button, Chip, Empty, ErrorNote, Fact, PageHeader, Panel, Select, Spinne
 
 const SHOW = 50;
 
-function FileList({ paths, id, n }: { paths: string[]; id: string; n: number }) {
+/** The first SHOW items, and a button that shows the rest: a comparison can list thousands of files. */
+function Capped<T>({ items, children }: { items: T[]; children: (shown: T[]) => ReactNode }) {
   const [all, setAll] = useState(false);
   return (
     <>
-      <ul className="m-0 pl-5 flex flex-col gap-0.5 text-[13px] num break-all">
-        {(all ? paths : paths.slice(0, SHOW)).map((p) => (
-          <li key={p}>
-            <Link to={`${versionPath(id, n)}?file=${encodeURIComponent(p)}`}>{p}</Link>
-          </li>
-        ))}
-      </ul>
-      {paths.length > SHOW && !all && (
+      {children(all ? items : items.slice(0, SHOW))}
+      {items.length > SHOW && !all && (
         <span>
-          <Button size="sm" onClick={() => setAll(true)}>Show all {num(paths.length)}</Button>
+          <Button size="sm" onClick={() => setAll(true)}>Show all {num(items.length)}</Button>
         </span>
       )}
     </>
+  );
+}
+
+function FileList({ paths, id, n }: { paths: string[]; id: string; n: number }) {
+  return (
+    <Capped items={paths}>
+      {(shown) => (
+        <ul className="m-0 pl-5 flex flex-col gap-0.5 text-[13px] num break-all">
+          {shown.map((p) => (
+            <li key={p}>
+              <Link to={`${versionPath(id, n)}?file=${encodeURIComponent(p)}`}>{p}</Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Capped>
   );
 }
 
@@ -153,7 +164,11 @@ export function ComparePage() {
               </span>
             )}
             <Panel title="Changed references" subtitle={d.changed.length ? plural(d.changed.length, "file") : undefined}>
-              {d.changed.length ? d.changed.map((x) => <Changed key={x.path} c={x} a={d.a} b={d.b} />) : <span className="text-[13px] text-muted">No file in both versions changed.</span>}
+              {d.changed.length ? (
+                <Capped items={d.changed}>{(shown) => shown.map((x) => <Changed key={x.path} c={x} a={d.a} b={d.b} />)}</Capped>
+              ) : (
+                <span className="text-[13px] text-muted">No file in both versions changed.</span>
+              )}
             </Panel>
             <Panel title="Files added" subtitle={`In v${d.b}, not in v${d.a}`}>
               {d.files.added.length ? <FileList paths={d.files.added} id={id} n={d.b} /> : <span className="text-[13px] text-muted">None</span>}
