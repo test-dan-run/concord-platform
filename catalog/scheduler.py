@@ -150,6 +150,7 @@ class Scheduler:
         self._threads: list[threading.Thread] = []
         self._platform: Platform | None = None
         self._platform_sig: tuple = ()
+        self._failed_sig: tuple | None = None  # manifests that failed to load: kept until they change again
         self._reload_lock = threading.Lock()  # one thread reloads changed manifests; taken before self.lock, never inside it
         self.platform_error: str | None = None
         self._last_published: dict[str, Any] = {}
@@ -171,12 +172,12 @@ class Scheduler:
     def platform(self) -> Platform:
         sig = self._manifest_sig()
         with self.lock:
-            if self._platform is not None and sig == self._platform_sig:
+            if self._platform is not None and sig in (self._platform_sig, self._failed_sig):
                 return self._platform
         with self._reload_lock:
             sig = self._manifest_sig()  # another thread may have reloaded while this one waited
             with self.lock:
-                if self._platform is not None and sig == self._platform_sig:
+                if self._platform is not None and sig in (self._platform_sig, self._failed_sig):
                     return self._platform
             try:
                 p = load_platform(self.settings.platform_dir)
@@ -185,6 +186,7 @@ class Scheduler:
                     self.platform_error = "; ".join(exc.errors)
                     if self._platform is None:
                         raise
+                    self._failed_sig = sig  # the last good platform and this error, until the files change
                     return self._platform
             if self.settings.docker:
                 render.write_outputs(p)  # compose.yml must match the manifests the catalog starts from
