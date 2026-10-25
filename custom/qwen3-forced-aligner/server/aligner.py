@@ -20,6 +20,7 @@ import numpy as np
 
 SR = 16000
 MAX_S = 180.0  # qwen-asr's MAX_FORCE_ALIGN_INPUT_SECONDS; on the 5090 a 292 s clip aligned only to 245 s (mean score 0.15)
+MIN_S = 0.1  # a shorter row is not run: no word fits, and the mel STFT fails under 201 samples
 LANGUAGES = {"zh": "Chinese", "en": "English", "yue": "Cantonese", "fr": "French", "de": "German", "it": "Italian",
              "ko": "Korean", "pt": "Portuguese", "ru": "Russian", "es": "Spanish"}
 
@@ -153,10 +154,12 @@ class QwenForcedAligner:
         return list(row.words), times, prob.reshape(-1, 2).mean(axis=1).astype(np.float32)
 
     def align_rows(self, rows: list[Row], run=None) -> list[tuple]:
-        """Results of many rows; `run` runs the slot classes of rows with words (default: one batch of them all)."""
-        todo = [r for r in rows if r.words]
+        """Results of many rows; `run` runs the slot classes of rows with words and at least MIN_S of audio (default:
+        one batch of them all). Other rows get EMPTY."""
+        runs = [bool(r.words) and len(r.audio) >= int(MIN_S * SR) for r in rows]
+        todo = [r for r, ok in zip(rows, runs) if ok]
         classes = iter((run or self.slot_classes_batch)(todo) if todo else [])
-        return [self.result(r, *next(classes)) if r.words else EMPTY for r in rows]
+        return [self.result(r, *next(classes)) if ok else EMPTY for r, ok in zip(rows, runs)]
 
     def align(self, audio: np.ndarray, sample_rate: int, text: str, language: str):
         """One clip: (words, times, scores)."""
