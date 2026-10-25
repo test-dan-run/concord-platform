@@ -19,7 +19,7 @@ import numpy as np
 
 SR = 16000
 MAX_CHUNK_S = 30.0
-MIN_TAIL_S = 0.1  # a shorter last chunk is dropped: no speech, and the mel STFT fails under 201 samples
+MIN_TAIL_S = 0.1  # a shorter last chunk or file is not run: no speech, and the mel STFT fails under 201 samples
 PROMPT = "Please transcribe this audio."
 MAX_NEW_TOKENS = 256
 BLOCK_FROM_ID = 151670  # the script's --asr_block_token_id_from: ids above the text vocabulary (codec tokens)
@@ -55,7 +55,10 @@ def decode_audio(data: bytes) -> np.ndarray:
 
 
 def chunks(x: np.ndarray, max_s: float = MAX_CHUNK_S) -> list[np.ndarray]:
+    """Pieces of at most `max_s`; a last piece under MIN_TAIL_S is dropped, so a file that short has none."""
     n = int(max_s * SR)
+    if len(x) < int(MIN_TAIL_S * SR):
+        return []
     if len(x) <= n:
         return [x]
     out = [x[s:s + n] for s in range(0, len(x), n)]

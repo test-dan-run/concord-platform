@@ -83,7 +83,16 @@ def test_a_tail_under_0_1_s_is_dropped():
     x = np.zeros(480016, dtype=np.float32)  # 30 s and 16 samples: the STFT cannot pad a 16-sample chunk
     assert [len(c) for c in asr_mod.chunks(x)] == [480000]
     assert [len(c) for c in asr_mod.chunks(np.zeros(481600, dtype=np.float32))] == [480000, 1600]
-    assert [len(c) for c in asr_mod.chunks(np.zeros(16, dtype=np.float32))] == [16]  # a short file is kept
+    assert [len(c) for c in asr_mod.chunks(np.zeros(1600, dtype=np.float32))] == [1600]  # a 0.1 s file is kept
+    assert asr_mod.chunks(np.zeros(1599, dtype=np.float32)) == []  # a shorter file has no pieces
+
+
+def test_a_file_under_0_1_s_gives_empty_text_without_the_model(client, model):
+    model.chunks.clear()
+    r = post(client, wav(0.001), response_format="verbose_json")  # 16 samples
+    assert r.status_code == 200 and r.json()["text"] == "" and r.json()["duration"] == 0.001
+    assert model.chunks == []
+
 
 def test_text_format(client):
     r = post(client, wav(1.0), response_format="text")

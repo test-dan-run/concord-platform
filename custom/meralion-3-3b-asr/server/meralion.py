@@ -19,7 +19,7 @@ import numpy as np
 
 SR = 16000
 MAX_CHUNK_S = 30.0  # the model is trained on <= 30 s windows
-MIN_TAIL_S = 0.1  # a shorter last chunk is dropped: no speech, yet a whole padded 30 s window
+MIN_TAIL_S = 0.1  # a shorter last chunk or file is not run: no speech, yet a whole padded 30 s window
 CHUNK_MS = int(MAX_CHUNK_S * 1000)  # the batch length of every chunk: the encoder always sees a padded 30 s window
 # from meralion_3_asr/prompts.py (0.1.0)
 ASR_CONTENT = ("Instruction: Please transcribe this speech. \n"
@@ -47,7 +47,10 @@ def decode_audio(data: bytes) -> np.ndarray:
 
 
 def chunks(x: np.ndarray, max_s: float = MAX_CHUNK_S) -> list[np.ndarray]:
+    """Pieces of at most `max_s`; a last piece under MIN_TAIL_S is dropped, so a file that short has none."""
     n = int(max_s * SR)
+    if len(x) < int(MIN_TAIL_S * SR):
+        return []
     if len(x) <= n:
         return [x]
     out = [x[s:s + n] for s in range(0, len(x), n)]
