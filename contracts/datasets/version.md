@@ -95,7 +95,8 @@ have one. The references file is matched to audio by stem, and it holds only con
 
 A speaker is a string: the apps keep speakers as strings, and `attributes.json` names them by string. A record of
 `segments.seglst.json` or `segments.jsonl` whose speaker is a number, a list, an object or true / false makes the
-version invalid. A record without a speaker, or with null, has none.
+version invalid. A record without a speaker, or with null, has none. Times are finite numbers of seconds: a record
+whose start, end or duration is NaN or infinite makes the version invalid.
 
 A version may carry any other references format that the apps' annotated upload reads, e.g. a `.stm` file from
 another tool. The catalog stores such a file unchanged. It shows segments and compares versions for the three
@@ -108,10 +109,11 @@ true / false. A nested object is read with dotted names, so `{"accent": {"region
 
 ## 5. `refs/uids.jsonl` and `refs/attributes.json`
 
-`refs/uids.jsonl` has one `{"file": path, "start", "end", "uid"}` per reference segment. It gives the writer's
-segment uid, so flags can come back to the writer. A uid is matched to a segment by file and by times within 0.01
-seconds. Each uid goes to one segment, the nearest one that has no uid yet. So when two segments have the same
-times (two speakers at once), the first of their uid lines goes to the first of them and the next line to the other.
+`refs/uids.jsonl` has one `{"file": path, "start", "end", "uid"}` per reference segment, with finite numbers for
+`start` and `end`. It gives the writer's segment uid, so flags can come back to the writer. A uid is matched to a
+segment by file and by times within 0.01 seconds. Each uid goes to one segment, the nearest one that has no uid yet.
+So when two segments have the same times (two speakers at once), the first of their uid lines goes to the first of
+them and the next line to the other.
 
 `refs/attributes.json` holds labels of whole files and of speakers, keyed by the file's path in `files.csv`:
 

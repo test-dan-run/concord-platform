@@ -103,7 +103,19 @@ def check_folder(root: Path, *, package: bool = False, hash_audio: bool = True) 
         except (ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:
             problems.append(f"refs/{found[0].name}: can't be read ({exc!r})")
         else:
-            problems += _speaker_problems(found[0].name, parsed)
+            problems += _time_problems(found[0].name, parsed) + _speaker_problems(found[0].name, parsed)
+    return problems
+
+
+def _time_problems(name: str, parsed: dict[str, Any]) -> list[str]:
+    """One problem per segment whose start or end is NaN or infinite (float() takes "nan" and "inf", and JSON readers
+    take NaN and Infinity): stored, a NaN reads back as null and breaks sorting segments by time."""
+    problems = []
+    for path, segs in (parsed["segments"] or {}).items():
+        for s in segs:
+            if not (math.isfinite(s["start"]) and math.isfinite(s["end"])):
+                problems.append(f"refs/{name}: a segment of {path} has start {s['start']!r} and end {s['end']!r}; "
+                                "times must be finite numbers")
     return problems
 
 
@@ -264,7 +276,11 @@ def _uids_problems(uids: Path, paths: set[str]) -> list[str]:
 
 
 def _number(x: object) -> bool:
-    return isinstance(x, (int, float)) and not isinstance(x, bool)
+    """A finite JSON number: not true / false, NaN, Infinity or an integer too large for a float."""
+    try:
+        return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+    except OverflowError:
+        return False
 
 
 def _labels_ok(obj: object) -> bool:
