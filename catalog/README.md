@@ -484,7 +484,9 @@ creates them. `catalog/tests/test_catalog_client.py` runs the same cases on both
 The Dataset Catalog keeps versioned datasets that Concord Bench and Concord Label both read. It runs in the
 same catalog service as the Model Catalog, on the same port, and its code is in `catalog/datasets/`. The
 design is in [../DATASET_CATALOG_PLAN.md](../DATASET_CATALOG_PLAN.md), and the version format is in
-[../contracts/datasets/version.md](../contracts/datasets/version.md).
+[../contracts/datasets/version.md](../contracts/datasets/version.md). The code for the format (the check of a
+version folder, its digest and the reading of its references) is `aicore.dataset_format`, which the service and
+`FakeDatasetCatalog` both use.
 
 - A **dataset** has a name, a language, a description, tags and numbered versions. Its id is a 32 character
   hex string.

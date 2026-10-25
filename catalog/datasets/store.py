@@ -12,7 +12,6 @@ file into place, so an app reading the mount never sees a partial file. The exte
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -26,12 +25,12 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
+from aicore.dataset_format import AUDIO_EXTS, HEX64, rel_ok, sha256_file
+
 from ..db import DB, now_iso
 from . import DatasetError
 
 log = logging.getLogger("catalog.datasets")
-HEX64 = re.compile(r"[0-9a-f]{64}")  # with fullmatch: a "$" would also match before a final newline
-AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".m4a", ".opus", ".aac", ".wma", ".webm"}
 MEDIA_TYPES = {".wav": "audio/wav", ".flac": "audio/flac", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
                ".opus": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".wma": "audio/x-ms-wma",
                ".webm": "audio/webm", ".zip": "application/zip"}
@@ -51,20 +50,6 @@ def norm_ext(ext: str | None) -> str:
     if ext and not re.fullmatch(r"[a-z0-9]{1,10}", ext):
         raise DatasetError(422, f"bad extension {ext!r}", "invalid_request")
     return f".{ext}" if ext else ""
-
-
-def rel_ok(rel: str) -> bool:
-    """A relative POSIX path without '..' (paths inside packages and zips)."""
-    p = PurePosixPath(rel)
-    return bool(rel) and not p.is_absolute() and ".." not in p.parts and "\\" not in rel
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(COPY_CHUNK), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _record(row: dict[str, Any] | None) -> dict[str, Any] | None:

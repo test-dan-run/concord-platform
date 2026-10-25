@@ -8,7 +8,9 @@ Everything lives in one folder, Settings.dataset_store (DATASET_STORE, default $
     tmp/                          uploads in progress
 
 store.py keeps the audio, versions.py the datasets and versions, refs.py reads references for the UI,
-gc.py cleans up audio nothing needs, and routes.py adds the /api routes to the catalog service's app.
+gc.py cleans up audio nothing needs, and routes.py adds the /api routes to the catalog service's app. The version
+format itself (its check, its digest and the reading of references) is aicore.dataset_format, which
+FakeDatasetCatalog in aicore.datasets uses too.
 """
 
 from __future__ import annotations

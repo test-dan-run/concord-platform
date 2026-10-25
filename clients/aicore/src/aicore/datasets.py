@@ -18,10 +18,8 @@ service. `FakeDatasetCatalog` has the same methods, in memory and in a folder, f
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import os
-import re
 import shutil
 import tempfile
 import time
@@ -37,6 +35,8 @@ from typing import IO, Any
 import httpx
 
 from .catalog import DEFAULT_URL, CatalogError
+from .dataset_format import (AUDIO_EXTS, FILES_HEADER, FORMAT, FORMAT_VERSION, HEX64, INSTALL_ID, check_folder, digest,
+                             file_summary, parse, read_files_csv, rel_ok, sha256_file)
 from .endpoints import catalog_url
 
 CHUNK_BYTES = 16 << 20  # upload chunk
@@ -52,14 +52,6 @@ def store_path() -> Path:
     """The mounted store: DATASET_STORE, else ${AI_DATA}/datasets, else ~/ai-data/datasets."""
     data = Path(os.environ.get("AI_DATA") or Path.home() / "ai-data").expanduser()
     return Path(os.environ.get("DATASET_STORE") or data / "datasets").expanduser()
-
-
-def sha256_file(path: str | Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 # ----------------------------------------------------------------------------- errors
@@ -334,25 +326,8 @@ class DatasetCatalog(_Mount):
 
 # ----------------------------------------------------------------------------- the fake
 
-FORMAT = "concord-reference-package"
-FORMAT_VERSIONS = (1, 2, 3)
-LABEL_TYPES = ("asr", "diar")
-MANIFEST_REQUIRED = ("format", "format_version", "name", "created_at", "label_types", "counts", "audio_included")
-FILES_HEADER = ["path", "sha256", "duration", "sample_rate"]
-CATALOG_FIELDS = ("source", "export_version", "created_at", "audio_included")  # left out of the digest
-SIDE_FILES = ("uids.jsonl", "attributes.json")
-AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".m4a", ".opus", ".aac", ".wma", ".webm"}
-HEX64 = re.compile(r"[0-9a-f]{64}")  # with fullmatch: a "$" would also match before a final newline
-INSTALL_ID = "dataset-catalog"
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _rel_ok(rel: str) -> bool:
-    p = PurePosixPath(rel)
-    return bool(rel) and not p.is_absolute() and ".." not in p.parts and "\\" not in rel
 
 
 def _ext(ext: str | None) -> str:
@@ -362,150 +337,6 @@ def _ext(ext: str | None) -> str:
 
 def _json(obj: Any) -> str:
     return json.dumps(obj, indent=1, ensure_ascii=False) + "\n"
-
-
-def _read_csv(root: Path) -> list[dict[str, str]]:
-    with open(root / "files.csv", newline="", encoding="utf-8") as fh:
-        return list(csv.DictReader(fh))
-
-
-def _refs_files(root: Path, side: Iterable[str] = SIDE_FILES) -> list[Path]:
-    d = root / "refs"
-    return sorted(p for p in d.iterdir() if p.is_file() and p.name not in side) if d.is_dir() else []
-
-
-def digest(root: Path) -> str:
-    """A version's digest, as the catalog computes it: sha256 over manifest.json (canonical JSON without the
-    catalog's fields), files.csv and the refs/ files by name, each as `<name>\\n<length>\\n<bytes>`."""
-    parts = [("manifest.json", root / "manifest.json"), ("files.csv", root / "files.csv")]
-    if (root / "refs").is_dir():
-        parts += [(f"refs/{p.name}", p) for p in sorted((root / "refs").iterdir(), key=lambda p: p.name) if p.is_file()]
-    h = hashlib.sha256()
-    for name, path in parts:
-        data = path.read_bytes()
-        if name == "manifest.json":
-            m = {k: v for k, v in json.loads(data).items() if k not in CATALOG_FIELDS}
-            data = json.dumps(m, sort_keys=True, separators=(",", ":")).encode()
-        h.update(f"{name}\n{len(data)}\n".encode())
-        h.update(data)
-    return h.hexdigest()
-
-
-def check_folder(root: Path) -> list[str]:
-    """The main rules of the version format (contracts/datasets/version.md), for the fake. The catalog checks more:
-    refs/attributes.json, refs/uids.jsonl and that the references file can be read."""
-    if not (root / "manifest.json").is_file():
-        return ["no manifest.json"]
-    try:
-        m = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-    except ValueError as exc:
-        return [f"manifest.json is not JSON: {exc}"]
-    if not isinstance(m, dict):
-        return ["manifest.json must be an object"]
-    problems = [f"manifest.json: missing {k}" for k in MANIFEST_REQUIRED if k not in m]
-    if m.get("format") != FORMAT:
-        problems.append(f"manifest.json: format {m.get('format')!r}")
-    version = m.get("format_version")
-    if version not in FORMAT_VERSIONS:
-        problems.append(f"manifest.json: format_version {version!r}")
-    types = m.get("label_types")
-    if not isinstance(types, list) or not set(types) <= set(LABEL_TYPES) or (not types and version != 3):
-        problems.append(f"manifest.json: label_types {types!r}")
-    types = types if isinstance(types, list) else []
-    if m.get("audio_included") not in ("all", "partial", "none"):
-        problems.append(f"manifest.json: audio_included {m.get('audio_included')!r}")
-    rows: list[dict[str, str]] = []
-    if not (root / "files.csv").is_file():
-        problems.append("files.csv missing")
-    else:
-        with open(root / "files.csv", newline="", encoding="utf-8") as fh:
-            reader = csv.DictReader(fh)
-            if reader.fieldnames != FILES_HEADER:
-                problems.append(f"files.csv: header {reader.fieldnames}")
-            rows = list(reader)
-    stems: dict[str, str] = {}
-    included = 0
-    for r in rows:
-        rel = r.get("path") or ""
-        if not _rel_ok(rel):
-            problems.append(f"files.csv: bad path {rel!r}")
-            continue
-        stem = PurePosixPath(rel).stem.lower()
-        if stem in stems:
-            problems.append(f"files.csv: stem of {rel} repeats {stems[stem]}")
-        stems[stem] = rel
-        if not HEX64.fullmatch(r.get("sha256") or ""):
-            problems.append(f"files.csv: sha256 of {rel}")
-        for k, cast in (("duration", float), ("sample_rate", int)):
-            try:
-                cast(r.get(k) or "")
-            except ValueError:
-                problems.append(f"files.csv: {k} of {rel} is {r.get(k)!r}")
-        included += (root / "audio" / rel).is_file()
-    counts = m.get("counts") if isinstance(m.get("counts"), dict) else {}
-    if counts.get("files") != len(rows):
-        problems.append(f"manifest.json: counts.files {counts.get('files')} but files.csv has {len(rows)} rows")
-    want = {"all": len(rows), "none": 0}.get(m.get("audio_included"))
-    if want is not None and included != want:
-        problems.append(f"audio_included is {m.get('audio_included')!r} but {included} of {len(rows)} files "
-                        "are in audio/")
-    side = ("uids.jsonl",) if version == 1 else SIDE_FILES
-    found = _refs_files(root, side)
-    if types and len(found) != 1:
-        problems.append(f"refs/ must hold exactly one references file besides {' and '.join(sorted(side))} "
-                        f"(found {len(found)})")
-    if not types and (root / "refs").is_dir() and any((root / "refs").iterdir()):
-        problems.append("refs/ must be empty when label_types is empty (a version with audio only)")
-    return problems
-
-
-def _flatten(labels: Any, prefix: str = "") -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for k, v in (labels.items() if isinstance(labels, dict) else ()):
-        out.update(_flatten(v, f"{prefix}{k}.") if isinstance(v, dict) else {f"{prefix}{k}": v})
-    return out
-
-
-def _segments(path: Path) -> list[tuple[str, str | None, dict[str, Any]]] | None:
-    """(file, speaker, labels) per segment of a references file in a format the catalog reads; None for others."""
-    name, text = path.name.lower(), path.read_text(encoding="utf-8")
-    if name.endswith(".jsonl"):
-        recs = [json.loads(line) for line in text.splitlines() if line.strip()]
-        return [(r["file"], r.get("speaker"), _flatten(r.get("attributes"))) for r in recs]
-    if name.endswith(".json"):
-        data = json.loads(text)
-        if not isinstance(data, list) or not all(isinstance(r, dict) and "session_id" in r for r in data):
-            return None
-        return [(r["session_id"], r.get("speaker"), _flatten(r.get("attributes"))) for r in data]
-    if name.endswith(".rttm"):
-        return [(f[1], f[7], {}) for f in map(str.split, text.splitlines()) if len(f) >= 8 and f[0] == "SPEAKER"]
-    if name.endswith(".stm"):
-        rows = [line.split(maxsplit=5) for line in text.splitlines() if line.strip() and not line.startswith(";;")]
-        return [(f[0], f[2], {}) for f in rows if len(f) >= 5]
-    return None
-
-
-def _read_refs(root: Path, paths: list[str]) -> dict[str, Any]:
-    """Per file: segment count and speakers (None for a format the catalog doesn't read), file labels; and the sorted
-    names of every label, as the catalog reports them."""
-    by_key = {p: p for p in paths} | {PurePosixPath(p).stem.lower(): p for p in paths}
-    rf = _refs_files(root)
-    records = _segments(rf[0]) if rf else None
-    segs: dict[str, list[tuple[str | None, dict[str, Any]]]] | None = None
-    if records is not None:
-        segs = {p: [] for p in paths}
-        for key, speaker, labels in records:
-            p = by_key.get(key) or by_key.get(PurePosixPath(key).stem.lower())
-            if p is not None:
-                segs[p].append((speaker, labels))
-    attrs_path = root / "refs" / "attributes.json"
-    attrs = json.loads(attrs_path.read_text(encoding="utf-8")) if attrs_path.is_file() else {}
-    file_labels = {p: _flatten(v) for p, v in (attrs.get("files") or {}).items()}
-    names = {k for v in file_labels.values() for k in v}
-    names |= {f"speaker.{k}" for spks in (attrs.get("speakers") or {}).values() for v in spks.values()
-              for k in _flatten(v)}
-    names |= {k for v in (segs or {}).values() for _, labels in v for k in labels}
-    return {"segments": segs, "file_labels": file_labels, "labels": sorted(names)}
 
 
 def _probe(path: Path) -> dict[str, Any]:
@@ -658,14 +489,8 @@ class FakeDatasetCatalog(_Mount):
 
     def files(self, dataset_id: str, n: int) -> list[dict[str, Any]]:
         row = self._row(dataset_id, n)
-        refs = _read_refs(self.version_dir(dataset_id, n), [f["path"] for f in row["files"]])
-        out = []
-        for f in row["files"]:
-            segs = None if refs["segments"] is None else refs["segments"].get(f["path"], [])
-            out.append({**f, "segments": None if segs is None else len(segs),
-                        "speakers": None if segs is None else sorted({s for s, _ in segs if s is not None}),
-                        "labels": refs["file_labels"].get(f["path"], {})})
-        return out
+        parsed = parse(self.version_dir(dataset_id, n))
+        return [{**f, **file_summary(parsed, f["path"])} for f in row["files"]]
 
     def publish(self, dataset_id: str, folder: str | Path, parent: int | None = None, *,
                 force: bool = False) -> dict[str, Any]:
@@ -673,25 +498,25 @@ class FakeDatasetCatalog(_Mount):
         return self._publish(self._ds(dataset_id), Path(folder), parent, force)
 
     def _publish(self, ds: dict[str, Any], root: Path, parent: int | None, force: bool) -> dict[str, Any]:
-        problems = check_folder(root)
+        """The catalog's publish (catalog/datasets/versions.py) on a folder: the same check, rules and messages."""
+        problems = check_folder(root, package=True, hash_audio=False)
         if problems:
             raise _error(422, "the version is invalid: " + "; ".join(problems[:10]), "invalid_version",
                          problems=problems)
-        manifest, rows = json.loads((root / "manifest.json").read_text(encoding="utf-8")), _read_csv(root)
+        manifest, rows = json.loads((root / "manifest.json").read_text(encoding="utf-8")), read_files_csv(root)
         for r in rows:  # a folder with audio/ (a reference package) adds its audio to the store
-            if (root / "audio" / r["path"]).is_file():
-                self._put(root / "audio" / r["path"], PurePosixPath(r["path"]).suffix, r["sha256"])
+            src = root / "audio" / r["path"]
+            if src.is_file():
+                actual = sha256_file(src)
+                if actual != r["sha256"]:
+                    raise _error(422, f"{src.name}: the bytes hash to {actual}, not {r['sha256']}", "hash_mismatch",
+                                 actual=actual)
+                self._put(src, PurePosixPath(r["path"]).suffix)
         d = digest(root)
         latest = self._latest(ds["id"])
         if latest and latest["digest"] == d:
             return {**self._version(latest), "created": False}
-        if parent is not None and not 1 <= parent <= ds["last_n"]:
-            raise _error(422, f"dataset {ds['id']} never had a version {parent}", "invalid_request")
-        latest_n = latest["n"] if latest else None
-        if parent != latest_n and not force:
-            raise _error(409, f"the version is based on {f'v{parent}' if parent else 'no version'}, but the latest "
-                              f"version is {f'v{latest_n}' if latest_n else 'none'}; publish with force to keep it",
-                         "stale_parent", latest=self._version(latest) if latest else None)
+        self._check_parent(ds, latest, parent, force)
         missing = list(dict.fromkeys(r["sha256"] for r in rows if r["sha256"] not in self._audio))
         if missing:
             raise _error(422, f"{len(missing)} audio files are not in the store", "missing_audio", missing=missing)
@@ -699,23 +524,50 @@ class FakeDatasetCatalog(_Mount):
         manifest.update({"source": {"app": self.app, "install_id": INSTALL_ID, "dataset_uid": ds["id"],
                                     "dataset_name": ds["name"]},
                          "export_version": n, "created_at": now, "audio_included": "none"})
-        dest = self.version_dir(ds["id"], n)
-        (dest / "refs").mkdir(parents=True)
-        (dest / "manifest.json").write_text(_json(manifest), encoding="utf-8")
-        shutil.copyfile(root / "files.csv", dest / "files.csv")
-        for p in _refs_files(root, ()):
-            shutil.copyfile(p, dest / "refs" / p.name)
-        if not any((dest / "refs").iterdir()):
-            (dest / "refs").rmdir()
+        labels = self._write_folder(self.version_dir(ds["id"], n), root, manifest)
         files = [{"path": r["path"], "sha256": r["sha256"], "duration": float(r["duration"]),
                   "sample_rate": int(r["sample_rate"])} for r in sorted(rows, key=lambda r: r["path"])]
         self._versions[(ds["id"], n)] = {
             "dataset_id": ds["id"], "n": n, "parent_n": parent, "digest": d,
             "format_version": manifest.get("format_version"), "label_types": manifest["label_types"],
-            "labels": _read_refs(dest, [f["path"] for f in files])["labels"], "counts": manifest["counts"],
+            "labels": labels, "counts": manifest["counts"],
             "published_by": self.app, "published_at": now, "manifest": manifest, "files": files}
         ds.update(last_n=n, updated_at=now)
         return {**self.version(ds["id"], n), "created": True}
+
+    def _check_parent(self, ds: dict[str, Any], latest: dict[str, Any] | None, parent: int | None,
+                      force: bool) -> None:
+        if parent is not None and not 1 <= parent <= ds["last_n"]:
+            raise _error(422, f"dataset {ds['id']} never had a version {parent}", "invalid_request")
+        latest_n = latest["n"] if latest else None
+        if parent == latest_n or force:
+            return
+        if parent is not None and (ds["id"], parent) not in self._versions:
+            msg = f"v{parent} was deleted"
+        else:
+            msg = f"the version is based on {f'v{parent}' if parent else 'no version'}"
+        msg += f", but the latest version is {f'v{latest_n}' if latest_n else 'none'}; publish with force to keep it"
+        raise _error(409, msg, "stale_parent", latest=self._version(latest) if latest else None)
+
+    def _write_folder(self, dest: Path, src: Path, manifest: dict[str, Any]) -> list[str]:
+        """Write a version folder from a checked one, through a temporary folder renamed into place, so a failure
+        leaves nothing behind. The label names its references carry."""
+        tmp = Path(tempfile.mkdtemp(prefix="version-", dir=self.store / "tmp"))
+        try:
+            (tmp / "refs").mkdir()
+            (tmp / "manifest.json").write_text(_json(manifest), encoding="utf-8")
+            shutil.copyfile(src / "files.csv", tmp / "files.csv")
+            if (src / "refs").is_dir():
+                for p in (src / "refs").iterdir():
+                    shutil.copyfile(p, tmp / "refs" / p.name)
+            if not any((tmp / "refs").iterdir()):
+                (tmp / "refs").rmdir()
+            labels = parse(tmp)["labels"]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, dest)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return labels
 
     def publish_audio(self, dataset_id: str, files: FilesArg, parent: int | None = None, *,
                       force: bool = False) -> dict[str, Any]:
@@ -736,7 +588,7 @@ class FakeDatasetCatalog(_Mount):
         missing, unreadable = [], []
         for f in files:
             path, sha = f["path"] or "", f["sha256"]
-            if not _rel_ok(path) or PurePosixPath(path).suffix.lower() not in AUDIO_EXTS:
+            if not rel_ok(path) or PurePosixPath(path).suffix.lower() not in AUDIO_EXTS:
                 raise _error(422, f"bad path {path!r}", "invalid_request")
             if path in by_path:
                 if by_path[path]["sha256"] != sha:
@@ -760,7 +612,7 @@ class FakeDatasetCatalog(_Mount):
         if unreadable:
             raise _error(422, f"ffprobe can't read {len(unreadable)} files", "unreadable_audio", unreadable=unreadable)
         rows = sorted(by_path.values(), key=lambda r: r["path"])
-        manifest = {"format": FORMAT, "format_version": 3, "name": ds["name"], "created_at": _now(),
+        manifest = {"format": FORMAT, "format_version": FORMAT_VERSION, "name": ds["name"], "created_at": _now(),
                     **{k: ds[k] for k in ("language", "description") if ds[k]}, "tags": list(ds["tags"]),
                     "label_types": [],
                     "counts": {"files": len(rows), "segments": 0,
@@ -816,7 +668,8 @@ class FakeDatasetCatalog(_Mount):
     def _put(self, src: Path, ext: str | None, sha: str | None = None, **probe: Any) -> str:
         actual = sha256_file(src)
         if sha is not None and actual != sha:
-            raise _error(422, f"the uploaded bytes hash to {actual}, not {sha}", "hash_mismatch", actual=actual)
+            raise _error(422, f"the uploaded bytes hash to {actual}, not {sha}; the upload was removed",
+                         "hash_mismatch", actual=actual)
         if actual not in self._audio:
             dest = self.audio_path(actual)
             dest.parent.mkdir(parents=True, exist_ok=True)

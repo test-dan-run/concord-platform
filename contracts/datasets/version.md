@@ -15,7 +15,8 @@ Times are seconds as JSON numbers. Timestamps are ISO 8601 in UTC with a `Z`. Pa
 without `..`. JSON files are UTF-8.
 
 The sample versions are in [samples/](samples/), and `just validate` checks them with `check_folder` in
-`catalog/datasets/versions.py`. The catalog runs the same check on every version it receives.
+`clients/aicore/src/aicore/dataset_format.py` (`aicore.dataset_format`). The catalog runs the same check on every
+version it receives, and so does `FakeDatasetCatalog`, the fake the apps test with.
 
 | Sample | What it shows |
 |---|---|
