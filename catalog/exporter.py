@@ -397,20 +397,21 @@ class Exporter:
         path = Path(row["path"] or "")
         if row["state"] != "done" or not path.is_dir():
             raise SchedulerError(409 if row["state"] in LIVE else 410, f"export {job_id} has no bundle to download")
-        r, w = os.pipe()
-
-        def writer() -> None:
-            with os.fdopen(w, "wb", buffering=1 << 20) as fh:
-                try:
-                    with tarfile.open(fileobj=fh, mode="w|", format=tarfile.PAX_FORMAT) as tar:
-                        tar.add(path, arcname=path.name)
-                except (BrokenPipeError, OSError):  # the client went away
-                    pass
-
-        threading.Thread(target=writer, daemon=True, name=f"download-{job_id}").start()
+        def writer(w: int) -> None:
+            try:
+                with os.fdopen(w, "wb", buffering=1 << 20) as fh, \
+                        tarfile.open(fileobj=fh, mode="w|", format=tarfile.PAX_FORMAT) as tar:
+                    tar.add(path, arcname=path.name)
+            except BrokenPipeError:  # the client went away
+                pass
+            except Exception as exc:  # noqa: BLE001 - e.g. the bundle was deleted while it streamed
+                log.warning("download of export %s stopped, so the client got a cut-off .tar: %s", job_id, exc)
 
         def chunks() -> Iterator[bytes]:
-            with os.fdopen(r, "rb") as fh:
+            # the pipe and the writer are made on the first read, so a response that never starts holds neither
+            r, w = os.pipe()
+            with os.fdopen(r, "rb") as fh:  # closed when the client goes away too, which stops the writer
+                threading.Thread(target=writer, args=(w,), daemon=True, name=f"download-{job_id}").start()
                 while block := fh.read(1 << 20):
                     yield block
 
