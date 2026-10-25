@@ -177,7 +177,7 @@ because a rebuilt image can use memory differently.
 | Call | What it does |
 |---|---|
 | `POST /api/models/{id}/batch-profile` | Queues a measurement. 202 with `measuring` (`pending` or `running`). |
-| `GET /api/models/{id}/batch?vram_gb=24&item_s=20&n=8` | The current build's profile and a `table` of item lengths against 16, 24 and 32 GB and the full budget. With `item_s` (or `item_tokens` for vLLM), `recommendation` is the largest batch for `vram_gb` (default: the full budget). With `n` too, `need` is the memory that batch needs. |
+| `GET /api/models/{id}/batch?vram_gb=24&item_s=20&n=8` | The current build's profile and a `table` of item lengths against 16, 24 and 32 GB and the full budget. With `item_s` (or `item_tokens` for vLLM), `recommendation` is the largest batch for `vram_gb` (default: the full budget). With `n` too, `need` is the memory that batch needs. A length in the other unit, or an audio length over `batch.max_item_s` (the server splits it), gives a `note` instead of both. |
 
 For a custom audio image, the measurement takes a lease (holder `catalog:batch`), so it waits its turn.
 It lifts the server's batch limits (`POST /platform/batch-limits` in `aisvc`), resets the peak, and sends

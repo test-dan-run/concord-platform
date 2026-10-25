@@ -241,8 +241,8 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
                 bk = cat.builds.current(p, p.get(model_id), None).build_key
             except Exception:  # noqa: BLE001
                 bk = None
-        item = item_tokens if item_tokens is not None else item_s
-        return cat.profiler.view(model_id, bk, vram_gb=vram_gb, item=item, n=n, full_gib=full_budget_gib(p, sched))
+        return cat.profiler.view(model_id, bk, vram_gb=vram_gb, item_s=item_s, item_tokens=item_tokens, n=n,
+                                 full_gib=full_budget_gib(p, sched))
 
     @app.post("/api/models/{model_id}/batch-profile", status_code=202)
     def batch_profile(model_id: str) -> dict[str, Any]:

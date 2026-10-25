@@ -164,13 +164,29 @@ def test_batch_api_without_and_with_a_profile(cat):
 
         cat.profiler._save("wavlm-sv", "bk1", "measured",
                            Profile(kind="audio", base=TRUE[0], a=TRUE[1], b=TRUE[2], max_item_s=20.0), None)
-        v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item=20.0, n=8, full_gib=29.76)
+        v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item_s=20.0, item_tokens=None, n=8, full_gib=29.76)
         assert v["recommendation"]["batch"] == Profile(kind="audio", base=TRUE[0], a=TRUE[1],
                                                        b=TRUE[2]).recommend(24.0, 20.0)
         assert v["need"]["vram_gb"] == pytest.approx(peak(8, 20.0) / 0.9, abs=0.01)
         assert v["table"]["rows"][0]["length"] == 5.0
         assert cat.profiler.start_env("wavlm-sv", "bk1", 24.0)["AISVC_MAX_BATCH"]
         assert cat.profiler.start_env("wavlm-sv", "other-build", 24.0) == {}
+
+
+def test_a_recommendation_needs_a_length_in_the_profiles_unit_and_range(cat):
+    kv = Profile(kind="kv", kv_tokens=200_000, kv_gib=20.0, fixed_gib=5.0)
+    cat.profiler._save("qwen3-8b", "bk-kv", "measured", kv, None)
+    v = cat.profiler.view("qwen3-8b", "bk-kv", vram_gb=None, item_s=20.0, item_tokens=None, n=8, full_gib=29.76)
+    assert "recommendation" not in v and "need" not in v and "item_tokens" in v["note"]  # not 20 tokens
+    v = cat.profiler.view("qwen3-8b", "bk-kv", vram_gb=None, item_s=20.0, item_tokens=1024, n=None, full_gib=29.76)
+    assert v["recommendation"]["batch"] == kv.recommend(29.76, 1024) and "note" not in v
+
+    cat.profiler._save("wavlm-sv", "bk1", "measured",
+                       Profile(kind="audio", base=TRUE[0], a=TRUE[1], b=TRUE[2], max_item_s=15.0), None)
+    v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item_s=20.0, item_tokens=1024, n=8, full_gib=29.76)
+    assert "recommendation" not in v and "need" not in v and "15 s" in v["note"]
+    v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item_s=15.0, item_tokens=None, n=None, full_gib=29.76)
+    assert v["recommendation"]["unit"] == "s" and "note" not in v
 
 
 def test_a_start_passes_the_batch_limits_and_records_memory_before(cat, runtime):

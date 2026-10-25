@@ -607,8 +607,8 @@ class BatchProfiler:
 
     # -- the API view
 
-    def view(self, model: str, build_key: str | None, *, vram_gb: float | None, item: float | None,
-             n: int | None, full_gib: float | None) -> dict[str, Any]:
+    def view(self, model: str, build_key: str | None, *, vram_gb: float | None, item_s: float | None,
+             item_tokens: int | None, n: int | None, full_gib: float | None) -> dict[str, Any]:
         row = self.stored(build_key) if build_key else None
         out: dict[str, Any] = {"model": model, "build_key": build_key, "measuring": self.status(model),
                                "status": row["status"] if row else "none", "error": row["error"] if row else None,
@@ -619,6 +619,14 @@ class BatchProfiler:
         out["profile"] = prof.to_json()
         out["table"] = table(prof, full_gib)
         unit = "tokens" if prof.kind == "kv" else "s"
+        # a length in the other unit is no length for this profile (aicore and `just batch` default to 20 s)
+        item = item_tokens if prof.kind == "kv" else item_s
+        if item is None and (item_s if prof.kind == "kv" else item_tokens) is not None:
+            out["note"] = f"this profile counts items in {unit}: give item_{'tokens' if unit == 'tokens' else 's'}"
+        elif item is not None and prof.kind == "audio" and prof.max_item_s and item > prof.max_item_s:
+            # the server splits a longer item into pieces of its own, so one item of `item` s is not one row
+            out["note"] = f"items over {prof.max_item_s:g} s are split by the server: give item_s of at most that"
+            item = None
         if item is not None:
             v = vram_gb or full_gib
             if v:
