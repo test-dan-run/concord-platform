@@ -241,7 +241,8 @@ class Exporter:
         self.events.publish("export", self.public(row) if row else {"id": job_id, "state": "deleted"})
 
     def _remove(self, path: str | None) -> None:
-        if path and Path(path).exists() and Path(self.settings.export_dir) in Path(path).resolve().parents:
+        """Remove a bundle folder, only under the export dir (both resolved: it may be a symlink or relative)."""
+        if path and Path(path).exists() and Path(self.settings.export_dir).resolve() in Path(path).resolve().parents:
             shutil.rmtree(path, ignore_errors=True)
 
     def _run(self, job_id: str) -> None:
