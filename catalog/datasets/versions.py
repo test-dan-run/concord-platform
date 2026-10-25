@@ -46,10 +46,8 @@ CATALOG_APP = "dataset-catalog"
 def check_samples(folder: Path | None = None) -> list[str]:
     """Problems with the sample versions in contracts/datasets/samples (`just validate`): each one is a version
     as the catalog stores it, so it also has its source and export_version."""
-    if folder is None:
-        from tools.schema import PLATFORM_DIR
-
-        folder = PLATFORM_DIR / "contracts" / "datasets" / "samples"
+    if folder is None:  # the platform checkout this file is in
+        folder = Path(__file__).resolve().parents[2] / "contracts" / "datasets" / "samples"
     samples = sorted(p for p in folder.iterdir() if p.is_dir())
     problems = [] if samples else [f"no sample versions in {folder}"]
     for d in samples:
