@@ -101,7 +101,8 @@ true / false. A nested object is read with dotted names, so `{"accent": {"region
 
 `refs/uids.jsonl` has one `{"file": path, "start", "end", "uid"}` per reference segment. It gives the writer's
 segment uid, so flags can come back to the writer. A uid is matched to a segment by file and by times within 0.01
-seconds.
+seconds. Each uid goes to one segment, the nearest one that has no uid yet. So when two segments have the same
+times (two speakers at once), the first of their uid lines goes to the first of them and the next line to the other.
 
 `refs/attributes.json` holds labels of whole files and of speakers, keyed by the file's path in `files.csv`:
 

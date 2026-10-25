@@ -384,6 +384,15 @@ def refs_file(root: Path, side: set[str] | None = None) -> Path | None:
     return files[0] if files else None
 
 
+def _take_uid(segs: list[dict[str, Any]], u: dict[str, Any]) -> None:
+    """Give uid record `u` to the nearest of a file's segments within UID_TOLERANCE_S that has no uid yet, as Concord
+    Bench does, so each uid names one segment even when two speakers' segments have the same times."""
+    free = [s for s in segs if s["uid"] is None
+            and abs(s["start"] - u["start"]) <= UID_TOLERANCE_S and abs(s["end"] - u["end"]) <= UID_TOLERANCE_S]
+    if free:
+        min(free, key=lambda s: abs(s["start"] - u["start"]) + abs(s["end"] - u["end"]))["uid"] = u["uid"]
+
+
 def parse(root: Path) -> dict[str, Any]:
     """A version folder's references: segments per file path (None for a format the catalog doesn't read), file and
     speaker labels, and the sorted names of every label."""
@@ -407,10 +416,7 @@ def parse(root: Path) -> dict[str, Any]:
         for line in uids.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 u = json.loads(line)
-                for s in segs.get(u["file"], []):
-                    if abs(s["start"] - u["start"]) <= UID_TOLERANCE_S and abs(s["end"] - u["end"]) <= UID_TOLERANCE_S:
-                        s["uid"] = u["uid"]
-                        break
+                _take_uid(segs.get(u["file"], []), u)
     attrs_path = root / "refs" / "attributes.json"
     attrs = json.loads(attrs_path.read_text(encoding="utf-8")) if "attributes.json" in side and attrs_path.is_file() \
         else {}
