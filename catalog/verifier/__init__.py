@@ -24,7 +24,7 @@ from tools import render
 
 from ..db import DB, dumps, now_iso
 from ..hosted import redact, redact_all
-from ..scheduler import Scheduler, SchedulerError
+from ..scheduler import LeaseLost, Scheduler, SchedulerError
 from . import probes
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("catalog.verifier")
 HOLDER = "catalog:verify"
 SCAN_S = 10.0
-BUILD_WAIT_S = 30 * 60.0  # weights hashing of a large model after its first start
+BUILD_WAIT_S = 30 * 60.0  # an active lease's model whose weights are hashed again (they changed)
 
 
 class Verifier:
@@ -120,9 +120,7 @@ class Verifier:
             m = row["model_id"]
             if m in hosted:
                 continue
-            with self.scheduler.lock:
-                run = self.scheduler.runs.get(m)
-                bk = run.build.build_key if run and run.build else None
+            bk = self.scheduler.build_key(m)
             if bk and not self.db.one("SELECT 1 FROM capability WHERE build_key = ?", (bk,)):
                 self.enqueue(m)
 
@@ -137,12 +135,7 @@ class Verifier:
 
     def _store_failure(self, model: str, reason: str) -> None:
         h = self.hosted.get(model) if self.hosted and model in self.hosted else None
-        if h is not None:
-            bk = h.build_key
-        else:
-            with self.scheduler.lock:
-                run = self.scheduler.runs.get(model)
-                bk = run.build.build_key if run and run.build else None
+        bk = h.build_key if h is not None else self.scheduler.build_key(model)
         if bk:
             self._store(model, bk, "failed", None, {"ok": False, "lines": [{"name": "verification", "status": "fail",
                                                                            "reason": reason}], "sample": {}}, None)
@@ -156,58 +149,22 @@ class Verifier:
         sched = self.scheduler
         log.info("verifying %s", model)
         try:
-            req = sched.request(HOLDER, [model])
-        except SchedulerError as exc:
-            self._store_failure(model, str(exc))
-            return
-        try:
-            while True:  # wait for the lease, heartbeating; the queue may take a while
-                r = sched.heartbeat(req.id)
-                if r.state == "active":
-                    break
-                if self._stop.wait(2.0):
+            # The queue may take a while; the build key needs the running container's image and the weights hash.
+            with sched.hold(HOLDER, model, self._stop, build_wait_s=BUILD_WAIT_S) as held:
+                if held is None:
                     return
-            deadline = time.monotonic() + BUILD_WAIT_S
-            while True:  # the build key needs the running container's image and the weights hash
-                with sched.lock:
-                    build = sched.runs[model].build
-                if build and build.build_key:
-                    break
-                if time.monotonic() > deadline:
-                    self._store_failure(model, f"no build key: {build.pending if build else 'unknown'}")
-                    return
-                sched.heartbeat(req.id)
-                sched.wake()
-                if self._stop.wait(3.0):
-                    return
-            p = sched.platform()
-            meta = render.endpoint_entry(p, p.get(model))
-            beat = threading.Event()
-
-            def keep_alive() -> None:
-                while not beat.wait(20):
-                    try:
-                        sched.heartbeat(req.id)
-                    except SchedulerError:
-                        return
-
-            t = threading.Thread(target=keep_alive, daemon=True)
-            t.start()
-            try:
+                p = sched.platform()
+                meta = render.endpoint_entry(p, p.get(model))
                 rep = probes.verify(meta, sched.upstream_url(model))
-            finally:
-                beat.set()
-            audio, _, _ = probes.clip()
-            record = rep.record(len(audio) / 16000)
-            self._store(model, build.build_key, "verified" if rep.ok else "failed", record, rep.report(), record["rtf"])
-            log.info("%s %s (%s)", model, "verified" if rep.ok else "failed verification", build.build_key)
-        except SchedulerError as exc:
+                audio, _, _ = probes.clip()
+                record = rep.record(len(audio) / 16000)
+                self._store(model, held.build_key, "verified" if rep.ok else "failed", record, rep.report(),
+                            record["rtf"])
+                log.info("%s %s (%s)", model, "verified" if rep.ok else "failed verification", held.build_key)
+        except LeaseLost as exc:
             self._store_failure(model, f"lease lost: {exc}")
-        finally:
-            r = sched.get(req.id)
-            if r.state == "failed":
-                self._store_failure(model, f"could not start: {r.error}")
-            sched.release(req.id)
+        except SchedulerError as exc:  # refused, "could not start: ..." or "no build key: ..."
+            self._store_failure(model, str(exc))
 
     def run_hosted(self, h: Hosted) -> None:
         """No lease, no build wait: the probes run against the provider with the stored key."""

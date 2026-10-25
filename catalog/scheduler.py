@@ -24,6 +24,8 @@ have no container, so they are granted at once and never wait in the queue.
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import json
 import logging
 import queue
@@ -31,7 +33,7 @@ import statistics
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,6 +51,7 @@ log = logging.getLogger("catalog.scheduler")
 LIVE = ("queued", "starting", "active")
 STOP_RETRY_S = 5.0  # a spin-down stop that failed twice waits this long before the next try, doubling each time
 STOP_RETRY_MAX_S = 300.0
+HOLD_BEAT_S = 20.0  # hold(): how often a job's lease is heartbeaten while the job runs
 
 
 def stop_retry_s(failures: int) -> float:
@@ -65,6 +68,10 @@ class SchedulerError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+class LeaseLost(SchedulerError):
+    """hold(): the lease ended (expired or released) while the job waited for it; the heartbeat's message."""
 
 
 @dataclass
@@ -118,6 +125,14 @@ class Run:
     gpu_used_before: float | None = None  # GiB the device had in use just before its start (batch measurement)
     batch: dict[str, str] | None = None  # AISVC_MAX_BATCH / _LEN its start was given ({}: the image's defaults)
     gen: int = 0  # Scheduler._gen at the starter's last change to running, starting or stopping
+
+
+@dataclass(frozen=True)
+class Held:
+    """What hold() yields: the lease's id and the model's build key when the lease became active."""
+
+    rid: str
+    build_key: str
 
 
 @dataclass
@@ -840,6 +855,70 @@ class Scheduler:
         with self.lock:
             return self._live()
 
+    # ------------------------------------------------------------------------- the catalog's own jobs
+
+    @contextlib.contextmanager
+    def hold(self, holder: str, model: str, stop: threading.Event, *, wait_s: float | None = None,
+             build_wait_s: float | None = None) -> Iterator[Held | None]:
+        """Lease one model for a job of the catalog's own (verification, a batch profile), as an app would.
+
+        The lease waits its turn in the queue, heartbeaten, until it is active and the model's build has a key.
+        The job then runs while a thread heartbeats the lease, and the lease is released on exit. Yields None
+        when `stop` is set first. Raises SchedulerError when the lease is refused, and with these messages:
+        - "could not start: <the request's error>" when the lease fails (checked again when the job ends
+          without an error)
+        - "no build key after <wait_s> min" when it is not active with a build key `wait_s` after the request
+        - "no build key: <why>" when an active lease's model has had no build key for `build_wait_s`
+        LeaseLost, a SchedulerError, when the lease ends otherwise while it waits. A limit of None: no limit."""
+        r = self.request(holder, [model])
+        done = threading.Event()
+        try:
+            held = self._wait_active(r.id, model, stop, wait_s, build_wait_s)
+            threading.Thread(target=self._keep_alive, args=(r.id, done), daemon=True).start()
+            yield held
+            r = self.get(r.id)
+            if r.state == "failed":  # the model crashed under the job and could not start again
+                raise SchedulerError(409, f"could not start: {r.error}")
+        finally:
+            done.set()
+            self.release(r.id)
+
+    def _wait_active(self, rid: str, model: str, stop: threading.Event, wait_s: float | None,
+                     build_wait_s: float | None) -> Held | None:
+        """hold(): wait for the lease to be active with a build key, heartbeating it; None when `stop` is set."""
+        asked = time.monotonic()
+        keyless_since: float | None = None
+        while True:
+            r = self.get(rid)  # before the heartbeat, which refuses a lease that has ended
+            if r.state == "failed":
+                raise SchedulerError(409, f"could not start: {r.error}")
+            try:
+                r = self.heartbeat(rid)
+            except SchedulerError as exc:
+                raise LeaseLost(exc.status, str(exc)) from None
+            build = self.run_view(model).build
+            if r.state == "active":
+                if build and build.build_key:
+                    return Held(rid, build.build_key)
+                # It had a key when the lease became active; it lost it (the weights changed) and is hashed again.
+                if keyless_since is None:
+                    keyless_since = time.monotonic()
+                if build_wait_s is not None and time.monotonic() - keyless_since > build_wait_s:
+                    raise SchedulerError(409, f"no build key: {build.pending if build else 'unknown'}")
+                self.wake()
+            if wait_s is not None and time.monotonic() - asked > wait_s:
+                raise SchedulerError(409, f"no build key after {wait_s / 60:g} min")
+            if stop.wait(2.0):
+                return None
+
+    def _keep_alive(self, rid: str, done: threading.Event) -> None:
+        """hold(): heartbeat the lease while the job runs, until it is done or the lease has ended."""
+        while not done.wait(HOLD_BEAT_S):
+            try:
+                self.heartbeat(rid)
+            except SchedulerError:
+                return
+
     # ------------------------------------------------------------------------- gateway, manual start/stop
 
     def upstream_url(self, name: str) -> str:
@@ -919,6 +998,24 @@ class Scheduler:
             self.db.many("INSERT INTO usage (model_id, calls, errors, last_used) VALUES (?, ?, ?, ?) ON CONFLICT(model_id) "
                          "DO UPDATE SET calls = calls + excluded.calls, errors = errors + excluded.errors, "
                          "last_used = MAX(COALESCE(last_used, 0), excluded.last_used)", rows)
+
+    def build_key(self, name: str) -> str | None:
+        """The model's build key at the last tick; None until it is known."""
+        with self.lock:
+            run = self.runs.get(name)
+            return run.build.build_key if run and run.build else None
+
+    def run_view(self, name: str) -> Run | None:
+        """A copy of what the scheduler knows about the model's container, taken under the lock."""
+        with self.lock:
+            run = self.runs.get(name)
+            return copy.copy(run) if run else None
+
+    def gpu_in_use(self, p: Platform) -> dict[str, float]:
+        """GPU models that hold memory, by name -> the share of the device each holds: what its start was given
+        (the whole GPU as measured), else the minimum it loads in."""
+        with self.lock:
+            return {m: self.runs[m].given or self.frac(p, m) for m in sorted(self._occupying(p))}
 
     def model_view(self, name: str) -> dict[str, Any]:
         """state, detail, leased_by, in_flight, build for one model (under the lock)."""

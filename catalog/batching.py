@@ -513,9 +513,7 @@ class BatchProfiler:
 
     def _fail(self, model: str, build_key: str | None, error: str) -> None:
         if build_key is None:
-            with self.scheduler.lock:
-                run = self.scheduler.runs.get(model)
-                build_key = run.build.build_key if run and run.build else None
+            build_key = self.scheduler.build_key(model)
         if build_key:
             self._save(model, build_key, "failed", None, error)
         log.warning("batch profile of %s: %s", model, error)
@@ -570,11 +568,10 @@ class BatchProfiler:
         """The limits the running service started with (None: started outside the catalog) and the ones it
         reports now, per batcher. None when it is not running."""
         sched = self.scheduler
-        with sched.lock:
-            run = sched.runs.get(s.name)
-            if run is None or not run.running:
-                return None
-            given, batch, measured = run.given, run.batch, run.gpu_used_before is not None
+        run = sched.run_view(s.name)
+        if run is None or not run.running:
+            return None
+        given, batch, measured = run.given, run.batch, run.gpu_used_before is not None
         total = sched.gpu[0] if sched.gpu else p.config.gpu_total_gb
         started = None if batch is None else {
             "max_batch": int(batch["AISVC_MAX_BATCH"]) if "AISVC_MAX_BATCH" in batch else None,
@@ -615,76 +612,37 @@ class BatchProfiler:
             self._fail(model, None, f"{s.contract}/{s.api} has no batch measurement")
             return
         try:
-            req = sched.request(HOLDER, [model])
-        except SchedulerError as exc:
+            with sched.hold(HOLDER, model, self._stop, wait_s=30 * 60) as held:  # gives up 30 min after the request
+                if held is None:
+                    return
+                run = sched.run_view(model)
+                given, baseline = run.given, run.gpu_used_before
+                total = p.config.gpu_total_gb
+                gpu = sched.gpu
+                if gpu:
+                    total = gpu[0]
+                given_gib = (given or p.config.util_limit) * total
+                if s.engine == "vllm":
+                    if given is None:  # its fixed memory is what it was given minus the KV cache
+                        raise ValueError("started outside the catalog (or before the catalog restarted), so the "
+                                         "memory it was given is unknown: restart it from the catalog to measure")
+                    prof = kv_profile(self.runtime.logs(p, model, LOG_TAIL), given_gib)
+                else:
+                    prof = self._measure(p, s, meta, held.rid, baseline, given_gib)
+                prof.given_gib = round(given_gib, 3)
+                self._save(model, held.build_key, "measured", prof, None)
+                log.info("batch profile of %s (%s): %s", model, held.build_key, json.dumps(prof.to_json())[:300])
+        except (SchedulerError, ValueError, httpx.HTTPError) as exc:  # the lease's errors are Scheduler.hold's
             self._fail(model, None, str(exc))
-            return
-        try:
-            build = self._wait(req.id, model)
-            if build is None:
-                return
-            with sched.lock:
-                run = sched.runs[model]
-                given = run.given
-                baseline = run.gpu_used_before
-            total = p.config.gpu_total_gb
-            gpu = sched.gpu
-            if gpu:
-                total = gpu[0]
-            given_gib = (given or p.config.util_limit) * total
-            if s.engine == "vllm":
-                if given is None:  # its fixed memory is what it was given minus the KV cache
-                    raise ValueError("started outside the catalog (or before the catalog restarted), so the memory "
-                                     "it was given is unknown: restart it from the catalog to measure")
-                prof = kv_profile(self.runtime.logs(p, model, LOG_TAIL), given_gib)
-            else:
-                prof = self._measure(p, s, meta, req.id, baseline, given_gib)
-            prof.given_gib = round(given_gib, 3)
-            self._save(model, build, "measured", prof, None)
-            log.info("batch profile of %s (%s): %s", model, build, json.dumps(prof.to_json())[:300])
-        except (SchedulerError, ValueError, httpx.HTTPError) as exc:
-            self._fail(model, None, str(exc))
-        finally:
-            sched.release(req.id)
-
-    def _wait(self, rid: str, model: str) -> str | None:
-        """Wait for the lease and the build key; the build key, or None if it never came."""
-        sched = self.scheduler
-        deadline = time.monotonic() + 30 * 60
-        while True:
-            r = sched.get(rid)  # before the heartbeat, which refuses a lease that has ended
-            if r.state == "failed":
-                self._fail(model, None, f"could not start: {r.error}")
-                return None
-            r = sched.heartbeat(rid)
-            with sched.lock:
-                build = sched.runs[model].build
-            if r.state == "active" and build and build.build_key:
-                return build.build_key
-            if time.monotonic() > deadline:
-                self._fail(model, None, "no build key after 30 min")
-                return None
-            if self._stop.wait(2.0):
-                return None
 
     def _measure(self, p: Platform, s: Manifest, meta: dict[str, Any], rid: str, baseline: float | None,
                  given_gib: float) -> Profile:
-        sched = self.scheduler
-        url = sched.upstream_url(s.name)
+        """The sweep under lease `rid`, which Scheduler.hold keeps alive."""
+        url = self.scheduler.upstream_url(s.name)
         lengths, longest = lengths_for(s)
         max_n = s.batch.max_n if s.batch and s.batch.max_n else SWEEP_MAX_N
         if mode(meta) == "openai-asr":
             max_n = min(max_n, OPENAI_ASR_MAX_N)
-        beat = threading.Event()
-
-        def keep_alive() -> None:
-            while not beat.wait(20):
-                try:
-                    sched.heartbeat(rid)
-                except SchedulerError:
-                    return
-
-        threading.Thread(target=keep_alive, daemon=True).start()
         with httpx.Client(timeout=SLOW_S * 5) as http:
             lifted = http.post(f"{url}/platform/batch-limits", json=LIFT).status_code == 200
 
@@ -697,7 +655,6 @@ class BatchProfiler:
                                            max_n=max_n, stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m),
                                            relift=relift if lifted else None)
             finally:
-                beat.set()
                 if lifted:
                     http.post(f"{url}/platform/batch-limits", json={"restore": True})
         if not points:

@@ -190,15 +190,12 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     @app.get("/api/platform")
     def platform() -> dict[str, Any]:
         p = sched.platform()
-        with sched.lock:
-            # What each start was given (the whole GPU as measured), else the minimum to load.
-            held = {m: sched.runs[m].given or sched.frac(p, m) for m in sorted(sched._occupying(p))}
-            swaps = sched.swaps
+        held = sched.gpu_in_use(p)  # what each start was given (the whole GPU as measured), else the minimum to load
         return {"gpu_total_gb": p.config.gpu_total_gb, "util_limit": p.config.util_limit,
                 "reserve_gb": round((1 - p.config.util_limit) * p.config.gpu_total_gb, 2),
                 "used_fraction": round(sum(held.values()), 4),
                 "gpu_models": [{"id": m, "fraction": round(f, 4)} for m, f in held.items()],
-                "swaps": swaps, "platform_error": sched.platform_error}
+                "swaps": sched.swaps, "platform_error": sched.platform_error}
 
     @app.get("/api/models")
     def list_models(task: list[str] = Query(default=[]), tag: list[str] = Query(default=[]),
@@ -241,9 +238,7 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
         same memory gets now."""
         p = sched.platform()
         s = sched.manifest(model_id)
-        with sched.lock:
-            run = sched.runs.get(s.name)
-            bk = run.build.build_key if run and run.build else None
+        bk = sched.build_key(s.name)
         if bk is None:
             try:
                 bk = cat.builds.current(p, s, None).build_key
