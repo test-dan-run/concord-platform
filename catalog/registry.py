@@ -223,7 +223,7 @@ class Registry:
             h.signature = None
         if h.contract == "oip-v2" and (h.build_key != old.build_key or not h.signature):
             test = hosted_mod.connection_test(self.hosted, h, key or self.hosted.key(old))
-            h.signature = test.get("signature") or h.signature
+            h.signature = test.get("signature")  # a new build's own: the old model's says nothing about it
             if not h.signature:  # like create: usable_as() needs the signature
                 raise SchedulerError(422, _no_metadata(h, test))
         self.hosted.update(h, key)
