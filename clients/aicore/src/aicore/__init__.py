@@ -8,7 +8,8 @@
 With AICORE_CATALOG set (e.g. http://127.0.0.1:8700), every client calls the Model Catalog's gateway,
 which starts stopped models on demand. `aicore.catalog.Catalog` is the catalog's own API (models,
 leases, output index, job plans), and `aicore.datasets.DatasetCatalog` is the Dataset Catalog's (datasets,
-versions, the audio store and holds).
+versions, the audio store and holds). `aicore.dataset_format` is the version format itself (its check, its digest
+and the reading of references), which the catalog service and FakeDatasetCatalog share.
 """
 
 from __future__ import annotations
