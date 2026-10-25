@@ -255,6 +255,7 @@ class Manifest(_Strict):
         errors: list[str] = []
         ctx = info.context or {}
         engines: dict[str, Engine] | None = ctx.get("engines")
+        invalid_engines: set[str] = ctx.get("invalid_engines") or set()  # in engines.yaml, but failed validation
         api_types: dict[str, dict] | None = ctx.get("api_types")
 
         if self.contract != "openai" and not self.contract_reason:
@@ -289,7 +290,9 @@ class Manifest(_Strict):
                     errors.append(f"{key} is not allowed with engine {self.engine!r}")
             if engines is not None:
                 engine = engines.get(self.engine)
-                if engine is None:
+                if engine is None and self.engine in invalid_engines:
+                    errors.append(f"engine {self.engine!r} is invalid in engines.yaml")
+                elif engine is None:
                     known = ", ".join(sorted([*engines, CUSTOM_ENGINE]))
                     errors.append(f"engine {self.engine!r} is not defined in engines.yaml (known: {known})")
                 else:
@@ -451,6 +454,7 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
         raise PlatformError(_fmt_validation(root / "config.yaml", exc)) from None
 
     engines: dict[str, Engine] = {}
+    invalid_engines: set[str] = set()
     for name, data in (load_yaml(root / "engines" / "engines.yaml") or {}).items():
         if name == CUSTOM_ENGINE:
             errors.append("engines.yaml: 'custom' is reserved and cannot be an engine name")
@@ -458,10 +462,11 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
         try:
             engines[name] = Engine.model_validate(data)
         except ValidationError as exc:
-            errors.extend(f"engines.yaml: {name}: {e}" for e in _fmt_validation(Path(name), exc))
+            invalid_engines.add(name)
+            errors.extend(f"engines.yaml: {e}" for e in _fmt_validation(Path(name), exc))  # "<name>: <field>: ..."
 
     api_types = load_yaml(root / "contracts" / "api_types.yaml")
-    ctx = {"engines": engines, "api_types": api_types}
+    ctx = {"engines": engines, "invalid_engines": invalid_engines, "api_types": api_types}
 
     services: list[Manifest] = []
     files: dict[str, Path] = {}
