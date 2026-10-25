@@ -58,10 +58,10 @@ def resolve_base(entry: dict[str, Any], host: str | None = None) -> str:
     AI_HOST unset/localhost -> published host port on that host.
     Anything else -> internal port, for callers on the docker network; `{name}` in AI_HOST is
     replaced by the service name, so AI_HOST={name} gives http://<service>:<internal_port>.
-    An IPv6 address goes in brackets: AI_HOST=::1 gives http://[::1]:<host_port>.
+    An IPv6 address goes in brackets: AI_HOST=::1 (or [::1]) gives http://[::1]:<host_port>.
     """
     host = host or os.environ.get("AI_HOST") or "localhost"
-    local = host in LOCAL_HOSTS
+    local = host.strip("[]") in LOCAL_HOSTS
     host = host.replace("{name}", entry["name"])
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
