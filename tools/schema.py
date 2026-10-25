@@ -72,7 +72,7 @@ class Config(_Strict):
     gpu_total_gb: float = Field(gt=0)
     util_limit: float = Field(gt=0, le=1)
     assets_dir: str
-    ai_host: str = "localhost"
+    ai_host: str = "localhost"  # not read (aicore reads only AI_HOST); kept so config.yaml copies that set it load
     registry: str
     network: str = "ai-net"
     # Docker Compose project of the rendered stack. Change it to run a second copy of the platform
@@ -95,9 +95,6 @@ class Config(_Strict):
 
     def assets_path(self) -> Path:
         return Path(os.path.expanduser(os.environ.get("AI_ASSETS") or self.assets_dir))
-
-    def host(self) -> str:
-        return os.environ.get("AI_HOST") or self.ai_host
 
 
 # --------------------------------------------------------------------------- engines
@@ -123,11 +120,13 @@ class Engine(_Strict):
             raise ValueError(f"engine image {v!r} uses :latest; pin an exact tag")
         return v
 
-    def render_command(self, *, model: str, name: str, util: float | str | None) -> list[str]:
+    def render_command(self, *, model: str, name: str, util: str | None) -> list[str]:
+        """The command with its placeholders filled. render.py passes a marker as util and swaps it for the
+        compose variable afterwards; None (a CPU service) leaves {util} empty."""
         values = {
             "model": model,
             "name": name,
-            "util": "" if util is None else util if isinstance(util, str) else f"{util:g}",
+            "util": "" if util is None else util,
             "internal_port": str(self.internal_port),
         }
         return [part.format_map(values) for part in self.command]
