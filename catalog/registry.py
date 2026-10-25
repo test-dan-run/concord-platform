@@ -186,8 +186,7 @@ class Registry:
         if h.contract == "oip-v2":  # usable_as() needs the signature: take it from the provider's metadata
             test = hosted_mod.connection_test(self.hosted, h, key)
             if not test.get("signature"):
-                why = "; ".join(x["reason"] for x in test["lines"] if x["status"] == "fail") or "no signature"
-                raise SchedulerError(422, f"cannot read {h.model}'s OIP metadata from the provider: {why}")
+                raise SchedulerError(422, _no_metadata(h, test))
             h.signature = test["signature"]
         self.hosted.insert(h, key if h.auth_type != "none" else None)
         tags = body.get("tags")
@@ -209,10 +208,13 @@ class Registry:
                 raise SchedulerError(422, f"the new key did not pass the connection test: {why}")
         elif h.auth_type != "none" and not old.key_enc:
             raise SchedulerError(422, "the API key is required")
+        if h.contract != old.contract:  # an OIP signature does not carry over to another contract
+            h.signature = None
         if h.contract == "oip-v2" and (h.build_key != old.build_key or not h.signature):
             test = hosted_mod.connection_test(self.hosted, h, key or self.hosted.key(old))
-            if test.get("signature"):
-                h.signature = test["signature"]
+            h.signature = test.get("signature") or h.signature
+            if not h.signature:  # like create: usable_as() needs the signature
+                raise SchedulerError(422, _no_metadata(h, test))
         self.hosted.update(h, key)
         if h.build_key != old.build_key:  # a new build: verify it; limits and keys keep the build
             self.verifier.enqueue(model_id)
@@ -358,6 +360,11 @@ class Registry:
                 continue
             out.append(rec)
         return out
+
+
+def _no_metadata(h: Hosted, test: dict[str, Any]) -> str:
+    why = "; ".join(x["reason"] for x in test["lines"] if x["status"] == "fail") or "no signature"
+    return f"cannot read {h.model}'s OIP metadata from the provider: {why}"
 
 
 def _given(**fields: Any) -> dict[str, Any]:
