@@ -7,8 +7,10 @@ aicore.dataset_format, which FakeDatasetCatalog shares.
 
 from __future__ import annotations
 
+import bisect
 import difflib
 import functools
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -55,25 +57,66 @@ def _changed(x: dict[str, Any], y: dict[str, Any]) -> bool:
 def compare_segments(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> dict[str, list[Any]]:
     """Segments added, removed and edited between two lists of one file's segments. A segment is the same one in
     both when its uid matches, else when its times match within 0.01 s; left over segments that overlap by half or
-    more are one segment whose times were edited."""
-    left, right = list(a), list(b)
+    more are one segment whose times were edited. Each segment of `a` in turn takes the first segment of `b` still
+    free that matches, or for an overlap the first that overlaps most. `b` is looked up by uid and by start time,
+    so a file with thousands of segments takes milliseconds."""
+    right = list(b)
+    free = [True] * len(right)
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    for match in (lambda x, y: x["uid"] is not None and x["uid"] == y["uid"], _same_times):
-        for x in list(left):
-            y = next((y for y in right if match(x, y)), None)
-            if y is not None:
-                pairs.append((x, y))
-                left.remove(x)
-                right.remove(y)
-    for x in list(left):
-        best = max(right, key=lambda y: _overlap(x, y), default=None)
-        if best is not None and _overlap(x, best) >= EDIT_OVERLAP:
-            pairs.append((x, best))
-            left.remove(x)
-            right.remove(best)
+
+    def take(x: dict[str, Any], j: int) -> None:
+        free[j] = False
+        pairs.append((x, right[j]))
+
+    # The same uid. A uid that is a list or an object can't be a dict key, so those are compared one by one.
+    by_uid: dict[Any, deque[int]] = {}
+    odd: list[int] = []
+    for j, y in enumerate(right):
+        if y["uid"] is not None:
+            try:
+                by_uid.setdefault(y["uid"], deque()).append(j)
+            except TypeError:
+                odd.append(j)
+    left: list[dict[str, Any]] = []
+    for x in a:
+        u, j = x["uid"], None
+        if u is not None and u == u:  # NaN equals no uid, itself included
+            try:
+                q = by_uid.get(u)
+                j = q.popleft() if q else None
+            except TypeError:
+                j = next((k for k in odd if free[k] and right[k]["uid"] == u), None)
+        if j is None:
+            left.append(x)
+        else:
+            take(x, j)
+    # The same times. The windows on start times are a little wider than needed, so rounding never hides a match.
+    order = sorted(range(len(right)), key=lambda j: right[j]["start"])
+    starts = [right[j]["start"] for j in order]
+    rest, left = left, []
+    for x in rest:
+        lo = bisect.bisect_left(starts, x["start"] - 2 * UID_TOLERANCE_S)
+        hi = bisect.bisect_right(starts, x["start"] + 2 * UID_TOLERANCE_S)
+        j = min((k for k in order[lo:hi] if free[k] and _same_times(x, right[k])), default=None)
+        if j is None:
+            left.append(x)
+        else:
+            take(x, j)
+    # The most overlap, among the segments that start before x ends and may end after it starts (any other
+    # segment overlaps x by 0).
+    longest = max((y["end"] - y["start"] for y in right), default=0.0)
+    rest, left = left, []
+    for x in rest:
+        lo = bisect.bisect_left(starts, x["start"] - longest - UID_TOLERANCE_S)
+        hi = bisect.bisect_left(starts, x["end"])
+        best = max(((_overlap(x, right[k]), -k) for k in order[lo:hi] if free[k]), default=None)
+        if best is not None and best[0] >= EDIT_OVERLAP:
+            take(x, -best[1])
+        else:
+            left.append(x)
     edited = [{"a": x, "b": y, "diff": text_diff(x["text"], y["text"])} for x, y in pairs if _changed(x, y)]
     edited.sort(key=lambda e: e["b"]["start"])
-    return {"added": right, "removed": left, "edited": edited}
+    return {"added": [y for j, y in enumerate(right) if free[j]], "removed": left, "edited": edited}
 
 
 def compare(a_rows: dict[str, dict[str, Any]], b_rows: dict[str, dict[str, Any]],
