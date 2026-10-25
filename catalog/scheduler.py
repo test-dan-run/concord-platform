@@ -411,7 +411,7 @@ class Scheduler:
         are stopped, so it is never partly loaded or sized from memory another process is still taking."""
         assert self.gpu is not None
         total, free = self.gpu
-        load = [m for m in r.models if self.frac(p, m) > 0 and not self.runs[m].running and not self.runs[m].starting]
+        load = [m for m in r.models if self.frac(p, m) > 0 and self._down(m) and not self.runs[m].starting]
         if not load:
             return fit
         loading = sorted(m for m, run in self.runs.items() if run.starting and m not in r.models and self.frac(p, m) > 0)
@@ -470,6 +470,11 @@ class Scheduler:
         return (run.running and not run.starting and not run.stopping and run.in_flight == 0
                 and (self._settled(p, m, now) or self._unneeded(m)))
 
+    def _down(self, m: str) -> bool:
+        """Not running, or being stopped: a request for it needs a new start, which runs after the stop."""
+        run = self.runs[m]
+        return not run.running or run.stopping
+
     def _unneeded(self, m: str) -> bool:
         """Its lease ended and nobody started it on purpose: no settle time to wait out before stopping it."""
         run = self.runs[m]
@@ -485,7 +490,7 @@ class Scheduler:
     def _grant(self, p: Platform, r: Request, evict: list[str], now: float) -> None:
         r.state, r.granted_at, r.waiting_for = "starting", now, None
         if any(self.frac(p, m) > 0 for m in evict) and any(
-                self.frac(p, m) > 0 and not self.runs[m].running and not self.runs[m].starting for m in self._local(r)):
+                self.frac(p, m) > 0 and self._down(m) and not self.runs[m].starting for m in self._local(r)):
             self._count_swap()
         for m in evict:
             self.runs[m].stopping = True
@@ -493,7 +498,7 @@ class Scheduler:
             log.info("stopping %s to make room for %s", m, r.holder)
         for m in self._local(r):
             run = self.runs[m]
-            if not run.running and not run.starting:
+            if self._down(m) and not run.starting:
                 run.starting, run.failed = True, None
                 self._jobs.put(("start", m))
         self._save(r)
@@ -525,7 +530,7 @@ class Scheduler:
             if failed and r.state == "starting":
                 self._end(r, "failed", now, "; ".join(f"{m}: {self.runs[m].failed}" for m in failed))
                 continue
-            down = [m for m in local if not self.runs[m].running]
+            down = [m for m in local if self._down(m)]
             # Active means callable *and* identified: outputs made under a lease can always be indexed.
             unkeyed = [m for m in local if not (self.runs[m].build and self.runs[m].build.build_key)]
             if not down and unkeyed and r.state == "starting":

@@ -96,3 +96,53 @@ def test_docker_runtime_stop_raises_when_compose_fails(monkeypatch):
     monkeypatch.setattr(stack, "compose", lambda p, *args, **kw: subprocess.CompletedProcess(args, 1, "", "no such service\n"))
     with pytest.raises(RuntimeError, match="docker compose stop x exited 1: no such service"):
         DockerRuntime().stop(None, ["x"])
+
+
+# A model being stopped is down: a request for it waits for a new start, queued behind the stop.
+
+def spun_down(cat, model: str):
+    """A model whose lease ended and whose stop is queued but not yet run by the starter."""
+    s = cat.scheduler
+    cat.settings.release_linger_s = 0.0
+    r = s.request("bench:job-1", [model])
+    step(cat)
+    s.release(r.id)
+    s.tick()
+    assert s.runs[model].stopping
+    return s.runs[model]
+
+
+def test_a_lease_for_a_model_being_stopped_waits_for_it_to_start_again(cat, runtime):
+    s = cat.scheduler
+    spun_down(cat, "whisper-large-v3")
+    r = s.request("bench:job-2", ["whisper-large-v3"])
+    assert r.state == "starting" and list(s._jobs.queue) == [("stop", "whisper-large-v3"), ("start", "whisper-large-v3")]
+    drain(cat)
+    step(cat)
+    assert s.get(r.id).state == "active" and "whisper-large-v3" in runtime.running
+    assert runtime.started == ["whisper-large-v3", "whisper-large-v3"]
+
+
+def test_the_gateway_waits_for_a_model_being_stopped_to_start_again(cat, runtime):
+    s = cat.scheduler
+    spun_down(cat, "whisper-large-v3")
+    req = s.ensure_started("whisper-large-v3")
+    assert req.state == "starting" and s.ensure_started("whisper-large-v3") is req  # no new request each poll
+    drain(cat)
+    step(cat)
+    assert s.get(req.id).state == "done" and s.is_up("whisper-large-v3")
+
+
+def test_a_model_being_stopped_must_find_its_memory_free_to_start_again(cat, runtime):
+    s = cat.scheduler
+    runtime.gpu_total_gib = 31.84
+    spun_down(cat, "whisper-large-v3")
+    runtime.gpu_other_gib = 28.0  # another process takes memory while the stop waits
+    s.tick()
+    r = s.request("bench:job-2", ["whisper-large-v3"])
+    assert r.state == "queued" and "whisper-large-v3 needs 5.8 GiB free on the GPU to load" in r.waiting_for
+    assert ("start", "whisper-large-v3") not in list(s._jobs.queue)
+    runtime.gpu_other_gib = 0.0
+    drain(cat)
+    step(cat)
+    assert s.get(r.id).state == "active"

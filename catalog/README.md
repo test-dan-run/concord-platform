@@ -332,7 +332,8 @@ priority.
   count as `swaps`, and the catalog keeps it in its database across restarts.
 - **Models a lease brought up are spun down when nothing needs them.** Once its last lease ends, a model
   is stopped after `CATALOG_RELEASE_LINGER_S` (default 30 s, so a back-to-back lease on the same model
-  keeps it loaded) unless a live or queued request names it or a call is in flight. Models started on
+  keeps it loaded) unless a live or queued request names it or a call is in flight. A request that
+  comes after the stop has begun waits until the model has stopped and started again. Models started on
   purpose (`POST /api/models/{id}/start`, `just up`, or found running outside the catalog) stay up
   until they are evicted or stopped. A model the gateway started for a call without a lease is stopped
   after `CATALOG_GATEWAY_IDLE_S` (default 600 s) without a call, unless a request names it. A model
