@@ -30,7 +30,7 @@ from ..db import DB, now_iso
 from . import DatasetError
 
 log = logging.getLogger("catalog.datasets")
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
+HEX64 = re.compile(r"[0-9a-f]{64}")  # with fullmatch: a "$" would also match before a final newline
 AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".m4a", ".opus", ".aac", ".wma", ".webm"}
 MEDIA_TYPES = {".wav": "audio/wav", ".flac": "audio/flac", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
                ".opus": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".wma": "audio/x-ms-wma",
@@ -40,7 +40,7 @@ PROBE_TIMEOUT_S = 60
 
 
 def check_sha(sha: str) -> str:
-    if not isinstance(sha, str) or not HEX64.match(sha):
+    if not isinstance(sha, str) or not HEX64.fullmatch(sha):
         raise DatasetError(422, f"{sha!r} is not a sha256: 64 lowercase hex characters", "invalid_request")
     return sha
 

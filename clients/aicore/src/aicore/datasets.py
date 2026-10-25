@@ -342,7 +342,7 @@ FILES_HEADER = ["path", "sha256", "duration", "sample_rate"]
 CATALOG_FIELDS = ("source", "export_version", "created_at", "audio_included")  # left out of the digest
 SIDE_FILES = ("uids.jsonl", "attributes.json")
 AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".m4a", ".opus", ".aac", ".wma", ".webm"}
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
+HEX64 = re.compile(r"[0-9a-f]{64}")  # with fullmatch: a "$" would also match before a final newline
 INSTALL_ID = "dataset-catalog"
 
 
@@ -434,7 +434,7 @@ def check_folder(root: Path) -> list[str]:
         if stem in stems:
             problems.append(f"files.csv: stem of {rel} repeats {stems[stem]}")
         stems[stem] = rel
-        if not HEX64.match(r.get("sha256") or ""):
+        if not HEX64.fullmatch(r.get("sha256") or ""):
             problems.append(f"files.csv: sha256 of {rel}")
         for k, cast in (("duration", float), ("sample_rate", int)):
             try:
@@ -809,7 +809,7 @@ class FakeDatasetCatalog(_Mount):
 
     @staticmethod
     def _check_sha(sha: str) -> str:
-        if not isinstance(sha, str) or not HEX64.match(sha):
+        if not isinstance(sha, str) or not HEX64.fullmatch(sha):
             raise _error(422, f"{sha!r} is not a sha256: 64 lowercase hex characters", "invalid_request")
         return sha
 
