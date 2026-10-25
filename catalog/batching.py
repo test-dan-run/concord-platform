@@ -58,6 +58,9 @@ MAX_N = 256  # largest batch ever recommended (the fit is not trusted far past t
 # Most audio in one request: OIP sends samples as JSON numbers, so 64 x 180 s (11,520 s) took the aligner server's
 # host memory with it on 2026-10-25, while 32 x 180 s worked. Recommendations and the sweep stay under this.
 MAX_REQUEST_S = 6000.0
+# Log lines read for a vLLM profile: the whole container log. The KV cache lines come once, at startup, and vLLM
+# then logs a line per request, so a short tail misses them on a model that has served a while.
+LOG_TAIL = 1_000_000
 SWEEP_MAX_N = 128
 DEFAULT_LENGTHS_S = (2.0, 15.0, 60.0)
 SLOW_S = 120.0  # a batch that takes longer ends its length's sweep
@@ -619,7 +622,10 @@ class BatchProfiler:
                 total = gpu[0]
             given_gib = (given or p.config.util_limit) * total
             if s.engine == "vllm":
-                prof = kv_profile(self.runtime.logs(p, model, 400), given_gib)
+                if given is None:  # its fixed memory is what it was given minus the KV cache
+                    raise ValueError("started outside the catalog (or before the catalog restarted), so the memory "
+                                     "it was given is unknown: restart it from the catalog to measure")
+                prof = kv_profile(self.runtime.logs(p, model, LOG_TAIL), given_gib)
             else:
                 prof = self._measure(p, s, meta, req.id, baseline, given_gib)
             prof.given_gib = round(given_gib, 3)

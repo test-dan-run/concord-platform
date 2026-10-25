@@ -206,8 +206,11 @@ length, which is items times the longest item, in milliseconds of audio). Withou
 uses its own small defaults, and its out of memory backoff splits a batch that does not fit.
 
 A vLLM service is not measured, because vLLM batches by itself. Its profile comes from its startup log
-(the available KV cache memory and the KV cache size in tokens). The recommendation is the number of
-sequences of a given length that fit the KV cache, which is a value for `--max-num-seqs`.
+(the available KV cache memory and the KV cache size in tokens), read from the whole container log, and
+from the last start when the container restarted. The recommendation is the number of sequences of a
+given length that fit the KV cache, which is a value for `--max-num-seqs`. The memory outside the KV cache
+is the memory its start was given minus the KV cache, so a vLLM service started outside the catalog (or
+before the catalog restarted) is not profiled: restart it from the catalog first.
 
 `just batch NAME [--vram GB] [--item-s S | --item-tokens T] [--n N]` prints the same numbers in the
 terminal, and `just batch-profile NAME [--wait]` asks for a measurement. The model's page has a Batching
