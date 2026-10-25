@@ -70,6 +70,7 @@ Paths below are under `/api` unless they start with `/m/` or `/v2/` (the gateway
   "leased_by": ["bench:job-12"],
   "in_flight": 0,
   "build_key": "3f9c0a1b2c4d5e6f",
+  "build_pending": null,
   "image": "vllm/vllm-openai:v0.31.0",
   "capabilities": {
     "build_key": "3f9c0a1b2c4d5e6f",
@@ -96,7 +97,8 @@ Paths below are under `/api` unless they start with `/m/` or `/v2/` (the gateway
 
 - `state`: `running` | `stopped` | `starting` | `stopping` | `queued` (a request for it is waiting for
   compute) | `failed` (the last start failed; `state_detail` says why). CPU-only models have
-  `gpu: null` and are never stopped by the scheduler.
+  `gpu: null`. They never make room for another model, but they are spun down like the others when
+  nothing needs them (see Scheduler rules).
 - `capabilities` is the record for the **current** build, or `null` before the first verification.
   `capabilities.status`: `pending` (queued) | `running` | `verified` | `failed` (the report says why) |
   `stale` (verified on an earlier build; the current build has not been verified yet).
@@ -302,14 +304,15 @@ priority.
 | `GET /api/leases` | live leases and queued requests, queue order |
 
 ```json
-{"id": "l-8c1f…", "holder": "bench:job-12", "models": ["pyannote-diarization"],
+{"id": "l-8c1f…", "kind": "lease", "holder": "bench:job-12", "models": ["pyannote-diarization"],
  "state": "queued", "position": 2, "waiting_for": "one GPU model runs at a time: pyannote-diarization waits for qwen3-32b-awq (leased by label:job-3)",
- "error": null, "created_at": "…", "granted_at": null, "ready_at": null, "expires_at": "…"}
+ "error": null, "created_at": "…", "granted_at": null, "ready_at": null, "ended_at": null, "expires_at": "…"}
 ```
 
 - `state`: `queued` -> `starting` (granted; its models are being started) -> `active` (every model is
   healthy and has a build key: call it now, and index what it returns) -> `released` | `expired` | `failed` (a model failed to start, or the request
-  can never be met, `error` says why).
+  can never be met, `error` says why). `kind` is `lease` for an app's lease, or `start` for the request a
+  gateway call or `just up` makes; a start request ends as `done` once its models are up.
 - **Heartbeat** every 30 s; a lease (queued or not) expires after `ttl_s` (default 90 s, i.e. three
   missed beats) without one, so a crashed app frees its models and its queue place.
 - One request names its whole model set, with at most one GPU model. A request for a GPU model while
@@ -450,8 +453,8 @@ Response:
 
 ## Events
 
-`GET /api/events` is a server-sent event stream: `model` events (`{id, state, build_key,
-capabilities_status}`), `lease` events (the lease JSON), `queue` events (`{queue: [{id, holder,
+`GET /api/events` is a server-sent event stream: `model` events (`{id, state, state_detail, build_key,
+leased_by}`, for platform services), `lease` events (the lease JSON), `queue` events (`{queue: [{id, holder,
 position, waiting_for}]}`), `export` events (the export job JSON) and `dataset` events (`{id, n,
 action}`, see [Dataset Catalog](#dataset-catalog)). App backends can relay these or poll `GET /api/models` and
 `GET /api/leases/{id}`. Each connection starts with a `model` event per model. A client that falls more than
@@ -469,7 +472,8 @@ Model Catalog and the Dataset Catalog, whose pages are under `/datasets` (see [P
 ## Other calls
 
 - `POST /api/models/{id}/start`, `POST /api/models/{id}/stop` (`?force=1` stops a leased model, the
-  owner's override). `tools/stack.py up/down` use these when the catalog is running, so `just up`,
+  owner's override; a lease that is still active starts it again at once, so release the lease to keep it
+  down. A stop sent while the model is starting is not kept: it still answers 202 and the model comes up). `tools/stack.py up/down` use these when the catalog is running, so `just up`,
   `just down` and Synthetics' `stack.py` calls keep working. Start answers 202 with `model` (the
   record) and `request` (the request that brings it up, or `null` when it is already up). Its `?holder=`
   (default `manual`) names who asked in the queue; any holder but `gateway` pins the model so it
