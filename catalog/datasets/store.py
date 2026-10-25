@@ -313,22 +313,26 @@ class AudioStore:
         return self.db.one("SELECT COUNT(*) AS n FROM hold WHERE app = ?", (app,))["n"]  # type: ignore[index]
 
     def stats(self) -> dict[str, Any]:
-        def group(where: str) -> dict[str, int]:
-            r = self.db.one(f"SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM audio a WHERE {where}")
-            return {"files": r["files"], "bytes": r["bytes"]}  # type: ignore[index]
+        groups = {k: {"files": 0, "bytes": 0} for k in ("audio", "in_versions", "held_only", "neither", "partial")}
 
-        listed = "EXISTS (SELECT 1 FROM version_file v WHERE v.sha256 = a.sha256)"
-        held = "EXISTS (SELECT 1 FROM hold h WHERE h.sha256 = a.sha256)"
-        ready = "a.state = 'ready'"
+        def add(k: str, r: dict[str, Any]) -> None:
+            groups[k]["files"] += r["files"]
+            groups[k]["bytes"] += r["bytes"]
+
+        # One pass over the audio, grouped by state and by what keeps each file.
+        for r in self.db.all("SELECT a.state, EXISTS (SELECT 1 FROM version_file v WHERE v.sha256 = a.sha256) AS listed, "
+                             "EXISTS (SELECT 1 FROM hold h WHERE h.sha256 = a.sha256) AS held, COUNT(*) AS files, "
+                             "COALESCE(SUM(a.size), 0) AS bytes FROM audio a GROUP BY a.state, listed, held"):
+            if r["state"] == "ready":
+                add("audio", r)
+                add("in_versions" if r["listed"] else "held_only" if r["held"] else "neither", r)
+            elif r["state"] == "partial":
+                add("partial", r)
         holds = self.db.all("SELECT h.app, COUNT(*) AS files, COALESCE(SUM(a.size), 0) AS bytes FROM hold h "
                             "LEFT JOIN audio a ON a.sha256 = h.sha256 AND a.state = 'ready' GROUP BY h.app ORDER BY h.app")
         disk = shutil.disk_usage(self.root)
         return {"root": str(self.root),
-                "audio": group(ready),
-                "in_versions": group(f"{ready} AND {listed}"),
-                "held_only": group(f"{ready} AND NOT {listed} AND {held}"),
-                "neither": group(f"{ready} AND NOT {listed} AND NOT {held}"),
-                "partial": group("a.state = 'partial'"),
+                **groups,
                 "holds": holds,
                 "datasets": self.db.one("SELECT COUNT(*) AS n FROM dataset")["n"],  # type: ignore[index]
                 "versions": self.db.one("SELECT COUNT(*) AS n FROM version")["n"],  # type: ignore[index]
