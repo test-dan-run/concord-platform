@@ -86,7 +86,21 @@ export function retryable(e: unknown): boolean {
 
 const readable = (r: { duration: number | null; sample_rate: number | null }) => r.duration !== null && r.sample_rate !== null;
 
-type Options = { chunk?: number; concurrency?: number; retries?: number; sleep?: (ms: number) => Promise<void>; hash?: typeof hashBlob };
+/** Wait `ms`, or less when `signal` aborts first. */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((r) => {
+    if (signal?.aborted) return r();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      r();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done);
+  });
+}
+
+type Options = { chunk?: number; concurrency?: number; retries?: number; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; hash?: typeof hashBlob };
 
 export class Uploader {
   private items: UploadItem[] = [];
@@ -98,7 +112,7 @@ export class Uploader {
   private readonly chunk: number;
   private readonly concurrency: number;
   private readonly retries: number;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly hash: typeof hashBlob;
 
   constructor(
@@ -108,7 +122,7 @@ export class Uploader {
     this.chunk = o.chunk ?? CHUNK;
     this.concurrency = o.concurrency ?? CONCURRENCY;
     this.retries = o.retries ?? RETRIES;
-    this.sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.sleep = o.sleep ?? delay;
     this.hash = o.hash ?? hashBlob;
   }
 
@@ -151,6 +165,7 @@ export class Uploader {
   clear(): void {
     this.abort.abort();
     this.abort = new AbortController();
+    this.running = 0; // the stopped runs may still be waiting on the store, but they hold no slot
     this.items = [];
     this.shas.clear();
     this.emit();
@@ -179,11 +194,12 @@ export class Uploader {
       const it = this.items.find((i) => i.state === "waiting");
       if (!it) return;
       this.running++;
-      const signal = this.abort.signal;
+      const abort = this.abort;
       this.patch(it.id, { state: "hashing" });
-      void this.run(it.id, signal).finally(() => {
+      void this.run(it.id, abort.signal).finally(() => {
+        if (abort !== this.abort) return; // cleared since: clear() started the count again
         this.running--;
-        if (!signal.aborted) this.pump();
+        this.pump();
       });
     }
   }
@@ -299,7 +315,7 @@ export class Uploader {
     const s = DELAYS_S[Math.min(fails, DELAYS_S.length) - 1];
     const why = e instanceof ApiError && e.body.type === "upload_busy" ? "Another upload of the same file is running" : "Connection lost";
     this.patch(id, { state: "retrying", attempt: fails, error: `${why}. Trying again in ${s} s (attempt ${fails} of ${this.retries}).` });
-    await this.sleep(s * 1000);
+    await this.sleep(s * 1000, signal);
     signal.throwIfAborted();
   }
 }
