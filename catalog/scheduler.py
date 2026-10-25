@@ -106,6 +106,7 @@ class Run:
     build: Build | None = None
     usage_dirty: bool = False
     pinned: bool = False  # started on purpose (manual start, `just up`, outside the catalog): never spun down
+    repin: bool = False  # pinned while being stopped: the pin outlives that stop
     released_at: float | None = None  # when the last lease holding it ended: spun down once nothing needs it
     short: str | None = None  # the start found too little free GPU memory: its request queues again
     given: float | None = None  # fraction of the device its start was given (None: CPU, or started elsewhere)
@@ -614,14 +615,14 @@ class Scheduler:
         except Exception as exc:  # noqa: BLE001 - still up as far as we know: a later tick tries again
             log.warning("stop of %s failed: %s", name, exc)
             with self.lock:
-                self.runs[name].stopping = False
+                self.runs[name].stopping = self.runs[name].repin = False
                 self._stamp(self.runs[name])
             return
         with self.lock:
             run = self.runs[name]
             self._stamp(run)
             run.stopping, run.running, run.ready_at = False, False, None
-            run.pinned, run.released_at, run.given, run.batch = False, None, None, None
+            run.pinned, run.repin, run.released_at, run.given, run.batch = run.repin, False, None, None, None
 
     def _do_start(self, name: str) -> None:
         try:
@@ -858,9 +859,11 @@ class Scheduler:
         return self.request(holder, [name], kind="start")
 
     def _pin(self, names: list[str]) -> None:
-        """Started on purpose (not a gateway call): kept up after leases end, until evicted or stopped."""
+        """Started on purpose (not a gateway call): kept up after leases end, until evicted or stopped. A model
+        being stopped keeps the pin after that stop: its start comes after the stop."""
         for m in names:
-            self.runs.setdefault(m, Run()).pinned = True
+            run = self.runs.setdefault(m, Run())
+            run.pinned, run.repin = True, run.repin or run.stopping
 
     def begin_call(self, name: str) -> None:
         with self.lock:
