@@ -1,10 +1,11 @@
-"""aisvc edge cases: empty integer and boolean tensors, out of memory backoff on items of length 0."""
+"""aisvc edge cases: empty integer and boolean tensors, out of memory backoff on items of length 0, and the error
+code of a handler's ValueError."""
 
 import sys
 
 import numpy as np
 import pytest
-from aisvc import Limits, MicroBatcher, create_oip_app
+from aisvc import Limits, MicroBatcher, create_oip_app, create_openai_app, create_openai_inspired_app
 from conformance import running
 
 EMPTY_SIG = {"inputs": [{"name": "N", "datatype": "INT32", "shape": [-1]}, {"name": "M", "datatype": "BOOL", "shape": [-1]},
@@ -60,3 +61,21 @@ def test_out_of_memory_backoff_splits_items_of_length_0(monkeypatch):
     lim = Limits(max_items=8)
     assert MicroBatcher(fn, length=lambda x: 0, limits=lim)([1, 2, 3, 4, 5, 6]) == [2, 4, 6, 8, 10, 12]
     assert chunks == [6, 3, 1, 1, 1, 3, 1, 1, 1] and lim.max_len == 1  # each length 0 counts as 1: 6 -> 3 -> 1
+
+
+def bad_input(*args):
+    raise ValueError("input 2 is not text the service can read")
+
+
+def test_a_handler_value_error_is_invalid_request_on_openai_inspired():
+    with running(create_openai_inspired_app("n", "text.transform", bad_input)) as c:
+        r = c.post("/v1/text/transform", json={"model": "n", "input": "x"})
+    assert r.status_code == 400
+    assert r.json()["error"] == {"message": "input 2 is not text the service can read", "type": "invalid_request_error",
+                                 "code": "invalid_request"}
+
+
+def test_a_handler_value_error_is_invalid_request_on_openai():
+    with running(create_openai_app("e", "embeddings", bad_input)) as c:
+        r = c.post("/v1/embeddings", json={"model": "e", "input": "x"})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_request"

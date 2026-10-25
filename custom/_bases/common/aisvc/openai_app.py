@@ -79,7 +79,7 @@ def guard(app: FastAPI, name: str, model: str | None, call: Callable[[], Any]) -
     except OpenAIError:
         raise
     except ValueError as exc:
-        raise OpenAIError(400, str(exc)) from None
+        raise OpenAIError(400, str(exc), code="invalid_request") from None
     except Exception as exc:
         raise OpenAIError(500, f"{type(exc).__name__}: {exc}", type="server_error") from None
 
