@@ -99,10 +99,7 @@ def test_plan_steps_have_the_servers_fields(c):
     assert step["cold_start_measured"] is False and (step["model"], step["items"], step["hits"]) == ("silero-vad", 1, 0)
 
 
-def test_plan_reports_the_resolved_id(c, request):
-    if not isinstance(c, FakeCatalog):
-        request.applymarker(pytest.mark.xfail(raises=KeyError, strict=False,
-                                              reason="the server's planner fails for an alias until lane H's H1"))
+def test_plan_reports_the_resolved_id(c):
     assert [s["model"] for s in c.plan([{"name": "seg", "models": ["default-vad"]}])["steps"]] == ["silero-vad"]
 
 
