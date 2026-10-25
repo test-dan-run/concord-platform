@@ -381,6 +381,11 @@ Index key: `build_key` + `audio_sha256` (sha256 of the original file's bytes) + 
 (`span_start`, `span_end` in seconds, rounded to 3 decimals; `-1, -1` = the whole file) +
 `params_hash` (the app's 16-hex-character hash of its request parameters; it must not include the
 image or build key). Both Concord apps compute `params_hash` the same way, so their keys agree.
+A span that is not a finite number is refused (422).
+
+Output ids are kept as text. An id written as a plain integer (no leading zeros, at most 19 digits)
+comes back as a number; any other id comes back as the same text, so forgetting the id a lookup
+gave always finds the entry.
 
 | Call | Body | Response |
 |---|---|---|
