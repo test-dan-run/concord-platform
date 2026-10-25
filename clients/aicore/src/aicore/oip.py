@@ -58,7 +58,8 @@ class OIPClient:
     def _check(self, r: httpx.Response) -> dict[str, Any]:
         if r.status_code >= 400:
             try:
-                msg = r.json()["error"]
+                err = r.json()["error"]  # a string from the service, {"message", "type", "code"} from the gateway
+                msg = err["message"] if isinstance(err, dict) else err
             except (ValueError, KeyError, TypeError):
                 msg = r.text
             raise OIPError(r.status_code, msg)
