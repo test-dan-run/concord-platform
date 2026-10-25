@@ -246,7 +246,9 @@ and API key. Apps call it through the gateway like any platform model, and never
   not redacted.
 - Build key: sha256 of contract, api, base URL and model name. Changing any of them is a new build
   (verified again); limits and key replacement are not. Hosted models are also re-verified when their
-  last verification is over 24 hours old. Verification takes no lease.
+  last verification is over 24 hours old; that check runs only while `CATALOG_VERIFY_NEW_BUILDS` is on
+  (the default), the switch that also queues a platform model's new build. Verification takes no
+  lease and runs on its own worker, so it never waits behind a platform model's verification.
 - Leases may name hosted ids next to platform models: they are granted at once and never queue.
   `start` and `stop` return 409.
 - Gateway: incoming `Authorization` (and a header named like the custom auth header) is dropped and

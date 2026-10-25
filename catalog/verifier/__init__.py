@@ -6,7 +6,8 @@ demand, and whenever their build key changes (a build with no record yet).
 
 A hosted endpoint takes no lease and has no build to wait for: it is probed through the provider with
 the stored key (catalog/hosted.py), and re-verified every day, because a provider can change the model
-behind the same name.
+behind the same name. Hosted endpoints have their own worker thread, so they never wait behind a
+platform model's lease. Both workers take from one queue, each the first model of its own kind.
 """
 
 from __future__ import annotations
@@ -46,17 +47,23 @@ class Verifier:
         self.pending: dict[str, str] = {}  # model -> pending | running
         self._order: deque[str] = deque()
         self._lock = threading.Lock()
-        self._wake = threading.Event()
+        self._wake = {False: threading.Event(), True: threading.Event()}  # per worker: hosted or not
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="verifier")
-        self._thread.start()
+        self._threads = [threading.Thread(target=self._loop, args=(False,), daemon=True, name="verifier"),
+                         threading.Thread(target=self._loop, args=(True,), daemon=True, name="verifier-hosted")]
+        for t in self._threads:
+            t.start()
 
     def shutdown(self) -> None:
         self._stop.set()
-        self._wake.set()
+        for wake in self._wake.values():
+            wake.set()
+
+    def _is_hosted(self, model_id: str) -> bool:
+        return self.hosted is not None and model_id in self.hosted
 
     def enqueue(self, model_id: str) -> None:
         with self._lock:
@@ -64,28 +71,33 @@ class Verifier:
                 return
             self.pending[model_id] = "pending"
             self._order.append(model_id)
-        self._wake.set()
+        self._wake[self._is_hosted(model_id)].set()
 
     def status(self, model_id: str) -> str | None:
         with self._lock:
             return self.pending.get(model_id)
 
-    def _loop(self) -> None:
+    def _loop(self, hosted: bool) -> None:
+        """One worker: hosted endpoints, or platform models (whose lease may wait in the queue for a long time)."""
         last_scan = 0.0
+        wake = self._wake[hosted]
         while not self._stop.is_set():
-            if self.auto and time.monotonic() - last_scan > SCAN_S:
+            # The hosted worker scans: it never waits for a lease, so the daily re-verify is queued on time.
+            if hosted and self.auto and time.monotonic() - last_scan > SCAN_S:
                 last_scan = time.monotonic()
                 try:
                     self.scan()
                 except Exception:  # noqa: BLE001
                     log.exception("verification scan failed")
+            ids = self.hosted.ids() if self.hosted else set()
             with self._lock:
-                model = self._order.popleft() if self._order else None
+                model = next((m for m in self._order if (m in ids) == hosted), None)
                 if model:
+                    self._order.remove(model)
                     self.pending[model] = "running"
             if model is None:
-                self._wake.wait(SCAN_S)
-                self._wake.clear()
+                wake.wait(SCAN_S)
+                wake.clear()
                 continue
             try:
                 self.run(model)
