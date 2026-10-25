@@ -47,7 +47,8 @@ export function AddModel() {
   const name = params.get("name");
   const all = useQuery({ queryKey: ["models", "all"], queryFn: () => api.get<Model[]>("/models?all=1") });
   const [q, setQ] = useState("");
-  const entry = all.data?.find((m) => m.id === name) ?? null;
+  const services = (all.data ?? []).filter((m) => !m.hosted); // ?all=1 lists the hosted endpoints too
+  const entry = services.find((m) => m.id === name) ?? null;
   const hosted = params.get("source") === "hosted";
   const pick = (source: "platform" | "hosted") => setParams(source === "hosted" ? { source } : {});
 
@@ -81,7 +82,7 @@ export function AddModel() {
           {all.isLoading && <Spinner />}
           <ErrorNote error={all.error} />
           {GROUPS.map((g) => {
-            const items = (all.data ?? []).filter((m) => group(m) === g.key && (!q || `${m.id} ${m.aliases.join(" ")} ${m.description ?? ""} ${m.tasks.join(" ")}`.toLowerCase().includes(q.toLowerCase())));
+            const items = services.filter((m) => group(m) === g.key && (!q || `${m.id} ${m.aliases.join(" ")} ${m.description ?? ""} ${m.tasks.join(" ")}`.toLowerCase().includes(q.toLowerCase())));
             if (!items.length) return null;
             return (
               <div key={g.key} className="flex flex-col gap-1">
