@@ -33,6 +33,8 @@ def show(v: dict) -> None:
     else:
         print(f"  peak GiB = {prof['base']:.3f} + {prof['a']:.5f} x N x L + {prof['b']:.7f} x N x L^2  "
               f"(L in seconds; {len(prof['points'])} points, {prof['method']})")
+    if v.get("note"):
+        print(f"  no recommendation: {v['note']}")
     for key in ("recommendation", "need"):
         if key in v:
             r = v[key]
@@ -64,9 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     cat = Catalog(timeout=30.0)
     try:
         if args.cmd == "show":
-            item_s = args.item_s if args.item_s is not None or args.item_tokens is not None else 20.0
-            show(cat.batch(args.name, vram_gb=args.vram, item_s=None if args.item_tokens else item_s,
-                           item_tokens=args.item_tokens, n=args.n))
+            item_s, item_tokens = args.item_s, args.item_tokens
+            if item_s is None and item_tokens is None:  # the catalog uses the one in the profile's unit
+                item_s, item_tokens = 20.0, 1024
+            show(cat.batch(args.name, vram_gb=args.vram, item_s=item_s, item_tokens=item_tokens, n=args.n))
             return 0
         r = cat.batch_profile(args.name)
         print(f"{args.name}: measurement {r['measuring']}")

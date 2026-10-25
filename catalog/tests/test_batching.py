@@ -164,13 +164,29 @@ def test_batch_api_without_and_with_a_profile(cat):
 
         cat.profiler._save("wavlm-sv", "bk1", "measured",
                            Profile(kind="audio", base=TRUE[0], a=TRUE[1], b=TRUE[2], max_item_s=20.0), None)
-        v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item=20.0, n=8, full_gib=29.76)
+        v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item_s=20.0, item_tokens=None, n=8, full_gib=29.76)
         assert v["recommendation"]["batch"] == Profile(kind="audio", base=TRUE[0], a=TRUE[1],
                                                        b=TRUE[2]).recommend(24.0, 20.0)
         assert v["need"]["vram_gb"] == pytest.approx(peak(8, 20.0) / 0.9, abs=0.01)
         assert v["table"]["rows"][0]["length"] == 5.0
         assert cat.profiler.start_env("wavlm-sv", "bk1", 24.0)["AISVC_MAX_BATCH"]
         assert cat.profiler.start_env("wavlm-sv", "other-build", 24.0) == {}
+
+
+def test_a_recommendation_needs_a_length_in_the_profiles_unit_and_range(cat):
+    kv = Profile(kind="kv", kv_tokens=200_000, kv_gib=20.0, fixed_gib=5.0)
+    cat.profiler._save("qwen3-8b", "bk-kv", "measured", kv, None)
+    v = cat.profiler.view("qwen3-8b", "bk-kv", vram_gb=None, item_s=20.0, item_tokens=None, n=8, full_gib=29.76)
+    assert "recommendation" not in v and "need" not in v and "item_tokens" in v["note"]  # not 20 tokens
+    v = cat.profiler.view("qwen3-8b", "bk-kv", vram_gb=None, item_s=20.0, item_tokens=1024, n=None, full_gib=29.76)
+    assert v["recommendation"]["batch"] == kv.recommend(29.76, 1024) and "note" not in v
+
+    cat.profiler._save("wavlm-sv", "bk1", "measured",
+                       Profile(kind="audio", base=TRUE[0], a=TRUE[1], b=TRUE[2], max_item_s=15.0), None)
+    v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item_s=20.0, item_tokens=1024, n=8, full_gib=29.76)
+    assert "recommendation" not in v and "need" not in v and "15 s" in v["note"]
+    v = cat.profiler.view("wavlm-sv", "bk1", vram_gb=24.0, item_s=15.0, item_tokens=None, n=None, full_gib=29.76)
+    assert v["recommendation"]["unit"] == "s" and "note" not in v
 
 
 def test_a_start_passes_the_batch_limits_and_records_memory_before(cat, runtime):
@@ -190,6 +206,80 @@ def test_a_start_passes_the_batch_limits_and_records_memory_before(cat, runtime)
     assert env[BATCH_VARS["AISVC_MAX_BATCH"]] == "12" and env[BATCH_VARS["AISVC_MAX_BATCH_LEN"]] == "240000"
     assert "OTHER" not in env and seen == [("wavlm-sv", pytest.approx(29.0, abs=0.02))]  # 32 - 2 - 1 GiB
     assert cat.scheduler.runs["wavlm-sv"].gpu_used_before == pytest.approx(2.0)
+    assert cat.scheduler.runs["wavlm-sv"].batch == {"AISVC_MAX_BATCH": "12", "AISVC_MAX_BATCH_LEN": "240000"}
+
+
+def test_an_override_replaces_the_measured_limits_it_sets(cat):
+    prof = Profile(kind="audio", base=TRUE[0], a=TRUE[1], b=TRUE[2], max_item_s=60.0, points=points())
+    cat.profiler._save("wavlm-sv", "bk1", "measured", prof, None)
+    measured = prof.start_env(24.0)
+    lim = cat.profiler.limits("wavlm-sv", "bk1", 24.0)
+    assert lim["max_batch"] == int(measured["AISVC_MAX_BATCH"])
+    assert lim["max_len_s"] == int(measured["AISVC_MAX_BATCH_LEN"]) / 1000
+    assert lim["source"] == {"max_batch": "measured", "max_len_s": "measured"}
+
+    cat.profiler.set_override("wavlm-sv", 6, None)  # the audio limit stays measured
+    assert cat.profiler.start_env("wavlm-sv", "bk1", 24.0) == {**measured, "AISVC_MAX_BATCH": "6"}
+    lim = cat.profiler.limits("wavlm-sv", "bk1", 24.0)
+    assert lim["source"] == {"max_batch": "override", "max_len_s": "measured"} and lim["max_batch"] == 6
+    assert lim["measured"]["max_batch"] == int(measured["AISVC_MAX_BATCH"])
+    assert cat.profiler.start_env("wavlm-sv", "unmeasured", 24.0) == {"AISVC_MAX_BATCH": "6"}
+
+    cat.profiler.set_override("wavlm-sv", None, 90.5)
+    assert cat.profiler.start_env("wavlm-sv", "unmeasured", 24.0) == {"AISVC_MAX_BATCH_LEN": "90500"}
+    lim = cat.profiler.limits("wavlm-sv", "unmeasured", 24.0)
+    assert lim["max_batch"] is None and lim["source"]["max_batch"] == "default"
+    for bad in ((None, None), (0, None), (5000, None), (None, 0.0), (None, 7000.0)):
+        with pytest.raises(ValueError):
+            cat.profiler.set_override("wavlm-sv", *bad)
+    cat.profiler.clear_override("wavlm-sv")
+    assert cat.profiler.start_env("wavlm-sv", "bk1", 24.0) == measured
+
+
+def test_the_batch_api_shows_and_sets_the_limits(cat, monkeypatch):
+    monkeypatch.setattr(cat.builds, "current", lambda p, s, c: type("B", (), {"build_key": "bk1"})())
+    with TestClient(create_app(cat, start=False)) as c:
+        v = c.get("/api/models/wavlm-sv/batch").json()
+        assert v["override"] is None and v["running"] is None
+        assert v["limits"]["max_batch"] is None and v["limits"]["source"]["max_batch"] == "default"
+        r = c.put("/api/models/wavlm-sv/batch-override", json={"max_batch": 4})
+        assert r.status_code == 200 and r.json()["max_batch"] == 4 and r.json()["max_len_s"] is None
+        v = c.get("/api/models/wavlm-sv/batch").json()
+        assert v["override"]["max_batch"] == 4 and v["limits"]["max_batch"] == 4
+        assert c.put("/api/models/wavlm-sv/batch-override", json={"max_batch": 0}).status_code == 422
+        assert c.put("/api/models/wavlm-sv/batch-override", json={}).status_code == 422
+        assert c.delete("/api/models/wavlm-sv/batch-override").status_code == 204
+        assert c.get("/api/models/wavlm-sv/batch").json()["override"] is None
+        assert c.put("/api/models/bge-m3/batch-override", json={"max_batch": 4}).status_code == 409  # vLLM
+        assert "limits" not in c.get("/api/models/bge-m3/batch").json()
+        assert c.put("/api/models/silero-vad/batch-override", json={"max_batch": 4}).status_code == 409  # CPU
+        assert c.put("/api/models/no-such/batch-override", json={"max_batch": 4}).status_code == 404
+
+
+def test_in_use_reports_the_start_limits_and_the_live_batchers(cat, monkeypatch):
+    import httpx
+
+    p = cat.scheduler.platform()
+    s = p.get("wavlm-sv")
+    assert cat.profiler.in_use(p, s) is None  # not running
+    run = cat.scheduler.runs["wavlm-sv"]
+    run.running, run.given, run.batch = True, 0.5, {"AISVC_MAX_BATCH": "12", "AISVC_MAX_BATCH_LEN": "240000"}
+    batch = {"embed": {"max_items": 12, "max_len": 120000, "configured_max_items": 12, "configured_max_len": 240000,
+                       "backoffs": 1, "lowered": True},
+             "requests": {"max_items": 65536, "max_len": None, "configured_max_items": 65536,
+                          "configured_max_len": None, "backoffs": 0, "lowered": False}}
+    monkeypatch.setattr(httpx, "get", lambda url, timeout: httpx.Response(200, json={"batch": batch}))
+    u = cat.profiler.in_use(p, s)
+    assert u["started_with"] == {"max_batch": 12, "max_len_s": 240.0} and u["vram_gb"] > 0
+    assert u["batchers"] == [{"name": "embed", "max_batch": 12, "max_len_s": 240.0, "backoffs": 1, "lowered_len_s": 120.0}]
+
+    def down(url, timeout):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx, "get", down)
+    run.batch = None  # started outside the catalog
+    u = cat.profiler.in_use(p, s)
+    assert u["started_with"] is None and u["batchers"] == []
 
 
 def test_just_batch_prints_the_recommendation_and_table(cat, monkeypatch, capsys):

@@ -16,6 +16,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from tools.schema import CUSTOM_ENGINE
+
 from . import cards
 from .builds import Builds
 from .datasets.routes import add_dataset_routes
@@ -127,6 +129,11 @@ class LeaseIn(BaseModel):
     ttl_s: float | None = Field(default=None, gt=0, le=3600)
 
 
+class BatchOverrideIn(BaseModel):
+    max_batch: int | None = None  # most items in one batch (AISVC_MAX_BATCH)
+    max_len_s: float | None = None  # most audio in one batch, items x the longest, in seconds (AISVC_MAX_BATCH_LEN)
+
+
 class AppIn(BaseModel):
     name: str
     base_url: str
@@ -227,10 +234,12 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
               n: int | None = Query(default=None, ge=1)) -> dict[str, Any]:
         """The batch profile of the model's current build: the recommended batch for vram_gb (default: the full
         budget) and an item of item_s seconds (audio) or item_tokens tokens (vLLM), the memory batch `n` needs,
-        and a table of lengths against 16, 24 and 32 GB and the full budget."""
+        and a table of lengths against 16, 24 and 32 GB and the full budget. For a custom GPU image, `limits` are
+        the ones its next start gets at the full budget and `override` is what was set by hand. `running` is
+        what the running service started with and reports now."""
         p = sched.platform()
         try:
-            p.get(model_id)
+            s = p.get(model_id)
         except KeyError:
             raise SchedulerError(404, f"unknown model {model_id!r}") from None
         with sched.lock:
@@ -241,8 +250,38 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
                 bk = cat.builds.current(p, p.get(model_id), None).build_key
             except Exception:  # noqa: BLE001
                 bk = None
-        item = item_tokens if item_tokens is not None else item_s
-        return cat.profiler.view(model_id, bk, vram_gb=vram_gb, item=item, n=n, full_gib=full_budget_gib(p, sched))
+        full = full_budget_gib(p, sched)
+        out = cat.profiler.view(model_id, bk, vram_gb=vram_gb, item_s=item_s, item_tokens=item_tokens, n=n,
+                                full_gib=full)
+        if s.gpu and s.engine == CUSTOM_ENGINE:
+            out["limits"] = cat.profiler.limits(model_id, bk, full)
+            out["override"] = cat.profiler.override(model_id)
+        out["running"] = cat.profiler.in_use(p, s)
+        return out
+
+    def _custom_gpu(model_id: str) -> None:
+        try:
+            s = sched.platform().get(model_id)
+        except KeyError:
+            raise SchedulerError(404, f"unknown model {model_id!r}") from None
+        if not s.gpu or s.engine != CUSTOM_ENGINE:
+            raise SchedulerError(409, f"{model_id} is not a custom GPU image: the catalog does not set its batch "
+                                      "limits" + (" (vLLM sizes its own batches)" if s.engine == "vllm" else ""))
+
+    @app.put("/api/models/{model_id}/batch-override")
+    def set_batch_override(model_id: str, body: BatchOverrideIn) -> dict[str, Any]:
+        """Set the batch limits by hand for the model's next starts (a limit left out stays measured)."""
+        _custom_gpu(model_id)
+        try:
+            return cat.profiler.set_override(model_id, body.max_batch, body.max_len_s)
+        except ValueError as exc:
+            raise SchedulerError(422, str(exc)) from None
+
+    @app.delete("/api/models/{model_id}/batch-override", status_code=204)
+    def clear_batch_override(model_id: str) -> Response:
+        _custom_gpu(model_id)
+        cat.profiler.clear_override(model_id)
+        return Response(status_code=204)
 
     @app.post("/api/models/{model_id}/batch-profile", status_code=202)
     def batch_profile(model_id: str) -> dict[str, Any]:

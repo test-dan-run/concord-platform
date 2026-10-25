@@ -19,6 +19,9 @@ image's own torch counters from /platform/memory. CTranslate2 and ONNX images ha
 
 vLLM services batch by themselves, so nothing is measured: their startup log gives the KV cache size, and
 the recommendation is a --max-num-seqs value, KV tokens / tokens per sequence.
+
+A person can override either limit for a model (PUT /api/models/{id}/batch-override). The override is kept
+per model, not per build, so it outlasts a rebuild, and a limit it leaves out still comes from the profile.
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ import httpx
 import numpy as np
 
 from tools import render
-from tools.schema import Manifest, Platform
+from tools.schema import CUSTOM_ENGINE, Manifest, Platform
 
 from .db import DB, dumps, now_iso
 from .scheduler import Scheduler, SchedulerError
@@ -506,10 +509,83 @@ class BatchProfiler:
             self._save(model, build_key, "failed", None, error)
         log.warning("batch profile of %s: %s", model, error)
 
+    def override(self, model: str) -> dict[str, Any] | None:
+        return self.db.one("SELECT max_batch, max_len_s, set_at FROM batch_override WHERE model_id = ?", (model,))
+
+    def set_override(self, model: str, max_batch: int | None, max_len_s: float | None) -> dict[str, Any]:
+        """Set the limits by hand; one left out still comes from the profile. Raises ValueError when out of range."""
+        if max_batch is None and max_len_s is None:
+            raise ValueError("give max_batch, max_len_s or both (DELETE the override to use the measured limits)")
+        if max_batch is not None and not 1 <= max_batch <= LIFT["max_items"]:
+            raise ValueError(f"max_batch must be from 1 to {LIFT['max_items']}")
+        if max_len_s is not None and not 0 < max_len_s <= MAX_REQUEST_S:
+            raise ValueError(f"max_len_s must be over 0 and at most {MAX_REQUEST_S:g} s")
+        self.db.execute("INSERT INTO batch_override (model_id, max_batch, max_len_s, set_at) VALUES (?, ?, ?, ?) "
+                        "ON CONFLICT(model_id) DO UPDATE SET max_batch = excluded.max_batch, "
+                        "max_len_s = excluded.max_len_s, set_at = excluded.set_at",
+                        (model, max_batch, max_len_s, now_iso()))
+        return self.override(model) or {}
+
+    def clear_override(self, model: str) -> None:
+        self.db.execute("DELETE FROM batch_override WHERE model_id = ?", (model,))
+
+    def limits(self, model: str, build_key: str | None, vram_gib: float) -> dict[str, Any]:
+        """The limits a start of `model` given `vram_gib` gets, and where each comes from: "override" (set by
+        hand), "measured" (the build's profile) or "default" (the image's own, shown as None)."""
+        p = self.profile(build_key)
+        env = p.start_env(vram_gib) if p else {}
+        o = self.override(model) or {}
+        measured = {"max_batch": int(env["AISVC_MAX_BATCH"]) if "AISVC_MAX_BATCH" in env else None,
+                    "max_len_s": int(env["AISVC_MAX_BATCH_LEN"]) / 1000 if "AISVC_MAX_BATCH_LEN" in env else None}
+        out: dict[str, Any] = {"vram_gb": round(vram_gib, 2), "source": {}, "measured": measured}
+        for key in ("max_batch", "max_len_s"):
+            if o.get(key) is not None:
+                out[key], out["source"][key] = o[key], "override"
+            else:
+                out[key], out["source"][key] = measured[key], "measured" if measured[key] is not None else "default"
+        return out
+
     def start_env(self, name: str, build_key: str | None, vram_gib: float) -> dict[str, str]:
         """Batch limits for a start of `name` given `vram_gib` (the scheduler calls this; {} = image defaults)."""
-        p = self.profile(build_key)
-        return p.start_env(vram_gib) if p else {}
+        lim = self.limits(name, build_key, vram_gib)
+        env = {}
+        if lim["max_batch"] is not None:
+            env["AISVC_MAX_BATCH"] = str(int(lim["max_batch"]))
+        if lim["max_len_s"] is not None:
+            env["AISVC_MAX_BATCH_LEN"] = str(round(lim["max_len_s"] * 1000))
+        return env
+
+    def in_use(self, p: Platform, s: Manifest) -> dict[str, Any] | None:
+        """The limits the running service started with (None: started outside the catalog) and the ones it
+        reports now, per batcher. None when it is not running."""
+        sched = self.scheduler
+        with sched.lock:
+            run = sched.runs.get(s.name)
+            if run is None or not run.running:
+                return None
+            given, batch = run.given, run.batch
+        total = sched.gpu[0] if sched.gpu else p.config.gpu_total_gb
+        started = None if batch is None else {
+            "max_batch": int(batch["AISVC_MAX_BATCH"]) if "AISVC_MAX_BATCH" in batch else None,
+            "max_len_s": int(batch["AISVC_MAX_BATCH_LEN"]) / 1000 if "AISVC_MAX_BATCH_LEN" in batch else None}
+        out: dict[str, Any] = {"vram_gb": round(given * total, 2) if given else None, "started_with": started,
+                               "batchers": []}
+        if s.engine != CUSTOM_ENGINE:
+            return out
+        try:
+            r = httpx.get(f"{sched.upstream_url(s.name)}/platform/memory", timeout=2.0)
+            stats = (r.json().get("batch") or {}) if r.status_code == 200 else {}
+        except (httpx.HTTPError, ValueError, AttributeError):
+            stats = {}
+        for name, b in stats.items():
+            items, length = b.get("configured_max_items"), b.get("configured_max_len")
+            if items is None or (items >= LIFT["max_items"] and length is None):
+                continue  # a batcher of whole requests (ASR servers group files, then batch their chunks)
+            out["batchers"].append({
+                "name": name, "max_batch": items, "max_len_s": length / 1000 if length else None,
+                "backoffs": int(b.get("backoffs") or 0),
+                "lowered_len_s": b["max_len"] / 1000 if b.get("lowered") and b.get("max_len") else None})
+        return out
 
     # -- one measurement
 
@@ -607,8 +683,8 @@ class BatchProfiler:
 
     # -- the API view
 
-    def view(self, model: str, build_key: str | None, *, vram_gb: float | None, item: float | None,
-             n: int | None, full_gib: float | None) -> dict[str, Any]:
+    def view(self, model: str, build_key: str | None, *, vram_gb: float | None, item_s: float | None,
+             item_tokens: int | None, n: int | None, full_gib: float | None) -> dict[str, Any]:
         row = self.stored(build_key) if build_key else None
         out: dict[str, Any] = {"model": model, "build_key": build_key, "measuring": self.status(model),
                                "status": row["status"] if row else "none", "error": row["error"] if row else None,
@@ -619,6 +695,14 @@ class BatchProfiler:
         out["profile"] = prof.to_json()
         out["table"] = table(prof, full_gib)
         unit = "tokens" if prof.kind == "kv" else "s"
+        # a length in the other unit is no length for this profile (aicore and `just batch` default to 20 s)
+        item = item_tokens if prof.kind == "kv" else item_s
+        if item is None and (item_s if prof.kind == "kv" else item_tokens) is not None:
+            out["note"] = f"this profile counts items in {unit}: give item_{'tokens' if unit == 'tokens' else 's'}"
+        elif item is not None and prof.kind == "audio" and prof.max_item_s and item > prof.max_item_s:
+            # the server splits a longer item into pieces of its own, so one item of `item` s is not one row
+            out["note"] = f"items over {prof.max_item_s:g} s are split by the server: give item_s of at most that"
+            item = None
         if item is not None:
             v = vram_gb or full_gib
             if v:
