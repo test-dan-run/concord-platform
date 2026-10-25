@@ -198,8 +198,10 @@ where N is the number of items and L is the length of each in seconds. The L² t
 models. The recommendation for V GB is the largest N whose predicted peak stays under 0.9 × V. Peak
 memory is read from `nvidia-smi` during each request, less what the GPU used before the model started.
 This is correct because only one GPU model runs at a time. For a PyTorch image it is also read from the
-image's own counters (`GET /platform/memory`), and the larger value is kept. CTranslate2 and ONNX images
-have only the first reading.
+image's own counters (`GET /platform/memory`), and that reading is kept, because the device also holds
+memory that PyTorch cached for earlier batches. CTranslate2 and ONNX images have only the `nvidia-smi`
+reading. Those runtimes keep the memory a bigger batch took, so a reading counts only when it is above the
+highest one so far.
 
 When a build has a profile, each start passes limits for the memory the start was given:
 `AISVC_MAX_BATCH` (the batch for the shortest measured length) and `AISVC_MAX_BATCH_LEN` (the padded

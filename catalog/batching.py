@@ -13,9 +13,11 @@ image can use memory differently. The recommendation for V GiB is the largest N 
 next start of that build gets the limits for the memory it was given, as AISVC_MAX_BATCH (N at the short
 length) and AISVC_MAX_BATCH_LEN (the padded length, items x longest, in milliseconds of audio).
 
-Peak memory is read two ways and the larger is kept: nvidia-smi sampled during each request (device used
-minus what was used before the model started; correct because one GPU model runs at a time), and the
-image's own torch counters from /platform/memory. CTranslate2 and ONNX images have only the first.
+Peak memory is read two ways: nvidia-smi sampled during each request (device used minus what was used
+before the model started; correct because one GPU model runs at a time), and the image's own torch counters
+from /platform/memory. The torch reading is kept when there is one, since the device also holds what torch
+cached for earlier batches. CTranslate2 and ONNX images have only the first, and it counts only above the
+highest one so far, because those runtimes keep the memory a bigger batch took.
 
 vLLM services batch by themselves, so nothing is measured: their startup log gives the KV cache size, and
 the recommendation is a --max-num-seqs value, KV tokens / tokens per sequence.
