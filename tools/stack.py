@@ -156,6 +156,7 @@ def wait_healthy(p: Platform, name: str, timeout: int) -> None:
     start = time.monotonic()
     tty = sys.stdout.isatty()
     last = ""
+    next_report = 0  # without a terminal, one progress line about every 30 s
     while True:
         elapsed = int(time.monotonic() - start)
         c = containers(p).get(name)
@@ -163,8 +164,9 @@ def wait_healthy(p: Platform, name: str, timeout: int) -> None:
         line = f"  {name}: {state}/{health} {elapsed // 60}m{elapsed % 60:02d}s (timeout {timeout // 60}m)"
         if tty:
             print("\r" + line.ljust(len(last)), end="", flush=True)
-        elif elapsed % 30 == 0 and line != last:
+        elif elapsed >= next_report:
             print(line, flush=True)
+            next_report = (elapsed // 30 + 1) * 30
         last = line
         if health == "healthy" or (state == "running" and health == "-"):
             print(("\r" if tty else "") + f"  {name}: healthy after {elapsed}s".ljust(len(last)), flush=True)
