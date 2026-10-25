@@ -5,13 +5,10 @@ import logging
 from catalog_helpers import drain, step
 
 from catalog.runtime import StartError
-from tools import render
 
 
-def test_a_failed_start_whose_clean_up_stop_fails_logs_a_warning(cat, runtime, monkeypatch, caplog):
+def test_a_failed_start_whose_clean_up_stop_fails_logs_a_warning(cat, runtime, caplog):
     s = cat.scheduler
-    cat.settings.docker = True  # the clean-up stop only runs against Docker
-    monkeypatch.setattr(render, "write_outputs", lambda p: None)  # keep the checkout's generated files as they are
 
     def start(p, svc, env=None):
         raise StartError("container exited/-")
