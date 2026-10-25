@@ -683,7 +683,10 @@ class Scheduler:
                     run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
                     self._stamp(run)
                 if self.settings.docker:
-                    self.runtime.stop(p, [name])
+                    try:  # a container left half started holds GPU memory
+                        self.runtime.stop(p, [name])
+                    except Exception as exc:  # noqa: BLE001 - the start's own error is what the request reports
+                        log.warning("stop of %s after its failed start failed: %s", name, exc)
                 return
             build = None
             try:
