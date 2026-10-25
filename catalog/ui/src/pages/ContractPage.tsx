@@ -70,7 +70,7 @@ outputs: AUDIO        FP32  [-1,-1] enhanced, same rate
          LENGTHS      INT32 [-1]
          SAMPLE_RATE  INT32 [1]     the input's rate`}</pre>
           <span className="text-xs text-muted">
-            Audio in, audio out: denoising, dereverberation, speech separation to one target. One clip as <span className="num">AUDIO [-1]</span> without <span className="num">LENGTHS</span> still works. Tensors are sent as JSON number arrays, as the platform contract requires; the binary tensor extension is not implemented, so send files of minutes in pieces. <span className="num">deepfilternet3</span> and <span className="num">wpe-dereverb</span> take any rate from 8 kHz. <span className="num">nemotronlabs-re-use</span> takes 8, 16, 22.05, 24, 32, 44.1 or 48 kHz, and enhances clips over 15 s in 5 s chunks itself.
+            Audio in, audio out: denoising, dereverberation, speech separation to one target. One clip as <span className="num">AUDIO [-1]</span> without <span className="num">LENGTHS</span> still works. Tensors are sent as JSON number arrays, as the platform contract requires; the binary tensor extension is not implemented, so send files of minutes in pieces. <span className="num">deepfilternet3</span> and <span className="num">wpe-dereverb</span> take any rate from 8 kHz. <span className="num">nemotronlabs-re-use</span> takes 8, 16, 22.05, 24, 32, 44.1 or 48 kHz, and enhances clips over 240,000 samples (15 s at 16 kHz) in 5 s chunks itself.
           </span>
         </Panel>
         <Panel title="Text normalisation (ITN) · openai-inspired / text.itn">
