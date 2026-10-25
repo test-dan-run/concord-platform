@@ -907,14 +907,14 @@ class Scheduler:
 
     @contextlib.contextmanager
     def hold(self, holder: str, model: str, stop: threading.Event, *, wait_s: float | None = None,
-             build_wait_s: float | None = None) -> Iterator[Held | None]:
+             build_wait_s: float | None = None, check_after: bool = True) -> Iterator[Held | None]:
         """Lease one model for a job of the catalog's own (verification, a batch profile), as an app would.
 
         The lease waits its turn in the queue, heartbeaten, until it is active and the model's build has a key.
         The job then runs while a thread heartbeats the lease, and the lease is released on exit. Yields None
         when `stop` is set first. Raises SchedulerError when the lease is refused, and with these messages:
         - "could not start: <the request's error>" when the lease fails (checked again when the job ends
-          without an error)
+          without an error, unless `check_after` is False: a job that already stored its result keeps it)
         - "no build key after <wait_s> min" when it is not active with a build key `wait_s` after the request
         - "no build key: <why>" when an active lease's model has had no build key for `build_wait_s`
         LeaseLost, a SchedulerError, when the lease ends otherwise while it waits. A limit of None: no limit."""
@@ -925,7 +925,7 @@ class Scheduler:
             threading.Thread(target=self._keep_alive, args=(r.id, done), daemon=True).start()
             yield held
             r = self.get(r.id)
-            if r.state == "failed":  # the model crashed under the job and could not start again
+            if check_after and r.state == "failed":  # the model crashed under the job and could not start again
                 raise SchedulerError(409, f"could not start: {r.error}")
         finally:
             done.set()

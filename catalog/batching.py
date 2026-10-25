@@ -612,7 +612,8 @@ class BatchProfiler:
             self._fail(model, None, f"{s.contract}/{s.api} has no batch measurement")
             return
         try:
-            with sched.hold(HOLDER, model, self._stop, wait_s=30 * 60) as held:  # gives up 30 min after the request
+            # Gives up 30 min after the request. A profile measured before the model crashed is kept.
+            with sched.hold(HOLDER, model, self._stop, wait_s=30 * 60, check_after=False) as held:
                 if held is None:
                     return
                 run = sched.run_view(model)
