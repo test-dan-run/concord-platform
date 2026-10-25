@@ -117,6 +117,7 @@ class Run:
     usage_dirty: bool = False
     pinned: bool = False  # started on purpose (manual start, `just up`, outside the catalog): never spun down
     repin: bool = False  # pinned while being stopped: the pin outlives that stop
+    pinned_by: str | None = None  # the request that brings up a model pinned while down: the pin goes if it ends first
     stop_failures: int = 0  # stops in a row that failed; the spin-down tries again at stop_retry_at
     stop_retry_at: float | None = None
     released_at: float | None = None  # when the last lease holding it ended: spun down once nothing needs it
@@ -352,11 +353,12 @@ class Scheduler:
         self.changed.notify_all()
 
     def _drop_stale_pins(self) -> None:
-        """A start request pins its models when it is made. If it ends before they run (it expired in the queue,
-        or failed), the pin goes with it: a later lease would otherwise bring the model up for good."""
-        wanted = {m for r in self._live() for m in r.models}
-        for name, run in self.runs.items():
-            if run.pinned and not run.running and not run.starting and name not in wanted:
+        """A manual start pins its model when it is asked for, and waits on its own start request or on the live
+        request it joined. If that request ends before the model runs (it expired in the queue, or failed), the
+        pin goes with it, also when another request names the model: that one would bring it up for good."""
+        live = {r.id for r in self._live()}
+        for run in self.runs.values():
+            if run.pinned and not run.running and not run.starting and run.pinned_by not in live:
                 run.pinned = False
 
     def _spin_down(self, now: float) -> None:
@@ -877,7 +879,7 @@ class Scheduler:
             r = Request(f"l-{uuid.uuid4().hex[:12]}", self._seq, kind, holder.strip(), names, "queued",
                         float(ttl_s or self.settings.lease_ttl_s), now, now)
             if kind == "start" and r.holder != "gateway":
-                self._pin(self._local(r))
+                self._pin(self._local(r), r.id)
             self.requests[r.id] = r
             self._save(r)
             self._schedule(p, now)
@@ -1005,16 +1007,17 @@ class Scheduler:
             for r in self._live():
                 if name in r.models:
                     if holder != "gateway":
-                        self._pin([name])
+                        self._pin([name], r.id)
                     return r
         return self.request(holder, [name], kind="start")
 
-    def _pin(self, names: list[str]) -> None:
+    def _pin(self, names: list[str], rid: str | None = None) -> None:
         """Started on purpose (not a gateway call): kept up after leases end, until evicted or stopped. A model
-        being stopped keeps the pin after that stop: its start comes after the stop."""
+        being stopped keeps the pin after that stop: its start comes after the stop. `rid` is the request that
+        brings a model that is not up yet: the pin goes if that request ends first."""
         for m in names:
             run = self.runs.setdefault(m, Run())
-            run.pinned, run.repin = True, run.repin or run.stopping
+            run.pinned, run.repin, run.pinned_by = True, run.repin or run.stopping, rid
 
     def begin_call(self, name: str) -> None:
         with self.lock:

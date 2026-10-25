@@ -358,7 +358,8 @@ priority.
   until one works (`POST /api/models/{id}/stop` still tries at once). Models started on
   purpose (`POST /api/models/{id}/start`, `just up`, or found running outside the catalog) stay up
   until they are evicted or stopped, also when the start was asked for while the model was being
-  stopped. A model the gateway started for a call without a lease is stopped
+  stopped. A start that ends before its model runs (`just up` gave up while it was queued) leaves no
+  pin, also when another request brings the model up later. A model the gateway started for a call without a lease is stopped
   after `CATALOG_GATEWAY_IDLE_S` (default 600 s) without a call, unless a request names it. A model
   whose lease ended needs no settle time before it is evicted.
 - The catalog watches Docker every few seconds, so services started or stopped outside it (`docker`,
