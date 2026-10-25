@@ -33,17 +33,16 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from tools import render
 from tools.schema import Manifest, Platform, PlatformError, load_platform
-from tools.vram_check import BATCH_VARS, RESERVE_GIB, UTIL_VAR, VRAM_VAR, start_env
+from tools.vram_check import BATCH_VARS, RESERVE_GIB, UTIL_VAR, VRAM_VAR, min_gib, start_env
 
 from .builds import Build, Builds
 from .db import DB, dumps, iso, now_iso
 from .events import Events
-from .runtime import ContainerInfo, Runtime, StartError, budget_gib
+from .runtime import ContainerInfo, Runtime, StartError
 from .settings import Settings
 
 log = logging.getLogger("catalog.scheduler")
@@ -102,14 +101,12 @@ class Run:
     running: bool = False
     ready_at: float | None = None  # when it became healthy (or was first seen running)
     starting: bool = False
-    start_began: float | None = None
     stopping: bool = False
     failed: str | None = None  # the last start's failure, until it runs again
     in_flight: int = 0
     calls: int = 0
     errors: int = 0
     last_used: float | None = None
-    container: ContainerInfo | None = None
     build: Build | None = None
     usage_dirty: bool = False
     pinned: bool = False  # started on purpose (manual start, `just up`, outside the catalog): never spun down
@@ -301,7 +298,6 @@ class Scheduler:
         for name in set(self.runs) | set(containers):
             run = self.runs.setdefault(name, Run())
             c = containers.get(name)
-            run.container = c
             if run.starting or run.stopping or run.gen > gen:
                 continue  # the starter thread owns these until it finishes; the next tick sees what it did
             up = c is not None and c.state == "running" and c.health in ("healthy", "-")
@@ -437,7 +433,7 @@ class Scheduler:
         if run and run.given is not None:
             return run.given * total_gib
         try:
-            return budget_gib(p.get(name), total_gib)
+            return min_gib(p.get(name), total_gib)
         except KeyError:
             return 0.0
 
@@ -454,7 +450,7 @@ class Scheduler:
         if loading:
             return Fit(False, reason=f"waiting for {', '.join(loading)} to finish loading before measuring free GPU memory")
         s = p.get(load[0])
-        need = budget_gib(s, total) + RESERVE_GIB  # its minimum
+        need = min_gib(s, total) + RESERVE_GIB  # its minimum
         # Models being stopped give back about what they hold (the start checks again).
         free += sum(self.gpu_gib(p, m, total) for m, run in self.runs.items() if run.stopping or m in fit.evict)
         try:
@@ -652,7 +648,6 @@ class Scheduler:
                     run.starting = False
                     self._stamp(run)
                     return
-                run.start_began = time.time()
             s = p.get(name)
             short, env, gpu = self._wait_for_gpu(p, s)
             if short:

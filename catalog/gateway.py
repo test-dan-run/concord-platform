@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
 
 import anyio
 import httpx
@@ -236,7 +235,3 @@ class Gateway:
         except BaseException:
             end(True)
             raise
-
-
-def routes_info() -> dict[str, Any]:
-    return {"prefix": "/m/{id}/", "oip": "/v2/models/{id}/"}

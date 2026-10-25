@@ -8,7 +8,6 @@ import json
 import logging
 import queue
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Query, Request

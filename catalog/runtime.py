@@ -50,12 +50,6 @@ class ContainerInfo:
     config_hash: str | None  # label aiplatform.config_hash: the config the container was started with
 
 
-def budget_gib(s: Manifest, total_gib: float) -> float:
-    """The least GPU memory a service loads in (gpu.util x the device, or gpu.vram_gb). At start it gets more:
-    the whole GPU as measured free (tools/vram_check.py start_memory)."""
-    return min_gib(s, total_gib)
-
-
 class Runtime(Protocol):
     def containers(self, p: Platform) -> dict[str, ContainerInfo]: ...
     def image_id(self, ref: str) -> str | None: ...
@@ -288,6 +282,6 @@ class FakeRuntime:
             return None
         known = {s.name: s for s in p.services}
         with self._lock:
-            used = sum(float(self.envs.get(n, {}).get(VRAM_VAR) or budget_gib(known[n], self.gpu_total_gib))
+            used = sum(float(self.envs.get(n, {}).get(VRAM_VAR) or min_gib(known[n], self.gpu_total_gib))
                        for n in self.running if n in known and known[n].gpu)
         return self.gpu_total_gib, self.gpu_total_gib - used - self.gpu_other_gib
