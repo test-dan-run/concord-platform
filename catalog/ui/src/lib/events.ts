@@ -22,7 +22,8 @@ export function useCatalogEvents(): boolean {
     const es = new EventSource("/api/events");
     es.onopen = () => setLive(true);
     es.onerror = () => setLive(false);
-    es.addEventListener("model", () => touch("models", "model", "platform"));
+    // A model started or stopped: the Batching panel shows the limits the running service started with.
+    es.addEventListener("model", () => touch("models", "model", "platform", "batch"));
     es.addEventListener("lease", () => touch("leases", "models", "model"));
     es.addEventListener("queue", () => touch("leases", "platform"));
     es.addEventListener("export", () => touch("exports"));
