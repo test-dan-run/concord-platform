@@ -256,15 +256,7 @@ class Exporter:
             phases.append("copying weights")
         phases.append("writing records")
         phase = phases[0]
-        p = self.scheduler.platform()
-        services = [p.get(m) for m in req["models"]]
-        sized = {s.name: self._sized(p, s, self.registry.record(s.name, p)["build_key"]) for s in services}
-        images = list(dict.fromkeys(p.image(s) for s in services))
-        # "up to": images that share layers make images.tar smaller than the sum of their sizes
-        image_sum = sum(self.runtime.image_size(ref) or 0 for ref in images)
-        weights_sum = sum(sized[s.name][1].size for s in services) if req["weights"] else 0
-        expected = (image_sum if bundle and req["images"] else 0) + weights_sum
-        done = 0
+        expected = done = 0
 
         def enter(name: str, detail: str | None = None) -> None:
             nonlocal phase
@@ -284,6 +276,14 @@ class Exporter:
                 self._remove(str(out))
 
         try:
+            p = self.scheduler.platform()
+            services = [p.get(m) for m in req["models"]]
+            sized = {s.name: self._sized(p, s, self.registry.record(s.name, p)["build_key"]) for s in services}
+            images = list(dict.fromkeys(p.image(s) for s in services))
+            # "up to": images that share layers make images.tar smaller than the sum of their sizes
+            image_sum = sum(self.runtime.image_size(ref) or 0 for ref in images)
+            weights_sum = sum(sized[s.name][1].size for s in services) if req["weights"] else 0
+            expected = (image_sum if bundle and req["images"] else 0) + weights_sum
             enter("checking disk space")
             out.mkdir(parents=True, exist_ok=False)
             created = True
