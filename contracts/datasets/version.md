@@ -8,8 +8,10 @@ a link to this file. The design is in [../../DATASET_CATALOG_PLAN.md](../../DATA
 
 The format is `concord-reference-package`, format version 3. Readers also take versions 1 and 2. Version 1 has no
 labels, version 2 adds labels, and version 3 allows a version with audio only (§6). A reader refuses a format
-version it doesn't know, with a message that names the versions it does know. Fields a reader doesn't know are
-ignored, so a newer writer can add fields without a new format version.
+version it doesn't know, with a message that names the versions it does know. In `manifest.json`, and in the
+records of the references file and of `refs/uids.jsonl`, fields a reader doesn't know are ignored, so a newer writer
+can add fields there without a new format version. The header of `files.csv` (§3) and the keys of
+`refs/attributes.json` (§5) are fixed: anything else there makes the version invalid.
 
 Times are seconds as JSON numbers. Timestamps are ISO 8601 in UTC with a `Z`. Paths are relative POSIX paths
 without `..`. JSON files are UTF-8.
@@ -59,7 +61,9 @@ are shared through the Model Catalog's output index, so a version doesn't carry 
 | `models` | no | Model Catalog ids of the models that made the pseudo labels |
 | `normaliser` | no | the suggested WER normaliser, as an id (`basic`) or a key (`basic@1`) |
 
-The catalog fills four fields when it stores a version, whatever the writer sent:
+A writer may leave out `source` and `export_version`. If it sends `source`, it must be an object with all four
+fields set, and `export_version` must come with it as 1, 2, ..., else the version is invalid. The catalog fills four
+fields when it stores a version, whatever the writer sent:
 
 - `source` is `{"app": <the publishing app>, "install_id": "dataset-catalog", "dataset_uid": <dataset id>,
   "dataset_name": <dataset name>}`. Versions of one catalog dataset share `install_id` and `dataset_uid`, so Bench
@@ -71,8 +75,9 @@ The catalog fills four fields when it stores a version, whatever the writer sent
 ## 3. `files.csv`
 
 The header is `path,sha256,duration,sample_rate`, and there is one row per audio file. `path` is the file's path in
-the dataset. `sha256` is the hex SHA-256 of the original bytes, which is the file's key in the store. `duration` is
-in seconds, and `sample_rate` is an integer in Hz. File stems (the file name without its extension) are unique,
+the dataset. `sha256` is the SHA-256 of the original bytes as 64 lowercase hex characters, which is the file's key
+in the store. `duration` is in seconds, a finite number of 0 or more, and `sample_rate` is a whole number of Hz
+above 0. Neither may be written with `_`. File stems (the file name without its extension) are unique,
 ignoring case, because references are matched to audio by stem.
 
 ## 4. References
@@ -111,10 +116,10 @@ times (two speakers at once), the first of their uid lines goes to the first of 
  "speakers": {"<path>": {"<speaker>": {"<name>": value, ...}, ...}, ...}}
 ```
 
-Both keys are optional, and values follow §4. A file label applies to every segment in the file. A speaker label
-is read with the prefix `speaker.`, so `{"gender": "F"}` under speaker `agent` is the label `speaker.gender` on
-each of `agent`'s segments in that file. A label on a segment record wins over a file or speaker label of the same
-name. A path that isn't in `files.csv` makes the version invalid.
+Both keys are optional, and the object may hold no other key. Values follow §4. A file label applies to every
+segment in the file. A speaker label is read with the prefix `speaker.`, so `{"gender": "F"}` under speaker `agent`
+is the label `speaker.gender` on each of `agent`'s segments in that file. A label on a segment record wins over a
+file or speaker label of the same name. A path that isn't in `files.csv` makes the version invalid.
 
 ## 6. Versions with audio only (format version 3)
 
