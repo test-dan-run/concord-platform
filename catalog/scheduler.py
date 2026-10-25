@@ -584,77 +584,84 @@ class Scheduler:
                 run.pinned, run.released_at, run.given, run.batch = False, None, None, None
 
     def _do_start(self, name: str) -> None:
-        p = self.platform()
-        with self.lock:
-            run = self.runs[name]
-            if run.running:
-                run.starting = False
-                return
-            run.start_began = time.time()
-        s = p.get(name)
-        short, env, gpu = self._wait_for_gpu(p, s)
-        if short:
-            log.warning("not starting %s: %s", name, short)
-            with self.lock:
-                run.starting, run.short = False, short
-            return
-        if VRAM_VAR in env:
-            env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
-        with self.lock:
-            run.given = float(env[UTIL_VAR]) if UTIL_VAR in env else None
-            run.batch = {k: env[v] for k, v in BATCH_VARS.items() if v in env} if VRAM_VAR in env else None
-            run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
-        url = self.upstream_url(name)
-        t0 = time.monotonic()
-        error = None
         try:
-            log.info("starting %s%s", name, f" with {env[UTIL_VAR]} of the GPU" if UTIL_VAR in env else "")
-            self.runtime.start(p, s, env)
-            while True:
-                if self.runtime.healthy(p, s, url):
-                    break
-                c = None
+            p = self.platform()
+            with self.lock:
+                run = self.runs[name]
+                if run.running:
+                    run.starting = False
+                    return
+                run.start_began = time.time()
+            s = p.get(name)
+            short, env, gpu = self._wait_for_gpu(p, s)
+            if short:
+                log.warning("not starting %s: %s", name, short)
+                with self.lock:
+                    run.starting, run.short = False, short
+                return
+            if VRAM_VAR in env:
+                env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
+            with self.lock:
+                run.given = float(env[UTIL_VAR]) if UTIL_VAR in env else None
+                run.batch = {k: env[v] for k, v in BATCH_VARS.items() if v in env} if VRAM_VAR in env else None
+                run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
+            url = self.upstream_url(name)
+            t0 = time.monotonic()
+            error = None
+            try:
+                log.info("starting %s%s", name, f" with {env[UTIL_VAR]} of the GPU" if UTIL_VAR in env else "")
+                self.runtime.start(p, s, env)
+                while True:
+                    if self.runtime.healthy(p, s, url):
+                        break
+                    c = None
+                    try:
+                        c = self.runtime.containers(p).get(name)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if c is not None and (c.state in ("exited", "dead") or c.health == "unhealthy"):
+                        error = f"container {c.state}/{c.health}"
+                        break
+                    if time.monotonic() - t0 > self.settings.start_timeout_s:
+                        error = f"not healthy after {self.settings.start_timeout_s:.0f}s"
+                        break
+                    if self._stop.wait(1.0):
+                        return
+            except StartError as exc:
+                error = str(exc)
+            seconds = time.monotonic() - t0
+            if error:
+                detail = ""
                 try:
-                    c = self.runtime.containers(p).get(name)
+                    detail = self.runtime.failure_detail(p, name)
                 except Exception:  # noqa: BLE001
                     pass
-                if c is not None and (c.state in ("exited", "dead") or c.health == "unhealthy"):
-                    error = f"container {c.state}/{c.health}"
-                    break
-                if time.monotonic() - t0 > self.settings.start_timeout_s:
-                    error = f"not healthy after {self.settings.start_timeout_s:.0f}s"
-                    break
-                if self._stop.wait(1.0):
-                    return
-        except StartError as exc:
-            error = str(exc)
-        seconds = time.monotonic() - t0
-        if error:
-            detail = ""
+                log.warning("start of %s failed: %s", name, error)
+                with self.lock:
+                    run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
+                if self.settings.docker:
+                    self.runtime.stop(p, [name])
+                return
+            build = None
             try:
-                detail = self.runtime.failure_detail(p, name)
+                c = self.runtime.containers(p).get(name)
+                build = self.builds.current(p, s, c)
             except Exception:  # noqa: BLE001
                 pass
-            log.warning("start of %s failed: %s", name, error)
+            self.db.execute("INSERT INTO cold_start (model_id, build_key, seconds, at) VALUES (?, ?, ?, ?)",
+                            (name, build.build_key if build else None, seconds, now_iso()))
             with self.lock:
-                run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
-            if self.settings.docker:
-                self.runtime.stop(p, [name])
-            return
-        build = None
-        try:
-            c = self.runtime.containers(p).get(name)
-            build = self.builds.current(p, s, c)
-        except Exception:  # noqa: BLE001
-            pass
-        self.db.execute("INSERT INTO cold_start (model_id, build_key, seconds, at) VALUES (?, ?, ?, ?)",
-                        (name, build.build_key if build else None, seconds, now_iso()))
-        with self.lock:
-            self._cold_cache.clear()
-            run.starting, run.running, run.ready_at, run.failed = False, True, time.time(), None
-            if build:
-                run.build = build
-        log.info("%s healthy after %.1fs", name, seconds)
+                self._cold_cache.clear()
+                run.starting, run.running, run.ready_at, run.failed = False, True, time.time(), None
+                if build:
+                    run.build = build
+            log.info("%s healthy after %.1fs", name, seconds)
+        except Exception as exc:  # noqa: BLE001 - not a refused start (a bug, docker missing): never left starting
+            log.exception("start of %s crashed", name)
+            with self.lock:
+                run = self.runs[name]
+                if run.starting:  # a failed start whose clean-up stop crashed keeps the start's own error
+                    run.starting, run.failed = False, f"start crashed: {exc}"
 
     def _batch_env(self, p: Platform, s: Manifest, gib: float) -> dict[str, str]:
         """Compose variables for the batch limits of this build's profile at `gib` (none without a profile)."""
