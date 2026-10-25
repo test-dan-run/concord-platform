@@ -1,6 +1,6 @@
 ---
 name: register-model
-description: Register a new model on the personal AI service platform (services/*.yaml) so it can be started with `just up` and called through aicore, or register a model a provider already serves online as a hosted endpoint in the Model Catalog. Use when a user or agent wants to add, register, onboard or serve a model (a Hugging Face id, a local checkpoint in $AI_ASSETS, a model name like "Llama 3.1 8B", or a provider URL and API key), give it a port/alias/profile, or work out its gpu.util. Covers choosing the API contract (including speech enhancement and text.itn), engine vs custom server, VRAM sizing, writing the manifest, updating the pinned tests and README, validating, and catalog registration and verification.
+description: Register a new model on the personal AI service platform (services/*.yaml) so it can be started with `just up` and called through aicore, or register a model a provider already serves online as a hosted endpoint in the Model Catalog. Use when a user or agent wants to add, register, onboard or serve a model (a Hugging Face id, a local checkpoint in $AI_ASSETS, a model name like "Llama 3.1 8B", or a provider URL and API key), give it a port/alias/profile, or work out its gpu.util. Covers choosing the API contract (including speech enhancement and text.itn), engine vs custom server, VRAM sizing, writing the manifest, batching (vLLM --max-num-seqs, aisvc batchers and the manifest batch hints in custom servers, measuring a batch profile), audio longer than a model's window, updating the pinned tests and README, validating, and catalog registration and verification.
 ---
 
 # Register a model on the platform
@@ -202,6 +202,13 @@ Flags for the pinned vLLM. Verify each one against that version's docs before yo
 - VLMs: `'--limit-mm-per-prompt={"image": N, "video": M}'` (bounds encoder memory at profiling).
 - Embeddings: `--runner=pooling` (v0.31 replaced `--task embed`).
 - Whisper-style ASR: `--max-model-len=448`.
+- `--max-num-seqs`: how many sequences vLLM runs at once. The service has the whole GPU, so don't keep
+  a small value (4) that was sized for a shared GPU. Apps send work in concurrent batches
+  (`aicore.batching`), so give a model that serves short requests room for them, such as 64 for ASR, as
+  `qwen3-asr-1-7b` and `granite-speech-5-0-2b` do. Boot it at its minimum `util` and at 0.90, and
+  record the KV cache size of each boot on the `args` line. Keep a smaller value only for a reason
+  you can state (`qwen-sea-lion-v4-5-27b-it` bounds its state memory at 16). The catalog's batch view
+  suggests a value from the startup log (step 7).
 - Tool calling, only if the user wants it: `--enable-auto-tool-choice --tool-call-parser=<family>`.
 
 ### 6. Update the pinned tests and the README
@@ -262,6 +269,25 @@ more than 10 ms off, NaN or clipping, then passes when SI-SDR improves and warns
 `text.itn` gets spoken-form phrases and passes when every output holds the expected digits
 ("twenty one" → 21, "three thirty p m" → 3:30). Read `capabilities.report.lines` and report them.
 
+**Batch profile.** The catalog does not profile a new GPU model by itself. Once it is registered and
+verified, ask for a profile (it leases the model and may start it, so confirm first, as for `just up`)
+and read the result:
+
+```bash
+just batch-profile <name> --wait   # custom image: a sweep; vLLM: the KV cache size from the startup log
+just batch <name>                  # the recommendation, and for a custom image the limits the next start gets
+```
+
+For a custom image, the sweep sends batches of 1, 2, 4, ... at a short, a typical and the longest
+length, and each later start gets `AISVC_MAX_BATCH` and `AISVC_MAX_BATCH_LEN` for the memory it was
+given. Without a profile, the image uses its own small defaults. If the sweep stops early or the
+limits look wrong, check the manifest's `batch` hints
+([references/custom-model.md](references/custom-model.md#batching)). A person can override the limits
+on the model's Batching panel. For vLLM, `just batch <name> --item-tokens <T>` gives a
+`--max-num-seqs` value for requests of T tokens. A CPU service has no profile, and an API with no
+batch measurement fails the profile with a message saying so: report that, it is not an error in the
+manifest.
+
 ### 8. Report
 
 Tell the user:
@@ -274,6 +300,8 @@ Tell the user:
 - Every `TODO(verify)` you left, and anything the user must do (HF license or `HF_TOKEN`,
   downloads).
 - Whether it was registered in the catalog, and its verification result.
+- Batching: the `--max-num-seqs` value and why, or for a custom GPU image the `batch` hints and the
+  measured limits (or the `just batch-profile <name> --wait` command, when it was not measured).
 - How to call it: `client("<alias-or-name>")` with `model=model_name("<alias-or-name>")`. For
   `text.itn`: `client("<name>").itn("meet at three thirty p m", return_spans=True)`. For `oip-v2`:
   `client("<name>").infer({"AUDIO": audio, "SAMPLE_RATE": np.array([16000], dtype=np.int32)})`.

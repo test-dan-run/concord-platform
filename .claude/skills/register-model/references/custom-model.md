@@ -10,7 +10,9 @@ and CORS.
 | Contract / api | Copy from | Notes |
 |---|---|---|
 | `openai` / `audio.speech` | `custom/kokoro-tts` | GPU torch, `limit_torch_memory` |
-| `openai` / `audio.transcriptions` | `custom/faster-whisper-large-v3` | `py-cpu` base, CUDA from pip wheels |
+| `openai` / `audio.transcriptions`, CTranslate2 | `custom/faster-whisper-large-v3` | `py-cpu` base, CUDA from pip wheels; batches the 30 s windows of one file |
+| `openai` / `audio.transcriptions`, torch, 30 s window | `custom/ark-asr-0-6b` | cuts audio into 30 s chunks, batches the chunks of concurrent requests |
+| `oip-v2` / `infer`, one vector per clip | `custom/redimnet2-sv` | batch signature, `MicroBatcher` over rows, cuts clips at 20 s |
 | `oip-v2` / `infer`, CPU | `custom/silero-vad` | `weights.yaml` + sha256, ONNX |
 | `oip-v2` / `infer`, GPU | `custom/pyannote-diarization` | variant base `py-cuda-torch211` |
 | `oip-v2` / `infer`, existing local weights | `custom/nemotron-3-diarization` | `weights.path` points at an existing dir |
@@ -106,6 +108,80 @@ before writing anything.
   silero-vad). Add a real-model test marked `@pytest.mark.weights` that skips when the weights are
   missing.
 
+## Batching
+
+Every GPU server batches through `aisvc.batch` (base 0.2.0 and later). Apps send work in concurrent
+batches, and the catalog measures how memory grows with batch size, so a server that runs one item at
+a time wastes the GPU and cannot be profiled. Read `custom/_bases/common/aisvc/batch.py` (its docstring
+is short) and copy the pattern of the closest service:
+
+- **The model wrapper** has one function that runs one padded batch and returns one result per item, in
+  order: `transcribe_batch(pieces)`, `embed_batch(clips)`, `enhance_batch(rows)`. Pad the rows and pass an
+  attention mask (`aisvc.batch.pad` gives the lengths for it), so each row's result is the same as when
+  it runs alone. If the network has no padding mask, run each row at its own length, as
+  `own_lengths` in `ark-asr-0-6b` does. The function needs no lock: the batcher serialises its calls.
+- **`MicroBatcher(fn, length=lambda x: audio_ms(x, SR), name="...")`** sorts items by length, runs them
+  in chunks within the limits, and on out of memory halves the chunk and retries. The length unit is
+  milliseconds of audio (`audio_ms`). A model that pads every item to a fixed window gives that window as
+  the length of every item (`meralion-3-3b-asr` uses `CHUNK_MS`), because that is what each item costs.
+- **An OIP batch signature** (`AUDIO` [-1, -1] + `LENGTHS`) checks the rows, cuts each to its length
+  (`rows()` in `server/rows.py` for the diarizers and enhancers, `aisvc.batch.unpad` otherwise) and passes
+  them all to the `MicroBatcher` in one call.
+- **A route that takes one file per request** (`audio.transcriptions`) wraps the batcher in a
+  `DynamicBatcher`, which joins requests that arrive within `AISVC_BATCH_WAIT_MS` (10 ms) into one call.
+  Decode and validate each file in the handler before the call, so a bad file fails only its own request.
+  See `custom/ark-asr-0-6b/server/app.py`: each file is cut into chunks, and the chunks of all waiting
+  requests go through one `MicroBatcher`.
+- **A model that batches inside one item** (faster-whisper batches the 30 s windows of one file) reads
+  `Limits.from_env()` itself and sizes its inner batch from it, as `batch_size()` in
+  `custom/faster-whisper-large-v3/server/model.py` does.
+- **Limits** come from `AISVC_MAX_BATCH` and `AISVC_MAX_BATCH_LEN`, which the catalog sets from the
+  batch profile. Don't hard-code a batch size. Change the image's default only with a reason, such as
+  `Limits.from_env(max_items=1)` in `dnsmos`. `/platform/memory` and `/platform/batch-limits` come with
+  the factory; the catalog uses them to measure the image.
+
+Give the manifest `batch` hints when the defaults would measure the wrong thing. They tell the catalog's
+sweep which lengths to send and are not part of the config hash:
+
+- `max_item_s`: the longest item the server takes whole, when it cuts longer ones (30 for a 30 s window
+  ASR model, 20 for the speaker embedders). The sweep stops there, and a recommendation for a longer
+  item gives a note, because the server splits it into several rows.
+- `lengths_s`: the lengths to measure at, when short, typical and longest are wrong (`meralion-3-3b-asr`
+  pads every piece to 30 s, so it measures only `[30]`).
+- `max_n: 1`: the server batches inside one item, so the sweep sends single items of growing length
+  (`faster-whisper-large-v3` with `lengths_s: [30, 120, 300, 600]`).
+
+Comment each hint with the reason, as the existing manifests do. Tests (no GPU, with the fake model):
+results come back in input order, rows run in batches within the limits set by monkeypatching
+`AISVC_MAX_BATCH` / `AISVC_MAX_BATCH_LEN`, and for a `DynamicBatcher`, concurrent requests share one
+batch (`ark-asr-0-6b` tests: `test_chunks_run_in_batches_within_the_limits`,
+`test_concurrent_requests_share_one_batch`). Add `test_real_model_batch_matches_one_by_one`, marked
+`@pytest.mark.weights`, which checks that a padded batch gives the same results as one item at a time.
+
+## Audio longer than the model's window
+
+Many audio models are trained on a fixed window (30 s for Whisper-style encoders), so the server cuts
+longer audio into pieces and joins the results. Do it this way:
+
+- Audio no longer than the window is sent whole.
+- Longer audio is cut into window-sized chunks, and **a last chunk shorter than 0.1 s is dropped**
+  (`MIN_TAIL_S = 0.1`). It holds no speech, and a very short chunk can crash the feature extractor. This
+  happened: Concord Label sent `ark-asr-0-6b` a cut of 30 s and 16 samples, the last chunk had 16
+  samples, and the mel STFT failed with "Padding size should be less than the corresponding input
+  dimension". The request returned a 500 and the pseudo-label run failed. A model that pads every chunk
+  to the window would not crash, but it would spend a whole window on the tail, so it gets the same
+  rule. Copy `chunks()` from `custom/ark-asr-0-6b/server/ark.py`.
+- A whole file shorter than 0.1 s is not run either: it gets empty text, and the model is never
+  called. `ark-asr-0-6b` crashed the same way on a file of 200 samples or fewer, and `chunks()` returning
+  no pieces handles both cases.
+- Set `batch.max_item_s` to the window, so each chunk is one row of a batch to the catalog.
+
+Test the edges with the fake model: 30 s plus 16 samples gives one chunk, 30.1 s gives two, a file of 16
+samples gives empty text without calling the model, and a long file is cut into chunks joined in order
+(`test_a_tail_under_0_1_s_is_dropped`, `test_a_file_under_0_1_s_gives_empty_text_without_the_model` and
+`test_long_audio_is_cut_into_30_s_chunks` in `ark-asr-0-6b`). Real clips are often cut at a round
+length plus a few samples, so test just over each window boundary and not only round lengths.
+
 ## Manifest fields for a custom model
 
 ```yaml
@@ -118,6 +194,8 @@ contract_reason: "No OpenAI route for <task>; input is <non-text input>"   # any
 port: 84NN
 gpu:
   vram_gb: N                        # measured peak, rounded up; omit the gpu block for CPU-only
+batch:                              # GPU only, when the defaults measure the wrong thing (see Batching)
+  max_item_s: 30                    # longer audio is cut into 30 s pieces that run as separate batch rows
 profiles: [<profile>]
 description: "..."
 build:
@@ -158,6 +236,8 @@ just validate && just vram <name> && just render
 just fetch-weights <name> # only if the user agreed to download
 just build <name>         # builds the base image too if it is missing
 just up <profile> && just conform <name>
+just batch-profile <name> --wait  # GPU only, after catalog registration; leases the model
+just batch <name>                 # the limits the next start gets
 ```
 
 Then go back to step 6 of SKILL.md (pinned tests, README) and report.
