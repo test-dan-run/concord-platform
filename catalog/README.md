@@ -564,7 +564,7 @@ Every path is under `/api`. Errors have the same shape as the rest of the catalo
 | `POST /api/store/unpack` | `{"sha256"}` of a committed zip -> the audio files in it, each stored and probed, and the files it skipped. |
 | `POST /api/store/holds` | `{"app", "add": [...], "remove": [...]}` -> `{"held"}`, the number of files this app holds. |
 | `GET /api/store/stats` | Sizes and counts for the Storage page, holds per app and free disk space. |
-| `POST /api/store/gc` | `{"dry_run": true}` -> what clean-up would delete. The same call with `false` deletes it. |
+| `POST /api/store/gc` | `{"dry_run": true}` -> what clean-up would delete. The same call with `false` deletes it. With `"expect_files"`, the dry run's count, a clean-up that would delete more files answers 409 `gc_changed` and deletes nothing. |
 | `GET /api/datasets` | `?q=&language=&label_type=&app=` -> datasets, each with its latest version. |
 | `POST /api/datasets` | `{"name", "language"?, "description"?, "tags"?, "app"}` -> 201 dataset. |
 | `GET`, `PATCH`, `DELETE /api/datasets/{id}` | The dataset with its versions, newest first. PATCH changes the name, description and tags. DELETE removes the dataset and every version. |
@@ -620,8 +620,10 @@ Clean-up deletes an audio file only when all of these are true:
 
 Clean-up runs only when a person starts it, and it always shows a dry run first. Start it from the Storage
 page, or run `just datasets-gc`. The recipe asks the running catalog service for a dry run, prints the
-files and bytes it would delete, and deletes them only when you answer yes. Deleting a version or a
-dataset never deletes audio by itself.
+files and bytes it would delete, and deletes them only when you answer yes. The Storage page sends the dry
+run's count with the clean-up, so when more files can be deleted by then (a version was deleted in another
+tab, for example), it deletes nothing and runs the dry run again. Deleting a version or a dataset never
+deletes audio by itself.
 
 ### Python client (aicore.datasets)
 

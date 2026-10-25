@@ -40,6 +40,7 @@ class HoldsIn(BaseModel):
 
 class GcIn(BaseModel):
     dry_run: bool = True
+    expect_files: int | None = Field(None, ge=0)  # the dry run's count, which a real run must not exceed
 
 
 class UnpackIn(BaseModel):
@@ -165,7 +166,7 @@ def add_dataset_routes(app: FastAPI, cat: Catalog) -> DatasetCatalog:
 
     @app.post("/api/store/gc")
     def store_gc(body: GcIn) -> dict[str, Any]:
-        return gc.collect(store, body.dry_run)
+        return gc.collect(store, body.dry_run, expect_files=body.expect_files)
 
     @app.post("/api/store/unpack")
     def store_unpack(body: UnpackIn) -> dict[str, Any]:
