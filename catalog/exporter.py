@@ -70,6 +70,9 @@ class Exporter:
         self.events = events
         self._sizes: dict[str, tuple[int | None, Weights]] = {}  # build key -> (image bytes, weights)
         self._lock = threading.Lock()
+        # held from the 409 check until the job's thread runs; not _lock, which models() takes through _sized
+        self._start_lock = threading.Lock()
+        self._job: str | None = None  # the job the thread runs
         self._thread: threading.Thread | None = None
         self._cancel = threading.Event()
         self._last_publish = 0.0
@@ -160,6 +163,10 @@ class Exporter:
         return self.public(self._row(job_id))
 
     def start(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self._start_lock:  # two starts at once: the second one sees the first one's job and gets 409
+            return self._start(body)
+
+    def _start(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.db.one("SELECT 1 FROM export_job WHERE state IN ('queued', 'running')"):
             raise SchedulerError(409, "an export is already running; wait for it or cancel it")
         p = self.scheduler.platform()
@@ -189,7 +196,7 @@ class Exporter:
         path = self._bundle_path()
         self.db.execute("INSERT INTO export_job (id, request, state, phase, path, created_at) VALUES (?, ?, 'queued', ?, ?, ?)",
                         (job_id, dumps(req), "queued", str(path), now_iso()))
-        self._cancel = threading.Event()
+        self._job, self._cancel = job_id, threading.Event()
         self._thread = threading.Thread(target=self._run, args=(job_id,), daemon=True, name=f"export-{job_id}")
         self._thread.start()
         return self.get(job_id)
@@ -203,8 +210,11 @@ class Exporter:
         return path
 
     def cancel_or_delete(self, job_id: str) -> None:
-        row = self._row(job_id)
-        if row["state"] in LIVE:
+        """A running job is cancelled; any other job (a live one included, when no thread runs it) is deleted."""
+        with self._start_lock:
+            row = self._row(job_id)
+            running = row["state"] in LIVE and job_id == self._job
+        if running:
             self._cancel.set()
             return
         self._remove(row["path"])
@@ -267,9 +277,16 @@ class Exporter:
             self._set(job_id, bytes_done=n)
             self._publish(job_id)
 
+        created = False  # a folder this job did not make is never removed
+
+        def remove() -> None:
+            if created:
+                self._remove(str(out))
+
         try:
             enter("checking disk space")
             out.mkdir(parents=True, exist_ok=False)
+            created = True
             free = shutil.disk_usage(out).free
             if free < expected * DISK_MARGIN:
                 raise ExportError(f"not enough free space in {self.settings.export_dir}: {_gb(free)} free, "
@@ -310,16 +327,16 @@ class Exporter:
             self._set(job_id, state="done", phase="done", bytes_done=written, bytes_written=written, finished_at=now_iso())
             log.info("export %s done: %s (%s)", job_id, out, _gb(written))
         except Cancelled:
-            self._remove(str(out))
+            remove()
             self._set(job_id, state="cancelled", error="cancelled", failed_phase=phase, finished_at=now_iso())
         except (ExportError, ImageError, OSError) as exc:
             log.warning("export %s failed while %s: %s", job_id, phase, exc)
-            self._remove(str(out))
+            remove()
             msg = str(exc) if not isinstance(exc, OSError) else f"{exc.strerror or exc}"
             self._set(job_id, state="failed", error=msg, failed_phase=phase, finished_at=now_iso())
         except Exception as exc:  # noqa: BLE001 - a bug must still end the job
             log.exception("export %s crashed", job_id)
-            self._remove(str(out))
+            remove()
             self._set(job_id, state="failed", error=f"export crashed: {exc}", failed_phase=phase, finished_at=now_iso())
         self._publish(job_id, force=True)
 
