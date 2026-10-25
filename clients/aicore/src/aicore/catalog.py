@@ -26,6 +26,7 @@ HEARTBEAT_S = 30
 TTL_S = 90
 WHOLE = -1.0  # span_start = span_end = -1: the whole file
 CHUNK = 500  # index keys per request
+LIVE = ("queued", "starting", "active")  # lease states that heartbeats keep alive
 
 OnWait = Callable[[dict[str, Any]], None]
 
@@ -57,6 +58,11 @@ def index_key(build_key: str, audio_sha256: str, span_start: float | None, span_
     s, e = span(span_start, span_end)
     return {"build_key": build_key, "audio_sha256": audio_sha256, "span_start": s, "span_end": e,
             "params_hash": params_hash}
+
+
+def _output_id(v: Any) -> Any:
+    """An output id as the server returns it: it keeps ids as text and gives digits back as an int."""
+    return int(v) if isinstance(v, str) and v.removeprefix("-").isdecimal() else v
 
 
 class Lease:
@@ -362,11 +368,18 @@ class FakeCatalog:
             out.append(dict(m))
         return out
 
-    def model(self, model_id: str) -> dict[str, Any]:
+    def _find(self, model_id: str) -> dict[str, Any] | None:
+        """The record with this id or alias, or None."""
         for m in self._models.values():
             if model_id == m["id"] or model_id in (m.get("aliases") or []):
-                return dict(m)
-        raise CatalogError(404, f"unknown model {model_id!r}")
+                return m
+        return None
+
+    def model(self, model_id: str) -> dict[str, Any]:
+        m = self._find(model_id)
+        if m is None:
+            raise CatalogError(404, f"unknown model {model_id!r}")
+        return dict(m)
 
     def register(self, model_id: str, *, display_name=None, tags=None, parent_id=None) -> dict[str, Any]:
         self._log("register", model_id)
@@ -397,24 +410,34 @@ class FakeCatalog:
 
     def request_lease(self, holder: str, models: list[str], ttl_s: float = TTL_S) -> dict[str, Any]:
         self._n += 1
-        lease = {"id": f"l-{self._n}", "holder": holder, "models": list(models), "state": "active",
+        names = [(self._find(m) or {}).get("id", m) for m in models]  # aliases resolved, unknown names kept
+        lease = {"id": f"l-{self._n}", "holder": holder, "models": names, "state": "active",
                  "position": None, "waiting_for": None, "error": None}
         self._leases[lease["id"]] = lease
         self._log("lease", holder, tuple(models))
         return dict(lease)
 
+    def _lease(self, lease_id: str) -> dict[str, Any]:
+        if lease_id not in self._leases:
+            raise CatalogError(404, f"unknown lease {lease_id!r}")
+        return self._leases[lease_id]
+
     def get_lease(self, lease_id: str) -> dict[str, Any]:
-        return dict(self._leases[lease_id])
+        return dict(self._lease(lease_id))
 
     def heartbeat(self, lease_id: str) -> dict[str, Any]:
-        return dict(self._leases[lease_id])
+        lease = self._lease(lease_id)
+        if lease["state"] not in LIVE:
+            raise CatalogError(409, f"lease {lease_id} is {lease['state']}"
+                                    + (f": {lease['error']}" if lease.get("error") else ""))
+        return dict(lease)
 
     def release(self, lease_id: str) -> None:
-        self._leases[lease_id]["state"] = "released"
+        self._lease(lease_id)["state"] = "released"
         self._log("release", lease_id)
 
     def leases(self) -> list[dict[str, Any]]:
-        return [dict(x) for x in self._leases.values() if x["state"] in ("queued", "starting", "active")]
+        return [dict(x) for x in self._leases.values() if x["state"] in LIVE]
 
     def lease(self, holder: str, models: list[str], **_: Any) -> Lease:
         return Lease(self, self.request_lease(holder, models), heartbeat_s=3600)  # type: ignore[arg-type]
@@ -434,7 +457,7 @@ class FakeCatalog:
             owners = by_key.get(self._key(k), [])
             mine = [v for v in owners if v["owner"] == app]
             hit = (mine or owners or [None])[0]
-            out.append(dict(hit) if hit else None)
+            out.append({**hit, "output_id": _output_id(hit["output_id"])} if hit else None)
         return out
 
     def index_record(self, app: str, entries: list[dict[str, Any]]) -> int:
@@ -445,12 +468,14 @@ class FakeCatalog:
         return len(entries)
 
     def index_forget(self, app: str, output_ids: list[int | str]) -> int:
-        drop = [k for k, v in self._index.items() if v["owner"] == app and v["output_id"] in set(output_ids)]
+        ids = {str(i) for i in output_ids}  # the server keeps output ids as text
+        drop = [k for k, v in self._index.items() if v["owner"] == app and str(v["output_id"]) in ids]
         for k in drop:
             del self._index[k]
         return len(drop)
 
     def register_app(self, name: str, base_url: str) -> dict[str, Any]:
+        name, base_url = name.strip(), base_url.strip().rstrip("/")
         self._apps[name] = {"name": name, "base_url": base_url}
         for v in self._index.values():
             if v["owner"] == name:
@@ -462,10 +487,12 @@ class FakeCatalog:
 
     def plan(self, stages: list[dict[str, Any]], pipeline: str = "staged") -> dict[str, Any]:
         self._log("plan", pipeline, len(stages))
+        if not stages:
+            raise CatalogError(422, "stages must not be empty")
         steps, loads, hits_total = [], 0, 0
         for st in stages:
             for mid in st["models"]:
-                m = self._models.get(mid, {})
+                m = self._find(mid) or {}
                 keys = (st.get("keys") or {}).get(mid)
                 hits = None
                 if keys is not None:
@@ -477,9 +504,11 @@ class FakeCatalog:
                 skip = missing == 0
                 load = not skip and m.get("state") != "running"
                 loads += load
-                steps.append({"stage": st["name"], "model": mid, "load": load,
-                              "cold_start_s": m.get("cold_start_s", 30.0), "items": None if keys is None else len(keys),
-                              "hits": hits, "missing": missing, "skip": skip})
+                steps.append({"stage": st["name"], "model": m.get("id", mid), "load": load,
+                              "cold_start_s": m.get("cold_start_s", 30.0),
+                              "cold_start_measured": m.get("cold_start_measured", False),
+                              "items": None if keys is None else len(keys), "hits": hits, "missing": missing,
+                              "skip": skip})
         return {"pipeline": pipeline, "steps": steps, "loads": loads,
                 "est_load_s": sum(s["cold_start_s"] for s in steps if s["load"]), "hits": hits_total,
                 "fits_together": True}

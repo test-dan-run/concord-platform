@@ -468,7 +468,10 @@ A `Catalog` keeps its HTTP connections open until `cat.close()`; `with Catalog()
 end of the block.
 
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are
-granted at once; models and capabilities come from the constructor).
+granted at once; models and capabilities come from the constructor). It answers leases, the output index,
+apps and plans as the server does (an unknown lease is a 404, a heartbeat of an ended lease a 409, aliases
+resolve, digit output ids come back as ints), but it accepts models it does not know, and `register`
+creates them. `catalog/tests/test_catalog_client.py` runs the same cases on both.
 
 ## Dataset Catalog
 
