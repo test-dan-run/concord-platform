@@ -1,5 +1,5 @@
 # dnsmos: OIP v2 speech quality (DNSMOS P.835) on CPU. The ONNX model is mounted at /models, never baked in.
-ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt /app/requirements.txt

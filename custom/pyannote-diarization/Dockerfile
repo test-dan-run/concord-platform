@@ -1,6 +1,6 @@
 # pyannote-diarization: OIP v2 speaker diarization (pyannote speaker-diarization-3.1) on the GPU.
 # Base has torch 2.11 + torchaudio (the last torchaudio release). Weights mounted at /models.
-ARG BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt constraints.txt /app/

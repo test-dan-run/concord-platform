@@ -1,6 +1,6 @@
 # faster-whisper-large-v3: OpenAI audio.transcriptions (word timestamps) on CTranslate2.
 # GPU via pip CUDA 12 wheels on the slim CPU base (~1.5 GB instead of a CUDA image); weights mounted at /models.
-ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt /app/requirements.txt
