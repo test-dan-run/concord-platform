@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { appLabel, plural, type GcResult, type Group, type StoreStats } from "../lib/datasets";
 import { ago, bytes, num, pct } from "../lib/format";
 import { Bar, Button, Empty, ErrorNote, Fact, PageHeader, Panel, Spinner } from "../components/ui";
@@ -52,12 +52,19 @@ export function StoragePage() {
     mutationFn: () => api.post<GcResult>("/store/gc", { dry_run: true }),
     onSuccess: (r) => (setDry(r), setDone(null)),
   });
+  // The delete sends the dry run's file count. When clean-up would now delete more, the catalog deletes nothing
+  // and answers 409 gc_changed; the page shows that and runs the dry run again. An older catalog ignores the count.
   const clean = useMutation({
-    mutationFn: () => api.post<GcResult>("/store/gc", { dry_run: false }),
+    mutationFn: (expect: number) => api.post<GcResult>("/store/gc", { dry_run: false, expect_files: expect }),
     onSuccess: (r) => {
       setDone(r);
       setDry(null);
       void qc.invalidateQueries({ queryKey: ["store-stats"] });
+    },
+    onError: (e) => {
+      if (!(e instanceof ApiError && e.status === 409 && e.body.type === "gc_changed")) return;
+      setDry(null);
+      check.mutate();
     },
   });
   const s = stats.data;
@@ -136,7 +143,7 @@ export function StoragePage() {
                   </div>
                   {dry.files > dry.sample.length && <span className="text-xs text-muted">and {num(dry.files - dry.sample.length)} more</span>}
                   <span>
-                    <Button variant="danger" disabled={clean.isPending} onClick={() => clean.mutate()}>
+                    <Button variant="danger" disabled={clean.isPending} onClick={() => clean.mutate(dry.files)}>
                       Delete {plural(dry.files, "file")}
                     </Button>
                   </span>
