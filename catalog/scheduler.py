@@ -422,7 +422,8 @@ class Scheduler:
 
     def _fit_measured(self, p: Platform, r: Request, protected: dict[str, list[str]], now: float, fit: Fit) -> Fit:
         """The GPU model to load must find its minimum plus 1 GiB free on the device once the other GPU models
-        are stopped, so it is never partly loaded or sized from memory another process is still taking."""
+        are stopped, so it is never partly loaded or sized from memory another process is still taking. It is
+        the start's own rule (start_env, which rounds the share down), so a granted start is not refused."""
         assert self.gpu is not None
         total, free = self.gpu
         load = [m for m in r.models if self.frac(p, m) > 0 and self._down(m) and not self.runs[m].starting]
@@ -431,11 +432,15 @@ class Scheduler:
         loading = sorted(m for m, run in self.runs.items() if run.starting and m not in r.models and self.frac(p, m) > 0)
         if loading:
             return Fit(False, reason=f"waiting for {', '.join(loading)} to finish loading before measuring free GPU memory")
-        need = budget_gib(p.get(load[0]), total) + RESERVE_GIB  # its minimum
+        s = p.get(load[0])
+        need = budget_gib(s, total) + RESERVE_GIB  # its minimum
         # Models being stopped give back about what they hold (the start checks again).
         free += sum(self.gpu_gib(p, m, total) for m, run in self.runs.items() if run.stopping or m in fit.evict)
-        if free >= need:
+        try:
+            start_env(p, s, (total, free))
             return fit
+        except ValueError:
+            pass
         platform = sum(self.gpu_gib(p, m, total) for m in self._occupying(p) | {m for m, run in self.runs.items() if run.stopping})
         other = total - self.gpu[1] - platform
         return Fit(False, reason=f"{load[0]} needs {need:.1f} GiB free on the GPU to load; {free:.1f} GiB would be "

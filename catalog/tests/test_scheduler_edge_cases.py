@@ -219,3 +219,20 @@ def test_a_stale_listing_does_not_bring_back_a_stopped_model(cat, runtime):
     runtime.running["whisper-large-v3"] = 0.0  # then started outside the catalog: still picked up
     s.tick()
     assert s.is_up("whisper-large-v3") and run.pinned
+
+
+def test_a_model_is_not_granted_memory_its_start_would_refuse(cat, runtime):
+    s = cat.scheduler
+    cat.settings.gpu_free_wait_s = 0.0
+    runtime.gpu_total_gib = 31.84
+    need = 0.15 * 31.84 + 1.0  # whisper-large-v3: gpu.util 0.15, plus 1 GiB left free
+    runtime.gpu_other_gib = 31.84 - (need + 0.005)  # free: 5 MiB over that, but the start rounds its share down
+    s.tick()
+    r = s.request("bench:job-1", ["whisper-large-v3"])
+    s.tick()
+    r = s.get(r.id)
+    assert r.state == "queued" and ("start", "whisper-large-v3") not in list(s._jobs.queue)
+    assert "whisper-large-v3 needs 5.8 GiB free on the GPU to load" in r.waiting_for
+    runtime.gpu_other_gib = 31.84 - (need + 0.05)
+    step(cat)
+    assert s.get(r.id).state == "active" and runtime.started == ["whisper-large-v3"]
