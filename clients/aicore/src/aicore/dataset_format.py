@@ -99,9 +99,22 @@ def check_folder(root: Path, *, package: bool = False, hash_audio: bool = True) 
     problems += _refs_problems(root, version, types, found, paths)
     if types and len(found) == 1 and not problems:
         try:  # the same reading publishing does, so a folder that passes here can be stored
-            parse(root)
+            parsed = parse(root)
         except (ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:
             problems.append(f"refs/{found[0].name}: can't be read ({exc!r})")
+        else:
+            problems += _speaker_problems(found[0].name, parsed)
+    return problems
+
+
+def _speaker_problems(name: str, parsed: dict[str, Any]) -> list[str]:
+    """A speaker is a string, or missing: the apps read each speaker as a string, and attributes.json names
+    speakers by string. One problem per file, for its first other speaker (a list, a number, true)."""
+    problems = []
+    for path, segs in (parsed["segments"] or {}).items():
+        bad = [s["speaker"] for s in segs if s["speaker"] is not None and not isinstance(s["speaker"], str)]
+        if bad:
+            problems.append(f"refs/{name}: speaker {bad[0]!r} of {path} is not a string")
     return problems
 
 

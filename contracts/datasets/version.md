@@ -93,6 +93,10 @@ have one. The references file is matched to audio by stem, and it holds only con
 | `refs/segments.jsonl` | text without speaker (`label_types` asr) | `{"file": path, "start", "end", "text"}` |
 | `refs/refs.rttm` | speaker without text (`label_types` diar) | RTTM `SPEAKER <stem> 1 <start> <duration> <NA> <NA> <speaker> <NA> <NA>` |
 
+A speaker is a string: the apps keep speakers as strings, and `attributes.json` names them by string. A record of
+`segments.seglst.json` or `segments.jsonl` whose speaker is a number, a list, an object or true / false makes the
+version invalid. A record without a speaker, or with null, has none.
+
 A version may carry any other references format that the apps' annotated upload reads, e.g. a `.stm` file from
 another tool. The catalog stores such a file unchanged. It shows segments and compares versions for the three
 files above and for STM, and it reports the segments of any other format as unknown.
