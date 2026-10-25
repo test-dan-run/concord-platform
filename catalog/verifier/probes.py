@@ -149,7 +149,7 @@ def conformance(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> None:
         except AssertionError as exc:
             failed += 1
             rep.add(f"contract: {check.__name__}", "fail", _short(str(exc) or "assertion failed"))
-        except httpx.HTTPError as exc:
+        except Exception as exc:  # noqa: BLE001 - an HTTP error, a reply that is not JSON: one failed line each
             failed += 1
             rep.add(f"contract: {check.__name__}", "fail", f"{type(exc).__name__}: {_short(str(exc))}")
     rep.conformance_ok = failed == 0
