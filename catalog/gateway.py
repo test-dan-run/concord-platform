@@ -39,9 +39,16 @@ def error(status: int, message: str, type_: str, headers: dict[str, str] | None 
                         headers=headers)
 
 
-def _raw(headers: list[tuple[str, str]]) -> list[tuple[bytes, bytes]]:
-    """Headers for a response's raw_headers: a header sent twice (two Set-Cookie) stays two, not one joined by ", "."""
-    return [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers]
+def _raw(resp: httpx.Response, drop: set[str], key: str | None = None) -> list[tuple[bytes, bytes]]:
+    """The upstream's headers for a response's raw_headers, as it sent them: a header sent twice (two Set-Cookie)
+    stays two, not one joined by ", ", and a value keeps its bytes (httpx decodes UTF-8 ones as UTF-8). Leaves out
+    the names in `drop` and, given a key, a header that quotes it."""
+    out = []
+    for k, v in resp.headers.raw:
+        text = v.decode("latin-1")  # for the key check only: one character per byte, so it never fails
+        if k.decode("latin-1").lower() not in drop and hosted_mod.redact(text, key) == text:
+            out.append((k.lower(), v))
+    return out
 
 
 class TooLarge(Exception):
@@ -175,8 +182,7 @@ class Gateway:
         body = hosted_mod.redact(data.decode("utf-8", "surrogateescape"), key).encode("utf-8", "surrogateescape")
         drop = HOP_BY_HOP | {"content-length", "content-encoding"}  # the body changed: Response sets its length
         out = Response(body, status_code=resp.status_code)
-        out.raw_headers += _raw([(k, v) for k, v in resp.headers.multi_items()
-                                 if k.lower() not in drop and hosted_mod.redact(v, key) == v])
+        out.raw_headers += _raw(resp, drop, key)
         return out
 
     def _stream(self, resp: httpx.Response, end) -> StreamingResponse:
@@ -195,7 +201,7 @@ class Gateway:
                 await close()
 
         out = StreamingResponse(body(), status_code=resp.status_code, background=BackgroundTask(close))
-        out.raw_headers = _raw([(k, v) for k, v in resp.headers.multi_items() if k.lower() not in HOP_BY_HOP])
+        out.raw_headers = _raw(resp, HOP_BY_HOP)
         return out
 
     async def forward(self, request: Request, model: str, path: str) -> Response:
