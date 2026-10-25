@@ -155,7 +155,8 @@ class MicroBatcher:
 
     def __call__(self, items: Sequence[Any]) -> list[Any]:
         items = list(items)
-        lengths = [int(self.length(x)) for x in items]
+        # An item of length 0 (a clip under 1 ms) counts as 1, so out of memory backoff can split a chunk of them
+        lengths = [max(1, int(self.length(x))) for x in items]
         order = sorted(range(len(items)), key=lengths.__getitem__)
         out: list[Any] = [None] * len(items)
         todo = deque([order[j] for j in c] for c in self.limits.plan([lengths[i] for i in order]))
