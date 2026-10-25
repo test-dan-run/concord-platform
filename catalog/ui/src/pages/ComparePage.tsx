@@ -13,7 +13,8 @@ import { Button, Chip, Empty, ErrorNote, Fact, PageHeader, Panel, Select, Spinne
 
 const SHOW = 50;
 
-/** The first SHOW items, and a button that shows the rest: a comparison can list thousands of files. */
+/** The first SHOW items, and a button that shows the rest: a comparison can list thousands of files. The page keys
+ *  the lists by the pair of versions, so another pair starts capped again even when its comparison is cached. */
 function Capped<T>({ items, children }: { items: T[]; children: (shown: T[]) => ReactNode }) {
   const [all, setAll] = useState(false);
   return (
@@ -156,7 +157,7 @@ export function ComparePage() {
       {ds.data && versions.length < 2 && <Empty>This dataset has {plural(versions.length, "version")}, so there is nothing to compare yet.</Empty>}
       {c.isLoading && <Spinner label="Comparing" />}
       {d && (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px] items-start">
+        <div key={`${id}/${a}/${b}`} className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px] items-start">
           <div className="flex flex-col gap-5 min-w-0">
             {!d.segments_compared && (
               <span role="status" className="border border-warn/50 bg-warn/10 text-[13px] rounded-md px-3 py-2">
