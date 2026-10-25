@@ -181,6 +181,17 @@ def test_unknown_build_base_fails(services):
     assert "build.base 'py-rocm' is not in custom/_bases/bases.yaml" in errors_of(services)
 
 
+def test_base_version_must_be_one_the_base_has(services):
+    build = {"context": "custom/text-normalizer", "image": "{registry}/x:0.1.0", "base": "py-cpu"}
+    services.edit("text-normalizer", build={**build, "base_version": "0.0.9"})
+    assert "build.base_version '0.0.9' is not a version of base 'py-cpu' (known: 0.2.0, 0.1.1)" in errors_of(services)
+    services.edit("text-normalizer", build={**build, "base": "none", "base_version": "0.1.1"})
+    assert "build.base_version '0.1.1' is not a version of base 'none'" in errors_of(services)
+    services.edit("text-normalizer", build=build)  # no pin: the base's current version
+    p = services.load()
+    assert p.base_image(p.get("text-normalizer")) == "ghcr.io/owner/py-cpu-base:0.2.0"
+
+
 def test_file_name_must_match_name(services):
     services.write(base_engine_manifest(), filename="other.yaml")
     assert "other.yaml: file name must match name 'test-llm'" in errors_of(services)

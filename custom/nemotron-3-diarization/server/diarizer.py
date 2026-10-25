@@ -1,8 +1,13 @@
-"""Nemotron 3 Diarization (Streaming Sortformer, up to 8 speakers) via NeMo, from the local .nemo file."""
+"""Nemotron 3 Diarization (Streaming Sortformer, up to 8 speakers) via NeMo, from the local .nemo file.
+
+Batches go through NeMo's own batch path: `diarize` pads the clips with zeros and passes each clip's length,
+the encoder and the speaker predictions are masked by those lengths, and the speaker cache and FIFO of a row
+only take in padding after that row has ended. So a row gets the same segments in a batch as alone, apart
+from rounding (tests/test_nemotron_3_diarization.py checks it on the real model).
+"""
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +15,8 @@ import numpy as np
 from .turns import turns_to_tensors
 
 MODEL_FILE = "Nemotron-3-Diarization.nemo"
+SR = 16000
+MIN_SAMPLES = SR // 10  # under 0.1 s: nothing to diarize
 # "Very high latency (offline)" configuration from the model card, in 80 ms frames: best accuracy
 # for whole-file requests. Lower-latency presets only matter for streaming, which OIP does not do.
 OFFLINE = {"spkcache_len": 264, "fifo_len": 40, "chunk_len": 340, "chunk_right_context": 40, "spkcache_update_period": 300}
@@ -25,7 +32,6 @@ class NemotronDiarizer:
     def __init__(self, weights_dir: str | Path):
         self.path = Path(weights_dir) / MODEL_FILE
         self.model = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         import torch
@@ -45,14 +51,26 @@ class NemotronDiarizer:
         self.model = model
 
     def diarize(self, audio: np.ndarray, sample_rate: int) -> dict[str, np.ndarray]:
+        return self.diarize_batch([prepare(audio, sample_rate)])[0]
+
+    def diarize_batch(self, clips: list[np.ndarray]) -> list[dict[str, np.ndarray]]:
+        """Tensors of each prepared clip (`prepare`), all in one padded NeMo batch. Callers serialise calls
+        (aisvc.batch.MicroBatcher)."""
         import torch
 
         assert self.model is not None, "call load() first"
-        if sample_rate != 16000:
-            raise ValueError(f"SAMPLE_RATE must be 16000 (the model's rate), got {sample_rate}; resample first")
-        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
-        if len(audio) < 1600:  # under 0.1 s: nothing to diarize
-            return turns_to_tensors([])
-        with self._lock, torch.inference_mode():
-            segments = self.model.diarize(audio=[audio], batch_size=1, sample_rate=sample_rate, verbose=False)
-        return turns_to_tensors(parse_segment(s) for s in segments[0])
+        out = [turns_to_tensors([]) for _ in clips]
+        keep = [i for i, x in enumerate(clips) if len(x) >= MIN_SAMPLES]
+        if keep:
+            with torch.inference_mode():
+                segments = self.model.diarize(audio=[clips[i] for i in keep], batch_size=len(keep), sample_rate=SR,
+                                              verbose=False)
+            for i, segs in zip(keep, segments, strict=True):
+                out[i] = turns_to_tensors(parse_segment(s) for s in segs)
+        return out
+
+
+def prepare(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    if sample_rate != SR:
+        raise ValueError(f"SAMPLE_RATE must be 16000 (the model's rate), got {sample_rate}; resample first")
+    return np.ascontiguousarray(audio, dtype=np.float32).reshape(-1)

@@ -18,11 +18,11 @@ validate:
 render:
     {{py}} tools/render.py
 
-# VRAM footprint of every service, or the budget for a set of NAMEs (exit 1 if over util_limit)
+# least GPU memory each service needs to load, or a check of a set of NAMEs (exit 1 with two or more GPU services)
 vram *names:
     {{py}} tools/vram_check.py {{names}}
 
-# start services by name/alias, one at a time (GPU first, health-gated); stops other GPU services only if VRAM runs out (--no-evict to refuse)
+# start services by name/alias, one at a time (GPU first, health-gated); one GPU service at a time, so another running GPU service is stopped (--no-evict to refuse)
 up +names:
     {{py}} tools/stack.py up {{names}}
 
@@ -70,6 +70,14 @@ fetch-weights name *flags:
 # upstream model cards (README, LICENSE) at each model's pinned revision into ${AI_ASSETS}/model-cards, for the catalog
 fetch-cards *names:
     {{py}} tools/model_cards.py {{names}}
+
+# recommended batch size from the catalog's batch profile (--vram GB, --item-s S or --item-tokens T, --n N)
+batch name *flags:
+    {{py}} tools/batch.py show {{name}} {{flags}}
+
+# ask the catalog to measure a model's batch profile now (it leases the model; --wait prints the result)
+batch-profile name *flags:
+    {{py}} tools/batch.py profile {{name}} {{flags}}
 
 # run the contract conformance suite against a running service (all services if no NAME); skips when down
 conform name="": render

@@ -202,6 +202,18 @@ class Catalog:
     def stop(self, model_id: str, force: bool = False) -> dict[str, Any]:
         return self._req("POST", f"/models/{model_id}/stop", params={"force": "1"} if force else None)
 
+    def batch(self, model_id: str, *, vram_gb: float | None = None, item_s: float | None = None,
+              item_tokens: int | None = None, n: int | None = None) -> dict[str, Any]:
+        """The current build's batch profile: `recommendation` (the largest batch for vram_gb, default the full
+        budget, and an item of item_s seconds or item_tokens tokens), `need` (GB that batch `n` needs) and `table`."""
+        params = {k: v for k, v in {"vram_gb": vram_gb, "item_s": item_s, "item_tokens": item_tokens, "n": n}.items()
+                  if v is not None}
+        return self._req("GET", f"/models/{model_id}/batch", params=params or None)
+
+    def batch_profile(self, model_id: str) -> dict[str, Any]:
+        """Measure the model's batch profile (queued; it leases the model)."""
+        return self._req("POST", f"/models/{model_id}/batch-profile")
+
     # -------------------------------------------------------------------------- leases
 
     def request_lease(self, holder: str, models: list[str], ttl_s: float = TTL_S) -> dict[str, Any]:
@@ -297,6 +309,16 @@ class FakeCatalog:
 
     def add_model(self, record: dict[str, Any]) -> None:
         self._models[record["id"]] = dict(record)
+
+    def batch(self, model_id: str, *, vram_gb: float | None = None, item_s: float | None = None,
+              item_tokens: int | None = None, n: int | None = None) -> dict[str, Any]:
+        """A record's `batch` (e.g. {"recommendation": {"batch": 8}}), else no profile."""
+        self._log("batch", model_id, vram_gb, item_s, item_tokens, n)
+        return {"model": model_id, "status": "none", "measuring": None, **(self._models.get(model_id, {}).get("batch") or {})}
+
+    def batch_profile(self, model_id: str) -> dict[str, Any]:
+        self._log("batch_profile", model_id)
+        return {"model": model_id, "measuring": "pending"}
 
     def health(self) -> dict[str, Any]:
         return {"ok": True}

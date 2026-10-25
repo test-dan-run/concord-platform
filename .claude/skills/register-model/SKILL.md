@@ -87,8 +87,13 @@ the task matches (custom servers: [references/custom-model.md](references/custom
 | Task | Inputs | Outputs | Catalog verifies it as |
 |---|---|---|---|
 | VAD | `AUDIO` FP32 [-1], `SAMPLE_RATE` INT32 [1] | `SEGMENTS` FP32 [-1, 2] | VAD |
-| Diarization | same | `SEGMENTS` FP32 [-1, 2], `SPEAKERS` INT32 [-1] | diarisation |
-| Speech enhancement | same | `AUDIO` FP32 [-1], `SAMPLE_RATE` INT32 [1] (same rate and length as the input) | speech enhancement |
+| Diarization | `AUDIO` FP32 [-1, -1] (zero-padded rows), `LENGTHS` INT32 [-1], `SAMPLE_RATE` INT32 [1] | `SEGMENTS` FP32 [-1, 2], `SPEAKERS` INT32 [-1], `ROWS` INT32 [-1] (the row of each segment) | diarisation |
+| Speech enhancement | the same as diarization | `AUDIO` FP32 [-1, -1] (zero-padded), `LENGTHS` INT32 [-1], `SAMPLE_RATE` INT32 [1] (each row keeps its rate and length) | speech enhancement |
+
+The diarization and enhancement servers also take one clip as `AUDIO` [-1] without `LENGTHS` and answer
+it in the single-clip shapes, because the apps still send that form. A new server of either kind copies
+`server/rows.py` from `nemotronlabs-re-use` for that, and the copies must stay identical
+(`tests/test_images.py`). The catalog detects both forms by tensor names.
 
 Give `SAMPLE_RATE` `example: [16000]`. Tensors travel as JSON number arrays; the binary tensor
 extension is not implemented. For a dereverberation model, put `dereverberation` in `tasks`: the
@@ -148,8 +153,12 @@ uv run --quiet python $S/size_model.py <source> --max-model-len <N> [--overhead-
   (vision encoder + encoder cache). Embedding/pooling models need no KV cache.
 - **util** = the suggestion rounded up to 0.01. Weights over about 0.9 × 32 GB do not fit: say the
   model needs a smaller quant rather than writing a manifest that cannot start.
-- **Budget.** The sum of the target profile's `gpu.util` (custom: `vram_gb / 32`) must stay
-  ≤ `util_limit` (0.93). `platform_state.py` shows each profile's headroom.
+- **What util and vram_gb mean.** `gpu.util` (custom: `gpu.vram_gb`) is the least memory the model
+  needs to load, and it must stay at or below `util_limit` (0.93). Only one GPU service runs at a
+  time, and when it starts it gets `min(util_limit, (free - 1 GiB) / total)` of the GPU, measured just
+  before the start. Size the minimum from the arithmetic or a measurement, because validation, bundles
+  for smaller GPUs and the start check all use it. Don't add room for other services, because GPU
+  models never share the GPU.
 
 ### 5. Choose identity and write the manifest
 
@@ -216,7 +225,7 @@ Flags for the pinned vLLM. Verify each one against that version's docs before yo
 
 ```bash
 just validate          # must print "ok" with no warnings
-just vram <profile>    # must pass (exit 0)
+just vram <name>       # must pass (exit 0); a set with two GPU services fails
 just render
 just test
 ```
@@ -226,7 +235,7 @@ or for the model in the catalog.
 If they did:
 
 ```bash
-just up <profile>      # pulls image/weights on first run; one service at a time, health-gated
+just up <name>         # pulls image/weights on first run; one service at a time, health-gated
 just logs <name>       # look for vLLM's "GPU KV cache size: N tokens" and "Maximum concurrency"
 just conform <name>
 ```
@@ -259,7 +268,7 @@ Tell the user:
 
 - The manifest path, plus the contract, api, engine, port, alias and profile, with the reason for
   any non-obvious choice.
-- The sizing arithmetic and the profile's new VRAM total.
+- The sizing arithmetic, that is, the minimum the model needs to load.
 - The output of validate, vram and test, and whether a live start and conformance ran. If they
   didn't, give the exact `just up` / `just conform` commands.
 - Every `TODO(verify)` you left, and anything the user must do (HF license or `HF_TOKEN`,

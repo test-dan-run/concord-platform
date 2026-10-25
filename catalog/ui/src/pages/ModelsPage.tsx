@@ -66,7 +66,7 @@ export function ModelsPage() {
         }
       />
       {platform.data && (
-        <Panel title="GPU memory" subtitle={`Declared footprints of running models against util_limit ${platform.data.util_limit} of ${platform.data.gpu_total_gb} GB`}>
+        <Panel title="GPU memory" subtitle={`One GPU model runs at a time and gets the GPU memory free at its start, up to util_limit ${platform.data.util_limit} of ${platform.data.gpu_total_gb} GB. Model swaps so far: ${platform.data.swaps ?? 0}`}>
           <GpuBar p={platform.data} />
         </Panel>
       )}

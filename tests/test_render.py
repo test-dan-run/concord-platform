@@ -20,8 +20,10 @@ def test_vllm_and_sglang_use_their_own_memory_flag(empty_services):
     empty_services.write(base_engine_manifest(name="on-sglang", port=8292, engine="sglang", gpu={"util": 0.25}))
     svcs = compose_of(empty_services.load())["services"]
     v, s = svcs["on-vllm"]["command"], svcs["on-sglang"]["command"]
-    assert v[v.index("--gpu-memory-utilization") + 1] == "0.3" and "--mem-fraction-static" not in v
-    assert s[s.index("--mem-fraction-static") + 1] == "0.25" and "--gpu-memory-utilization" not in s
+    # The whole GPU, measured at start (stack.py and the catalog set the variable); util_limit without it.
+    util = "${AIPLATFORM_GPU_UTIL:-0.93}"
+    assert v[v.index("--gpu-memory-utilization") + 1] == util and "--mem-fraction-static" not in v
+    assert s[s.index("--mem-fraction-static") + 1] == util and "--gpu-memory-utilization" not in s
     assert s[:3] == ["python3", "-m", "sglang.launch_server"] and s[s.index("--model-path") + 1] == "/models/test-llm"
     assert v[v.index("--served-model-name") + 1] == "on-vllm"
 
@@ -69,7 +71,7 @@ def test_custom_service_shape():
     assert s["build"]["args"]["BASE_IMAGE"] == "ghcr.io/owner/py-cuda-base:0.1.1"
     assert s["image"] == "ghcr.io/owner/kokoro-tts:0.1.0"
     assert s["volumes"] == ["${AI_ASSETS:?set AI_ASSETS to the weights directory}/custom-models/kokoro-tts/v1.0:/models:ro"]
-    assert s["environment"]["AISVC_VRAM_GB"] == "3" and s["ports"] == ["127.0.0.1:8103:8000"]
+    assert s["environment"]["AISVC_VRAM_GB"] == "${AIPLATFORM_VRAM_GB:-29.76}" and s["ports"] == ["127.0.0.1:8103:8000"]
     assert compose_of(p)["services"]["silero-vad"]["build"]["args"]["BASE_IMAGE"] == "ghcr.io/owner/py-cpu-base:0.1.1"
 
 

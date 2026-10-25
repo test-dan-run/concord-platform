@@ -103,7 +103,9 @@ Paths below are under `/api` unless they start with `/m/` or `/v2/` (the gateway
 - `usable_as` (the probe that applies): `asr` (openai `audio.transcriptions`), `chat-audio` (openai
   `chat.completions` that accepts an `input_audio` part), `segmenter` (oip-v2 with AUDIO and
   SAMPLE_RATE inputs and a SEGMENTS output), `enhancer` (oip-v2 with AUDIO and SAMPLE_RATE in and
-  AUDIO out), `itn` (openai-inspired `text.itn`), or `null` (protocol checks only).
+  AUDIO out), `itn` (openai-inspired `text.itn`), or `null` (protocol checks only). AUDIO may be one
+  clip (`[-1]`) or a batch (`[-1, -1]` with LENGTHS). The probe sends a batch signature a batch of one
+  row, and it checks that a diarizer's ROWS output puts every segment in row 0.
 - `tasks` inside `capabilities` are what the verifier observed: `asr`, `diar` (segments with
   speakers), `vad` (speech-only segments), `enhance` (speech enhancement), `itn`. KWS joins when a KWS
   model exists. The top-level `tasks` are the manifest's declared tasks.
@@ -165,6 +167,49 @@ the platform already holds (`catalog/cards.py`); the UI shows it on a model's pa
 Upstream cards come from the weights folder when it holds one, else from `just fetch-cards [NAME ...]`,
 which downloads only README and LICENSE at the recorded revision into `${AI_ASSETS}/model-cards/`
 (never into a weights folder: every file there is part of the build key).
+
+## Batch profiles
+
+The catalog measures how a GPU model's peak memory grows with batch size, so it can recommend the largest
+batch that fits a given amount of memory (`catalog/batching.py`). A profile is stored per build key,
+because a rebuilt image can use memory differently.
+
+| Call | What it does |
+|---|---|
+| `POST /api/models/{id}/batch-profile` | Queues a measurement. 202 with `measuring` (`pending` or `running`). |
+| `GET /api/models/{id}/batch?vram_gb=24&item_s=20&n=8` | The current build's profile and a `table` of item lengths against 16, 24 and 32 GB and the full budget. With `item_s` (or `item_tokens` for vLLM), `recommendation` is the largest batch for `vram_gb` (default: the full budget). With `n` too, `need` is the memory that batch needs. |
+
+For a custom audio image, the measurement takes a lease (holder `catalog:batch`), so it waits its turn.
+It lifts the server's batch limits (`POST /platform/batch-limits` in `aisvc`), resets the peak, and sends
+batches of 1, 2, 4 and so on up to 128 items at three lengths: a short clip, a typical clip and the
+longest clip the server takes (`batch.max_item_s` in the manifest, or `batch.lengths_s` to choose them). A server that batches inside one item, like faster-whisper with the 30 s windows of a file, sets `batch.max_n: 1`, so the sweep sends single items of growing length.
+Each length stops at the first out of memory error, or when the server had to split a batch, or when a
+batch takes more than 120 s. It also stops before a batch it predicts to need more than the budget, because under WSL2 such a
+batch does not fail: Windows moves GPU memory to system RAM and the batch takes minutes. No request
+carries more than 6,000 s of audio, in the sweep or in a recommendation, because OIP sends samples as
+JSON numbers and a larger request can exhaust the server's host memory. It then fits
+
+    peak GiB ≈ base + a × N × L + b × N × L²
+
+where N is the number of items and L is the length of each in seconds. The L² term matters for attention
+models. The recommendation for V GB is the largest N whose predicted peak stays under 0.9 × V. Peak
+memory is read from `nvidia-smi` during each request, less what the GPU used before the model started.
+This is correct because only one GPU model runs at a time. For a PyTorch image it is also read from the
+image's own counters (`GET /platform/memory`), and the larger value is kept. CTranslate2 and ONNX images
+have only the first reading.
+
+When a build has a profile, each start passes limits for the memory the start was given:
+`AISVC_MAX_BATCH` (the batch for the shortest measured length) and `AISVC_MAX_BATCH_LEN` (the padded
+length, which is items times the longest item, in milliseconds of audio). Without a profile the image
+uses its own small defaults, and its out of memory backoff splits a batch that does not fit.
+
+A vLLM service is not measured, because vLLM batches by itself. Its profile comes from its startup log
+(the available KV cache memory and the KV cache size in tokens). The recommendation is the number of
+sequences of a given length that fit the KV cache, which is a value for `--max-num-seqs`.
+
+`just batch NAME [--vram GB] [--item-s S | --item-tokens T] [--n N]` prints the same numbers in the
+terminal, and `just batch-profile NAME [--wait]` asks for a measurement. The model's page has a Batching
+section with the table and a Measure button.
 
 ## Hosted endpoints
 
@@ -239,38 +284,47 @@ priority.
 
 ```json
 {"id": "l-8c1f…", "holder": "bench:job-12", "models": ["pyannote-diarization"],
- "state": "queued", "position": 2, "waiting_for": "pyannote-diarization does not fit next to qwen3-32b-awq (leased by label:job-3)",
+ "state": "queued", "position": 2, "waiting_for": "one GPU model runs at a time: pyannote-diarization waits for qwen3-32b-awq (leased by label:job-3)",
  "error": null, "created_at": "…", "granted_at": null, "ready_at": null, "expires_at": "…"}
 ```
 
-- `state`: `queued` -> `starting` (fits; its models are being started) -> `active` (every model is
+- `state`: `queued` -> `starting` (granted; its models are being started) -> `active` (every model is
   healthy and has a build key: call it now, and index what it returns) -> `released` | `expired` | `failed` (a model failed to start, or the request
   can never be met, `error` says why).
 - **Heartbeat** every 30 s; a lease (queued or not) expires after `ttl_s` (default 90 s, i.e. three
   missed beats) without one, so a crashed app frees its models and its queue place.
-- One request names its whole model set. A request that could only fit by stopping models the same
-  holder already leases fails at once (it would wait forever): release the old lease first.
+- One request names its whole model set, with at most one GPU model. A request for a GPU model while
+  the same holder leases a different GPU model fails at once, because it would wait forever. Release
+  the old lease first.
 - `aicore.catalog.Catalog.lease(...)` does all of this (heartbeat thread, waiting, release).
 
 ### Scheduler rules
 
-- Fit uses declared footprints: `gpu.util` for engines, `gpu.vram_gb / gpu_total_gb` for custom
-  services. Free = `util_limit` minus running GPU models minus models of starting/active leases.
-- To make room it stops only unleased models with no calls in flight that have run for their settle
-  time (2 x cold start, at least 60 s) or whose lease has ended, cheapest *reload cost* first (cold
-  start x likelihood of reuse: queued demand and recent use), and only as many as needed.
-- One model starts at a time (vLLM sizes its KV cache from free memory at start).
-- **Each model loads entirely on the GPU.** Declared footprints leave out other processes and CUDA
-  contexts, so the catalog also reads free memory from `nvidia-smi` (the container gets the NVIDIA
-  `utility` capability for this). A GPU model starts only when its whole budget (`util` x the device, or
-  `vram_gb`) plus 0.5 GiB is free on the device, and never while another GPU model is still loading: vLLM
-  assumes the memory around it does not change while it profiles, so a neighbour that loads at the same
-  time breaks its start ("No available memory for the cache blocks"). If the measured memory is short,
-  the catalog stops more idle models. If none can be stopped, the request waits with
-  `waiting_for` saying how much memory is free and about how much other processes use. Just before the
-  start it checks again, waiting up to 30 s for stopped models to give their memory back. If memory is
-  still short, the request goes back to its place in the queue, and the model is not started at all. A
-  model is never left partly loaded. Without `nvidia-smi` the catalog fits by declared footprints only.
+- Only one GPU model runs at a time, and it gets the whole GPU. A queued request for a GPU model is
+  granted when no other GPU model is running, or when the one that is running may be stopped. CPU
+  models and hosted endpoints run next to the GPU model and never wait for it.
+- A request that names two or more GPU models fails at once with HTTP 422. Lease one GPU model per
+  stage of a job, together with the CPU models and hosted endpoints that stage needs.
+- The scheduler stops a GPU model to make room only when nobody leases it, no call to it is in flight,
+  and it has run for its settle time (2 x cold start, at least 60 s) or its lease has ended. If any
+  other GPU model can't be stopped yet, the request waits, and `waiting_for` names the model it waits
+  for and the reason.
+- One model starts at a time, and no GPU model starts while another GPU model is still loading. vLLM
+  sizes its KV cache from the free memory it measures at start, so a neighbour that loads at the same
+  time breaks its start ("No available memory for the cache blocks").
+- `gpu.util` (engines) and `gpu.vram_gb` (custom services) are the least memory a model needs to
+  load. The catalog reads free memory from `nvidia-smi` (the container gets the NVIDIA `utility`
+  capability for this), so memory used by other processes counts. A GPU model starts only when that
+  minimum plus 1 GiB is free. Just before the start the catalog measures again, waiting up to 30 s
+  for a stopped model to give its memory back. If memory is still short, the request goes back to its
+  place in the queue, and the model is not started at all.
+- At start, a GPU model gets `min(util_limit, (free - 1 GiB) / total)` of the GPU, from that last
+  measurement. vLLM gets it as `--gpu-memory-utilization`, and custom services get it in GiB as
+  `AISVC_VRAM_GB`. The 1 GiB stays free because Windows keeps some GPU memory for the display under
+  WSL2, and vLLM fails to start when the memory it asks for isn't free. Without `nvidia-smi`, a GPU
+  model gets `util_limit` x `gpu_total_gb`.
+- Stopping one GPU model to start a different one counts as a swap. `GET /api/platform` returns the
+  count as `swaps`, and the catalog keeps it in its database across restarts.
 - **Models a lease brought up are spun down when nothing needs them.** Once its last lease ends, a model
   is stopped after `CATALOG_RELEASE_LINGER_S` (default 30 s, so a back-to-back lease on the same model
   keeps it loaded) unless a live or queued request names it or a call is in flight. Models started on
@@ -355,7 +409,7 @@ Response:
 - `staged` (default): each stage runs over the whole dataset before the next; each model loads once.
   Models already running go first in a stage, then the rest by cold start.
 - `co-resident`: both stages at once (streaming, or audio added mid-run). The slowest-loading stage is
-  the outer loop and stays up; the other stage's models are re-spun inside it unless they all fit
+  the outer loop and stays up; the other stage's models are re-spun inside it unless at most one model of the two stages uses the GPU
   beside it, in which case nothing is re-spun.
 - `keys` per model are optional. With keys, the catalog checks the index for the current build, and
   a model with nothing missing is skipped (`skip: true`). Keys for a later stage are usually unknown
@@ -399,6 +453,7 @@ with cat.lease("bench:job-12", ["whisper-large-v3"], on_wait=print) as lease:
 hits = cat.index_lookup("bench", keys)              # list[dict | None]
 cat.index_record("bench", entries)
 plan = cat.plan(stages=[...])
+cat.batch("wavlm-sv", item_s=20)["recommendation"]  # {"batch": ..., "vram_gb": ...} once a profile exists
 ```
 
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are

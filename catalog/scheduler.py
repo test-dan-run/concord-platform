@@ -1,19 +1,22 @@
 """Scheduler: which model services run, who holds them, and who waits.
 
 Requests (leases from apps, starts asked for by the gateway or `just up`) wait in one strict
-first-come-first-served queue. The head of the queue is granted when its models fit in GPU memory,
-after stopping, if needed, the unleased models that are cheapest to bring back. A request behind a
-blocked head is granted only if it needs no new memory and protects nothing the head could use.
+first-come-first-served queue. One GPU model runs at a time and it gets the whole GPU: the head of the
+queue is granted when no other GPU model runs, after stopping the one that does if it may be stopped.
+A request names at most one GPU model (more fail at once); CPU models and hosted endpoints join it. A
+request behind a blocked head is granted only if it needs no new GPU model and protects nothing the
+head could use.
 
-Rules (README "Scheduler rules"): fit by declared footprints; never stop a leased model, a model with
-calls in flight, or one that has not run for its settle time (2 x cold start, at least 60 s); stop the
-lowest reload cost first (cold start x likelihood of reuse); stop only enough. One model starts at a
-time, on the starter thread, which is also the only thread that stops models.
+Rules (README "Scheduler rules"): never stop a leased model, a model with calls in flight, or one that
+has not run for its settle time (2 x cold start, at least 60 s). One model starts at a time, on the
+starter thread, which is also the only thread that stops models. Stopping one GPU model to start a
+different one counts as a swap (`swaps`, kept in the database).
 
-Every model loads entirely on the GPU: besides the declared fit, a GPU model starts only when the device
-(measured, so other processes count) has its whole budget free, and not while another GPU model is still
-loading (vLLM sizes its KV cache from memory that must not change under it). A model a lease brought
-up is stopped once that lease ends and no live or queued request needs it.
+gpu.util / vram_gb is the least a model needs to load. A GPU model starts only when the device (measured,
+so other processes count) has that much free besides 1 GiB, and not while another GPU model is still
+loading (vLLM sizes its KV cache from memory that must not change under it). It then gets
+min(util_limit, (free - 1 GiB) / total) of the device, measured right before the start. A model a lease
+brought up is stopped once that lease ends and no live or queued request needs it.
 
 Hosted endpoints (catalog/hosted.py) may be named in a lease next to platform models. They use no GPU and
 have no container, so they are granted at once and never wait in the queue.
@@ -23,7 +26,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import queue
 import statistics
 import threading
@@ -36,6 +38,7 @@ from typing import Any
 
 from tools import render
 from tools.schema import Manifest, Platform, PlatformError, load_platform
+from tools.vram_check import BATCH_VARS, RESERVE_GIB, UTIL_VAR, VRAM_VAR, start_env
 
 from .builds import Build, Builds
 from .db import DB, dumps, iso, now_iso
@@ -46,6 +49,11 @@ from .settings import Settings
 log = logging.getLogger("catalog.scheduler")
 LIVE = ("queued", "starting", "active")
 EPS = 1e-9
+
+
+def one_gpu_model(names: list[str]) -> str:
+    return (f"{', '.join(names)} are {len(names)} GPU models, but only one GPU model runs at a time and it gets the "
+            "whole GPU; lease one GPU model per stage (CPU models and hosted endpoints may join it)")
 
 
 class SchedulerError(Exception):
@@ -100,6 +108,8 @@ class Run:
     pinned: bool = False  # started on purpose (manual start, `just up`, outside the catalog): never spun down
     released_at: float | None = None  # when the last lease holding it ended: spun down once nothing needs it
     short: str | None = None  # the start found too little free GPU memory: its request queues again
+    given: float | None = None  # fraction of the device its start was given (None: CPU, or started elsewhere)
+    gpu_used_before: float | None = None  # GiB the device had in use just before its start (batch measurement)
 
 
 @dataclass
@@ -132,6 +142,9 @@ class Scheduler:
         self._cold_cache: dict[str, list[float]] = {}
         self.gpu: tuple[float, float] | None = None  # (total, free) GiB at the last tick; None: not measurable
         self.hosted_ids: Callable[[], set[str]] = set  # set by the catalog: ids of hosted endpoints
+        # set by the catalog: batch limits (AISVC_MAX_BATCH, ...) for a start of (name, build key, GiB given)
+        self.batch_env: Callable[[str, str | None, float], dict[str, str]] = lambda name, build_key, gib: {}
+        self.swaps = (db.one("SELECT value FROM counter WHERE name = 'swaps'") or {}).get("value") or 0
         self._load_requests()
 
     # ------------------------------------------------------------------------- platform
@@ -276,7 +289,7 @@ class Scheduler:
                 run.pinned = not any(name in r.models for r in self._live() if r.kind == "lease")
             elif not alive and run.running:
                 run.running, run.ready_at = False, None
-                run.pinned, run.released_at = False, None
+                run.pinned, run.released_at, run.given = False, None, None
 
     def _expire(self, now: float) -> None:
         for r in self.requests.values():
@@ -383,15 +396,18 @@ class Scheduler:
         return self._fit_measured(p, r, protected, now, fit)
 
     def gpu_gib(self, p: Platform, name: str, total_gib: float) -> float:
+        """GPU memory the model holds: what its start gave it, else its minimum."""
+        run = self.runs.get(name)
+        if run and run.given is not None:
+            return run.given * total_gib
         try:
             return budget_gib(p.get(name), total_gib)
         except KeyError:
             return 0.0
 
     def _fit_measured(self, p: Platform, r: Request, protected: dict[str, list[str]], now: float, fit: Fit) -> Fit:
-        """The models to load must find their whole budget free on the device, so none is partly loaded or
-        sized from memory another process is still taking. Stops more idle models if declared footprints
-        were not enough (other processes, CUDA contexts), else waits."""
+        """The GPU model to load must find its minimum plus 1 GiB free on the device once the other GPU models
+        are stopped, so it is never partly loaded or sized from memory another process is still taking."""
         assert self.gpu is not None
         total, free = self.gpu
         load = [m for m in r.models if self.frac(p, m) > 0 and not self.runs[m].running and not self.runs[m].starting]
@@ -400,69 +416,53 @@ class Scheduler:
         loading = sorted(m for m, run in self.runs.items() if run.starting and m not in r.models and self.frac(p, m) > 0)
         if loading:
             return Fit(False, reason=f"waiting for {', '.join(loading)} to finish loading before measuring free GPU memory")
-        need = sum(self.gpu_gib(p, m, total) for m in load) + self.settings.gpu_margin_gib
-        evict = list(fit.evict)
-        # Models being stopped give back about their budget (custom services hold less; the start checks again).
-        free += sum(self.gpu_gib(p, m, total) for m, run in self.runs.items() if run.stopping or m in evict)
-        candidates = [m for m in self._occupying(p) - set(r.models) - set(protected) - set(evict)
-                      if self._evictable(p, m, now)]
-        candidates.sort(key=lambda m: (self.reload_cost(p, m, now), self.runs[m].last_used or 0, m))
-        for m in candidates:
-            if free >= need:
-                break
-            evict.append(m)
-            free += self.gpu_gib(p, m, total)
+        need = budget_gib(p.get(load[0]), total) + RESERVE_GIB  # its minimum
+        # Models being stopped give back about what they hold (the start checks again).
+        free += sum(self.gpu_gib(p, m, total) for m, run in self.runs.items() if run.stopping or m in fit.evict)
         if free >= need:
-            return Fit(True, evict)
+            return fit
         platform = sum(self.gpu_gib(p, m, total) for m in self._occupying(p) | {m for m, run in self.runs.items() if run.stopping})
         other = total - self.gpu[1] - platform
-        return Fit(False, reason=f"{', '.join(sorted(load))} need {need:.1f} GiB free on the GPU to load entirely; "
-                                 f"{free:.1f} GiB would be free" + (f" (about {other:.1f} GiB is used outside the platform's "
-                                                                    "models)" if other > 0.5 else ""))
+        return Fit(False, reason=f"{load[0]} needs {need:.1f} GiB free on the GPU to load; {free:.1f} GiB would be "
+                                 "free" + (f" (about {other:.1f} GiB is used outside the platform's models)" if other > 0.5 else ""))
 
     def _fit_declared(self, p: Platform, r: Request, protected: dict[str, list[str]], now: float) -> Fit:
+        """One GPU model at a time: the request's GPU model is granted once every other GPU model can be stopped."""
         limit = p.config.util_limit
-        need = {m for m in r.models if self.frac(p, m) > 0}
-        alone = sum(self.frac(p, m) for m in need)
-        if alone > limit + EPS:
-            return Fit(False, reason=f"{', '.join(sorted(need))} need {alone:.2f} of the GPU together, over util_limit "
-                                     f"{limit}; they can never run at once", fatal=True)
-        held = {m for m in protected if self.frac(p, m) > 0}
-        occupied = self._occupying(p) | held | need
-        used = sum(self.frac(p, m) for m in occupied)
-        if used <= limit + EPS:
+        need = sorted(m for m in r.models if self.frac(p, m) > 0)
+        if len(need) > 1:
+            return Fit(False, reason=one_gpu_model(need), fatal=True)
+        if not need:
             return Fit(True)
-        candidates = [m for m in occupied - need - set(protected) if self._evictable(p, m, now)]
-        candidates.sort(key=lambda m: (self.reload_cost(p, m, now), self.runs[m].last_used or 0, m))
-        evict = []
-        for m in candidates:
-            if used <= limit + EPS:
-                break
-            evict.append(m)
-            used -= self.frac(p, m)
-        if used <= limit + EPS:
+        [m] = need
+        if self.frac(p, m) > limit + EPS:
+            return Fit(False, fatal=True, reason=f"{m} needs {self.frac(p, m):.2f} of the GPU, over util_limit {limit}; "
+                                                 "it can never run")
+        others = (self._occupying(p) | {x for x in protected if self.frac(p, x) > 0}) - {m}
+        if not others:
+            return Fit(True)
+        evict = sorted(x for x in others if x not in protected and self._evictable(p, x, now))
+        if len(evict) == len(others):
             return Fit(True, evict)
-        # Explain why not, and fail if waiting cannot help (the holder blocks itself).
-        own = {m for m, hs in protected.items() if r.holder in hs and self.frac(p, m) > 0}
-        others_held = {m for m, hs in protected.items() if any(h != r.holder for h in hs) and self.frac(p, m) > 0}
-        if own - others_held:
-            floor = sum(self.frac(p, m) for m in (others_held | need))
-            if floor <= limit + EPS and floor + sum(self.frac(p, m) for m in own - others_held - need) > limit + EPS:
-                return Fit(False, fatal=True, reason=f"{r.holder} already leases {', '.join(sorted(own - need))}; "
-                                                     "release that lease before asking for more")
+        # Fail if waiting cannot help: the holder's own lease keeps the GPU busy.
+        own = {x for q in self._live() if q.kind == "lease" and q.holder == r.holder and q.state != "queued"
+               for x in q.models} & others
+        if own:
+            return Fit(False, fatal=True, reason=f"{r.holder} already leases {', '.join(sorted(own))} and only one GPU "
+                                                 f"model runs at a time; release that lease before asking for {m}")
         blockers = []
-        for m in sorted(occupied - need):
-            run = self.runs[m]
-            if m in protected:
-                blockers.append(f"{m} (leased by {' and '.join(sorted(set(protected[m])))})")
+        for x in sorted(others):
+            run = self.runs[x]
+            if x in protected:
+                blockers.append(f"{x} (leased by {' and '.join(sorted(set(protected[x])))})")
             elif run.in_flight:
-                blockers.append(f"{m} ({run.in_flight} call(s) in flight)")
+                blockers.append(f"{x} ({run.in_flight} call(s) in flight)")
             elif run.starting:
-                blockers.append(f"{m} (starting)")
-            elif not self._settled(p, m, now) and not self._unneeded(m):
-                left = self.settle_s(p, m) - (now - (run.ready_at or now))
-                blockers.append(f"{m} (settling, {max(0, left):.0f}s left)")
-        return Fit(False, reason=f"{', '.join(sorted(need))} does not fit next to " + (", ".join(blockers) or "running models"))
+                blockers.append(f"{x} (starting)")
+            elif not self._settled(p, x, now) and not self._unneeded(x):
+                left = self.settle_s(p, x) - (now - (run.ready_at or now))
+                blockers.append(f"{x} (settling, {max(0, left):.0f}s left)")
+        return Fit(False, reason=f"one GPU model runs at a time: {m} waits for " + (", ".join(blockers) or "running models"))
 
     def _evictable(self, p: Platform, m: str, now: float) -> bool:
         run = self.runs[m]
@@ -481,16 +481,11 @@ class Scheduler:
         run = self.runs[m]
         return run.ready_at is not None and now - run.ready_at >= self.settle_s(p, m)
 
-    def reload_cost(self, p: Platform, m: str, now: float) -> float:
-        """Cold start x likelihood of reuse: queued demand plus recent use (decaying over reuse_tau_s)."""
-        queued = sum(1 for r in self._live() if r.state == "queued" and m in r.models)
-        run = self.runs[m]
-        last = run.last_used or run.ready_at or 0
-        recency = math.exp(-(now - last) / self.settings.reuse_tau_s) if last else 0.0
-        return self.cold_start(p, m)[0] * (min(1, queued) + recency)
-
     def _grant(self, p: Platform, r: Request, evict: list[str], now: float) -> None:
         r.state, r.granted_at, r.waiting_for = "starting", now, None
+        if any(self.frac(p, m) > 0 for m in evict) and any(
+                self.frac(p, m) > 0 and not self.runs[m].running and not self.runs[m].starting for m in self._local(r)):
+            self._count_swap()
         for m in evict:
             self.runs[m].stopping = True
             self._jobs.put(("stop", m))
@@ -501,6 +496,12 @@ class Scheduler:
                 run.starting, run.failed = True, None
                 self._jobs.put(("start", m))
         self._save(r)
+
+    def _count_swap(self) -> None:
+        """One GPU model stopped to start a different one."""
+        self.swaps += 1
+        self.db.execute("INSERT INTO counter (name, value) VALUES ('swaps', ?) ON CONFLICT(name) DO UPDATE SET "
+                        "value = excluded.value", (self.swaps,))
 
     def _local(self, r: Request) -> list[str]:
         """The request's platform models: hosted endpoints have nothing to start or watch."""
@@ -579,7 +580,7 @@ class Scheduler:
             with self.lock:
                 run = self.runs[name]
                 run.stopping, run.running, run.ready_at = False, False, None
-                run.pinned, run.released_at = False, None
+                run.pinned, run.released_at, run.given = False, None, None
 
     def _do_start(self, name: str) -> None:
         p = self.platform()
@@ -590,18 +591,23 @@ class Scheduler:
                 return
             run.start_began = time.time()
         s = p.get(name)
-        short = self._wait_for_gpu(p, s)
+        short, env, gpu = self._wait_for_gpu(p, s)
         if short:
             log.warning("not starting %s: %s", name, short)
             with self.lock:
                 run.starting, run.short = False, short
             return
+        if VRAM_VAR in env:
+            env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
+        with self.lock:
+            run.given = float(env[UTIL_VAR]) if UTIL_VAR in env else None
+            run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
         url = self.upstream_url(name)
         t0 = time.monotonic()
         error = None
         try:
-            log.info("starting %s", name)
-            self.runtime.start(p, s)
+            log.info("starting %s%s", name, f" with {env[UTIL_VAR]} of the GPU" if UTIL_VAR in env else "")
+            self.runtime.start(p, s, env)
             while True:
                 if self.runtime.healthy(p, s, url):
                     break
@@ -648,24 +654,32 @@ class Scheduler:
                 run.build = build
         log.info("%s healthy after %.1fs", name, seconds)
 
-    def _wait_for_gpu(self, p: Platform, s: Manifest) -> str | None:
-        """Wait until the device has the model's whole budget free (stopped models give memory back a moment
-        after they exit). None when it has, or memory cannot be measured; else why it was not started."""
+    def _batch_env(self, p: Platform, s: Manifest, gib: float) -> dict[str, str]:
+        """Compose variables for the batch limits of this build's profile at `gib` (none without a profile)."""
+        try:
+            bk = self.builds.current(p, s, None).build_key
+            return {BATCH_VARS[k]: v for k, v in self.batch_env(s.name, bk, gib).items() if k in BATCH_VARS}
+        except Exception:  # noqa: BLE001 - a start never fails over batch limits
+            log.exception("batch limits for %s", s.name)
+            return {}
+
+    def _wait_for_gpu(self, p: Platform, s: Manifest) -> tuple[str | None, dict[str, str], tuple[float, float] | None]:
+        """Wait until the device has the model's minimum free besides 1 GiB (stopped models give memory back a
+        moment after they exit). Returns (why it was not started, or None; the compose variables that give it
+        the memory measured free now, or util_limit x gpu_total_gb when nothing can be measured; the reading)."""
         if not s.gpu:
-            return None
+            return None, {}, None
         deadline = time.monotonic() + self.settings.gpu_free_wait_s
         while True:
             try:
                 gpu = self.runtime.gpu_memory(p)
             except Exception:  # noqa: BLE001
                 gpu = None
-            if gpu is None:
-                return None
-            need = budget_gib(s, gpu[0]) + self.settings.gpu_margin_gib
-            if gpu[1] >= need:
-                return None
-            if time.monotonic() >= deadline or self._stop.wait(1.0):
-                return f"{s.name} needs {need:.1f} GiB free on the GPU to load entirely; {gpu[1]:.1f} GiB free"
+            try:
+                return None, start_env(p, s, gpu), gpu
+            except ValueError as exc:
+                if time.monotonic() >= deadline or self._stop.wait(1.0):
+                    return str(exc), {}, gpu
 
     # ------------------------------------------------------------------------- timings
 
@@ -709,6 +723,9 @@ class Scheduler:
             names = [m if m in hosted else next(local) for m in models]
         except KeyError as exc:
             raise SchedulerError(404, exc.args[0]) from None
+        gpu = [n for n in names if n not in hosted and p.get(n).gpu]
+        if len(gpu) > 1:
+            raise SchedulerError(422, one_gpu_model(gpu))
         now = time.time()
         with self.lock:
             self._seq += 1

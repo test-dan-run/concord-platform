@@ -6,12 +6,18 @@ every supported rate is enhanced at its own rate and the output keeps the input'
 Inputs over WHOLE_MAX_SAMPLES are enhanced in 5 s chunks with 50% Hann overlap-add, as the model card
 advises for long files (its training clips are under 10 s). The limit is in samples because memory grows
 with the rate: one 10 s pass at 48 kHz peaked at 5.6 GiB on the RTX 5090, a 5 s one under 3 GiB.
+
+Batches: every row becomes one piece (a whole input) or several (its chunks), and pieces of the same rate and
+length share one forward pass. Padding is never used, because it would change the output: InstanceNorm takes
+its statistics over the whole spectrogram, the Mamba blocks run both ways in time, and the STFT reflects at the
+edges. All chunks are CHUNK_S long, so a long file runs its chunks in batches, and so do inputs of equal length.
 """
 
 from __future__ import annotations
 
 import json
-import threading
+import math
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -33,7 +39,6 @@ class ReUse:
         self.dir = Path(weights_dir)
         self.model = None
         self.cfg: dict | None = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         import torch
@@ -60,7 +65,7 @@ class ReUse:
         return tuple(_even(s[k] * sample_rate // base) for k in ("n_fft", "hop_size", "win_size"))  # type: ignore[return-value]
 
     def _enhance_one(self, wav, sample_rate: int):
-        """One pass of the model over a [1, N] tensor (inference.py)."""
+        """One pass of the model over a [B, N] tensor of equal-length pieces (inference.py)."""
         import torch
 
         from .reuse.stfts import mag_phase_istft, mag_phase_stft
@@ -73,38 +78,43 @@ class ReUse:
         mag, pha, _ = mag_phase_stft(wav, n_fft=n_fft, hop_size=hop, win_size=win, compress_factor=compress,
                                      center=True, addeps=False)
         amp_g, pha_g, _ = self.model(mag, pha)
-        # inference.py: zero frames that are mostly zero ("to remove strange sweep artifact")
+        # inference.py: zero frames that are mostly zero ("to remove strange sweep artifact"), per piece
         zero_portion = torch.sum(torch.expm1(torch.relu(amp_g)) == 0, 1) / amp_g.shape[1]
-        amp_g[:, :, (zero_portion > 0.5)[0]] = 0
+        amp_g = amp_g.masked_fill((zero_portion > 0.5)[:, None, :], 0)
         out = mag_phase_istft(amp_g, pha_g, n_fft, hop, win, compress)
         if out.shape[1] >= n:  # pad_or_trim_to_match
             return out[:, :n]
         return torch.nn.functional.pad(out, (0, n - out.shape[1]), value=1e-8)
 
-    def _enhance_chunked(self, wav, sample_rate: int):
-        """Hann-windowed overlap-add over CHUNK_S chunks (inference_chunk.py)."""
-        import math
-
-        import torch
-
-        chunk = int(CHUNK_S * sample_rate)
-        hop = int(HOP_PORTION * chunk)
-        window = torch.clamp(torch.hann_window(chunk, device=wav.device), min=1e-7)
-        out = torch.zeros_like(wav)
-        weight = torch.zeros_like(wav)
-        n_chunks = max(1, math.ceil((wav.shape[1] - chunk) / hop) + 1)
-        for i in range(n_chunks):
-            sl = slice(i * hop, i * hop + chunk) if i < n_chunks - 1 else slice(wav.shape[1] - chunk, wav.shape[1])
-            piece = self._enhance_one(wav[:, sl], sample_rate)
-            out[:, sl] += piece * window[: piece.shape[1]]
-            weight[:, sl] += window[: piece.shape[1]]
-        return out / weight
-
-    def enhance(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    def enhance_batch(self, pieces: list[tuple[np.ndarray, int]]) -> list[np.ndarray]:
+        """Enhanced (samples, rate) pieces; pieces of equal rate and length share one forward pass.
+        Callers serialise calls (aisvc.batch.MicroBatcher)."""
         import torch
 
         if self.model is None:
             raise RuntimeError("call load() first")
+        groups: dict[tuple[int, int], list[int]] = {}
+        for i, (x, sr) in enumerate(pieces):
+            groups.setdefault((sr, len(x)), []).append(i)
+        out: list[np.ndarray | None] = [None] * len(pieces)
+        with torch.inference_mode():
+            for (sr, _), idx in groups.items():
+                wav = torch.from_numpy(np.stack([pieces[i][0] for i in idx])).to("cuda")
+                for i, y in zip(idx, self._enhance_one(wav, sr).float().cpu().numpy()):
+                    out[i] = y
+        return out
+
+    @staticmethod
+    def spans(n: int, sample_rate: int) -> list[tuple[int, int]]:
+        """(start, end) of the pieces of an n-sample input: the whole input, or CHUNK_S chunks (inference_chunk.py)."""
+        if n <= WHOLE_MAX_SAMPLES:
+            return [(0, n)]
+        chunk = int(CHUNK_S * sample_rate)
+        hop = int(HOP_PORTION * chunk)
+        k = max(1, math.ceil((n - chunk) / hop) + 1)
+        return [(i * hop, i * hop + chunk) if i < k - 1 else (n - chunk, n) for i in range(k)]
+
+    def check(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
         if sample_rate not in SUPPORTED_RATES:
             raise ValueError(f"SAMPLE_RATE {sample_rate} is not supported; use one of {', '.join(map(str, SUPPORTED_RATES))}")
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
@@ -112,10 +122,31 @@ class ReUse:
             raise ValueError("AUDIO is empty")
         if not np.all(np.isfinite(audio)):
             raise ValueError("AUDIO contains NaN or infinite values")
-        with self._lock, torch.inference_mode():
-            wav = torch.from_numpy(audio).to("cuda").unsqueeze(0)
-            if audio.size > WHOLE_MAX_SAMPLES:
-                out = self._enhance_chunked(wav, sample_rate)
-            else:
-                out = self._enhance_one(wav, sample_rate)
-            return out[0].float().cpu().numpy()
+        return audio
+
+    def enhance_rows(self, rows: Sequence[np.ndarray], sample_rate: int,
+                     run: Callable[[list[tuple[np.ndarray, int]]], list[np.ndarray]] | None = None) -> list[np.ndarray]:
+        """Each row enhanced at its rate and length. `run` enhances the pieces: enhance_batch, or the app's
+        MicroBatcher around it."""
+        rows = [self.check(a, sample_rate) for a in rows]
+        spans = [self.spans(len(a), sample_rate) for a in rows]
+        pieces = list((run or self.enhance_batch)([(a[s:e], sample_rate) for a, sp in zip(rows, spans) for s, e in sp]))
+        out, k = [], 0
+        for a, sp in zip(rows, spans):
+            out.append(pieces[k] if len(sp) == 1 else overlap_add(pieces[k: k + len(sp)], sp, len(a)))
+            k += len(sp)
+        return out
+
+    def enhance(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        return self.enhance_rows([audio], sample_rate)[0]
+
+
+def overlap_add(pieces: Sequence[np.ndarray], spans: Sequence[tuple[int, int]], n: int) -> np.ndarray:
+    """Chunks put back together with a periodic Hann window (as torch.hann_window), as in inference_chunk.py."""
+    chunk = spans[0][1] - spans[0][0]
+    window = np.maximum(0.5 - 0.5 * np.cos(2 * np.pi * np.arange(chunk) / chunk), 1e-7).astype(np.float32)
+    out, weight = np.zeros(n, np.float32), np.zeros(n, np.float32)
+    for y, (s, e) in zip(pieces, spans):
+        out[s:e] += y * window
+        weight[s:e] += window
+    return out / weight

@@ -24,12 +24,14 @@ class FakeEmbedder(emb_mod.ReDimNet2Embedder):
     def load(self):
         self.model = object()
 
-    def embed(self, audio, sample_rate):
-        x = emb_mod.prepare(audio, sample_rate)
-        self.seen.append(len(x))
-        v = np.zeros(DIM, np.float32)
-        v[0], v[1] = 1.0, float(np.sqrt(np.mean(x ** 2)))
-        return v / np.linalg.norm(v)
+    def embed_batch(self, clips):
+        out = []
+        for x in clips:
+            self.seen.append(len(x))
+            v = np.zeros(DIM, np.float32)
+            v[0], v[1] = 1.0, float(np.sqrt(np.mean(x ** 2)))
+            out.append(v / np.linalg.norm(v))
+        return out
 
 
 @pytest.fixture(scope="module")
@@ -99,3 +101,42 @@ def test_real_model_embeds_unit_vectors():
     e1, e2 = m.embed(a, 16000), m.embed(a * 0.5, 16000)
     assert e1.shape == (DIM,) and abs(float(np.linalg.norm(e1)) - 1) < 1e-4
     assert float(e1 @ e2) > 0.95  # gain does not change the speaker
+
+
+def _speechlike(seconds: float, f0: float, seed: int) -> np.ndarray:
+    t = np.arange(int(16000 * seconds)) / 16000
+    a = 0.3 * np.sin(2 * np.pi * f0 * t) * (1 + np.sin(2 * np.pi * 3.7 * t))
+    return (a + np.random.default_rng(seed).normal(0, 0.02, len(t))).astype(np.float32)
+
+
+MIXED = [_speechlike(s, f, k) for k, (s, f) in enumerate([(1.3, 140), (4.0, 210), (7.5, 120), (25.0, 180), (0.3, 160)])]
+
+
+@pytest.mark.weights
+@pytest.mark.skipif(not (WEIGHTS / "b6-vb2+vox2+cnc2_v0-lm.pt").is_file(), reason=f"no checkpoint in {WEIGHTS}")
+def test_real_model_batch_matches_one_by_one():
+    """Padding (and, for redimnet2, grouping by length) must not change an embedding."""
+    pytest.importorskip("torch")
+    m = emb_mod.ReDimNet2Embedder(WEIGHTS)
+    m.load()
+    clips = [emb_mod.prepare(a, 16000) for a in MIXED + MIXED[:2]]
+    batched = m.embed_batch(clips)
+    for c, b in zip(clips, batched, strict=True):
+        one = m.embed_batch([c])[0]
+        assert float(one @ b) > 0.999, float(one @ b)
+
+
+def test_rows_run_in_batches_within_the_limit(monkeypatch):
+    monkeypatch.setenv("AISVC_MAX_BATCH", "2")
+    model = FakeEmbedder()
+    sizes = []
+    inner = model.embed_batch
+    model.embed_batch = lambda clips: (sizes.append(len(clips)), inner(clips))[1]
+    with running(app_mod.build_app(model)) as c:
+        audio = np.stack([np.resize(a, 16000 * 3) for a in MIXED])
+        r = infer(c, audio, [16000, 32000, 48000, 8000, 24000])
+    assert r.status_code == 200, r.text
+    emb = np.asarray(r.json()["outputs"][0]["data"], np.float32).reshape(5, DIM)
+    expected = np.stack(model.embed_batch([emb_mod.prepare(audio[i, :n], 16000)
+                                           for i, n in enumerate([16000, 32000, 48000, 8000, 24000])]))
+    assert sizes[:3] == [2, 2, 1] and np.allclose(emb, expected)  # input order kept after the length sort

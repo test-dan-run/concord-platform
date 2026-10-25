@@ -3,18 +3,20 @@ kind: utility
 engine: custom
 contract: oip-v2
 api: infer
-contract_reason: "No OpenAI route for dereverberation; input and output are float audio arrays"
+contract_reason: "No OpenAI route for dereverberation; input and output are batches of float audio arrays"
 port: 8502
 description: "Single-channel dereverberation, WPE (nara_wpe, statistical, no weights) on CPU; output keeps the input rate and length"
 tasks: [dereverberation, speech-enhancement]
 build:
   context: custom/wpe-dereverb
-  image: "{registry}/wpe-dereverb:0.1.0"
+  image: "{registry}/wpe-dereverb:0.2.0"
   base: py-cpu
-signature:
+signature:                         # the same as nemotronlabs-re-use and deepfilternet3; AUDIO [-1] without LENGTHS still works
   inputs:
-    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
     - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
   outputs:
-    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1]}
     - {name: SAMPLE_RATE, datatype: INT32, shape: [1]}

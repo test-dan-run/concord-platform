@@ -168,7 +168,7 @@ def test_tarball_keeps_the_old_contents(assets, docker, tmp_path):
 def test_dry_run_json_and_budget_warning(assets, docker, capsys):
     assert bundle.main(["qwen-sea-lion-v4-5-27b-it", "gemma-sea-lion-v4-27b-it-nvfp4", "--dry-run", "--json"]) == 0
     rep = json.loads(capsys.readouterr().out)
-    assert not rep["budget"]["ok"] and any("over util_limit" in w for w in rep["warnings"])
+    assert not rep["budget"]["ok"] and any("only one GPU service runs at a time" in w for w in rep["warnings"])
     assert bundle.main(["--all", "--dry-run", "--json"]) == 0
     assert len(json.loads(capsys.readouterr().out)["services"]) == len(load_platform().services)
 

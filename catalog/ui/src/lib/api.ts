@@ -151,6 +151,7 @@ export type PlatformInfo = {
   gpu_total_gb: number;
   util_limit: number;
   reserve_gb: number;
+  swaps?: number; // GPU model swaps counted by the scheduler
   used_fraction: number;
   gpu_models: { id: string; fraction: number }[];
   platform_error: string | null;
@@ -249,4 +250,33 @@ export type ModelCard = {
   facts: { label: string; value: string }[];
   sections: ModelCardSection[];
   gaps: string[];
+};
+
+// GET /models/{id}/batch (catalog/batching.py): the current build's batch profile.
+export type BatchProfile = {
+  kind: "audio" | "kv";
+  base: number;
+  a: number;
+  b: number;
+  max_item_s: number | null;
+  points: { n: number; length_s: number; peak_gib: number; seconds: number }[];
+  oom: { length_s: number; stopped: string }[];
+  method: string;
+  kv_tokens: number | null;
+  kv_gib: number | null;
+  fixed_gib: number | null;
+  max_model_len: number | null;
+  max_concurrency: number | null;
+  given_gib: number | null;
+};
+
+export type BatchView = {
+  model: string;
+  build_key: string | null;
+  measuring: "pending" | "running" | null;
+  status: "none" | "measured" | "failed";
+  error: string | null;
+  measured_at: string | null;
+  profile?: BatchProfile;
+  table?: { unit: "s" | "tokens"; budgets_gb: number[]; full_gb: number | null; rows: { length: number; batch: number[] }[] };
 };

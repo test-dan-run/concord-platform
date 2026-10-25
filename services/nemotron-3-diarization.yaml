@@ -4,7 +4,7 @@ alias: default-diarization
 engine: custom
 contract: oip-v2
 api: infer
-contract_reason: "No OpenAI route for diarization alone; input is a float audio array"
+contract_reason: "No OpenAI route for diarization alone; input is a batch of float audio arrays"
 port: 8403
 # CPU only: 23 s of audio diarized in 0.5 s on CPU in testing, so it takes no VRAM. To move it to the GPU,
 # add gpu.vram_gb and set build.base to py-cuda (requirements.txt then drops the +cpu torch).
@@ -12,7 +12,7 @@ description: "Speaker diarization, NVIDIA Nemotron 3 Diarization (Streaming Sort
 tasks: [speaker-diarization]
 build:
   context: custom/nemotron-3-diarization
-  image: "{registry}/nemotron-3-diarization:0.1.0"
+  image: "{registry}/nemotron-3-diarization:0.2.0"
   base: py-cpu
 weights:
   path: ${AI_ASSETS}/nemotron-3-diarization       # existing local copy (.nemo)
@@ -21,10 +21,12 @@ custom_reason: >-
   Checked 2026-10-17: a NeMo Sortformer checkpoint (.nemo). vLLM v0.31.0 and SGLang v0.5.21 do not
   load NeMo diarization models, and NeMo's own release (3.0.0) is too old for it, so the server pins a
   NeMo Speech main commit. Retire when an engine in engines.yaml serves Sortformer diarization over OIP.
-signature:
+signature:                         # the same as pyannote-diarization; AUDIO [-1] without LENGTHS still works
   inputs:
-    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
     - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
-  outputs:
+  outputs:                         # every row's segments, row after row; ROWS is the row of each segment
     - {name: SEGMENTS, datatype: FP32, shape: [-1, 2]}
     - {name: SPEAKERS, datatype: INT32, shape: [-1]}
+    - {name: ROWS, datatype: INT32, shape: [-1]}

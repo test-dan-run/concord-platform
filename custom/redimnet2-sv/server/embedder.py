@@ -1,4 +1,8 @@
-"""ReDimNet2-B6 speaker embeddings (192-d) for one clip.
+"""ReDimNet2-B6 speaker embeddings (192-d) for a batch of clips.
+
+The model has no padding mask (its front end normalises each whole signal, and its 1-D blocks attend over time),
+so only clips of equal length after `prepare` share a forward pass: every clip of MAX_S or more, every clip of
+MIN_S or less, and repeated lengths. Other clips run one by one, which gives the same embeddings as before.
 
 The model code is fetched with the weights into `<weights>/code/redimnet2` (PalabraAI/redimnet2 @c5bbe0b) and
 imported from there; the checkpoint holds its own `model_config`. Input is 16 kHz audio in [-1, 1] (the model's
@@ -10,7 +14,6 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -42,7 +45,6 @@ class ReDimNet2Embedder:
         self.model = None
         self.device = "cpu"
         self._torch = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         import torch
@@ -67,11 +69,22 @@ class ReDimNet2Embedder:
         self.model = model.eval().to(self.device)
 
     def embed(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        return self.embed_batch([prepare(audio, sample_rate)])[0]
+
+    def embed_batch(self, clips: list[np.ndarray]) -> list[np.ndarray]:
+        """Embeddings of prepared clips (`prepare`): one forward pass per group of equal length.
+        Callers serialise calls (aisvc.batch.MicroBatcher)."""
         if self.model is None:
             raise RuntimeError("model not loaded")
         torch = self._torch
-        x = torch.from_numpy(prepare(audio, sample_rate))[None, :].to(self.device)
-        with self._lock, torch.inference_mode():
-            e = self.model(x).float()
-            e = torch.nn.functional.normalize(e, dim=-1)
-        return e[0].cpu().numpy()
+        groups: dict[int, list[int]] = {}
+        for i, c in enumerate(clips):
+            groups.setdefault(len(c), []).append(i)
+        out: list[np.ndarray | None] = [None] * len(clips)
+        with torch.inference_mode():
+            for idx in groups.values():
+                x = torch.from_numpy(np.stack([clips[i] for i in idx])).to(self.device)
+                e = torch.nn.functional.normalize(self.model(x).float(), dim=-1).cpu().numpy()
+                for j, i in enumerate(idx):
+                    out[i] = e[j]
+        return out

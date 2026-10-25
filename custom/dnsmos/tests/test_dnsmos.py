@@ -23,11 +23,14 @@ class FakeDnsmos(mos_mod.Dnsmos):
     def load(self):
         self.session = object()
 
-    def raw(self, segment):
-        assert segment.shape == (int(mos_mod.INPUT_LENGTH * mos_mod.SR),)
-        self.windows += 1
-        r = float(np.sqrt(np.mean(segment ** 2)))
-        return np.array([3.0 + r, 3.5 + r, 2.5 + r], dtype=np.float32)
+    def raw_batch(self, segments):
+        out = []
+        for segment in segments:
+            assert segment.shape == (int(mos_mod.INPUT_LENGTH * mos_mod.SR),)
+            self.windows += 1
+            r = float(np.sqrt(np.mean(segment ** 2)))
+            out.append([3.0 + r, 3.5 + r, 2.5 + r])
+        return np.asarray(out, dtype=np.float32)
 
 
 @pytest.fixture(scope="module")
@@ -98,3 +101,23 @@ def test_real_model_prefers_clean_over_noisy():
     clean = (0.3 * np.sin(2 * np.pi * 180 * t) * (1 + np.sin(2 * np.pi * 4 * t))).astype(np.float32)
     noisy = clean + np.random.default_rng(0).normal(0, 0.2, len(t)).astype(np.float32)
     assert m.score(clean, 16000)[2] > m.score(noisy, 16000)[2]  # BAK: background noise
+
+
+def _speechlike(seconds: float, f0: float, seed: int) -> np.ndarray:
+    t = np.arange(int(16000 * seconds)) / 16000
+    a = 0.3 * np.sin(2 * np.pi * f0 * t) * (1 + np.sin(2 * np.pi * 3.7 * t))
+    return (a + np.random.default_rng(seed).normal(0, 0.02, len(t))).astype(np.float32)
+
+
+MIXED = [_speechlike(s, f, k) for k, (s, f) in enumerate([(1.3, 140), (4.0, 210), (7.5, 120), (25.0, 180), (0.3, 160)])]
+
+
+@pytest.mark.weights
+@pytest.mark.skipif(not (WEIGHTS / "sig_bak_ovr.onnx").is_file(), reason=f"no sig_bak_ovr.onnx in {WEIGHTS}")
+def test_real_model_batch_matches_one_by_one():
+    pytest.importorskip("onnxruntime")
+    m = mos_mod.Dnsmos(WEIGHTS)
+    m.load()
+    batched = m.score_batch(MIXED)
+    for a, b in zip(MIXED, batched, strict=True):
+        assert np.allclose(m.score_batch([a])[0], b, atol=1e-4)

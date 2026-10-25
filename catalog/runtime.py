@@ -24,6 +24,7 @@ import httpx
 
 from tools import images, stack
 from tools.schema import Manifest, Platform
+from tools.vram_check import VRAM_VAR, measure_gpu, min_gib
 
 log = logging.getLogger("catalog.runtime")
 
@@ -51,19 +52,19 @@ class ContainerInfo:
 
 
 def budget_gib(s: Manifest, total_gib: float) -> float:
-    """GPU memory a service takes once loaded: vLLM reserves util x the device, custom torch is capped at vram_gb."""
-    if s.gpu is None:
-        return 0.0
-    return s.gpu.util * total_gib if s.gpu.util is not None else float(s.gpu.vram_gb or 0)
+    """The least GPU memory a service loads in (gpu.util x the device, or gpu.vram_gb). At start it gets more:
+    the whole GPU as measured free (tools/vram_check.py start_memory)."""
+    return min_gib(s, total_gib)
 
 
 class Runtime(Protocol):
     def containers(self, p: Platform) -> dict[str, ContainerInfo]: ...
     def image_id(self, ref: str) -> str | None: ...
-    def start(self, p: Platform, s: Manifest) -> None: ...
+    def start(self, p: Platform, s: Manifest, env: dict[str, str] | None = None) -> None: ...  # env: compose variables
     def stop(self, p: Platform, names: list[str]) -> None: ...
     def healthy(self, p: Platform, s: Manifest, url: str) -> bool: ...
     def failure_detail(self, p: Platform, name: str) -> str: ...
+    def logs(self, p: Platform, name: str, tail: int) -> str: ...  # the container's last `tail` log lines
     def gpu_memory(self, p: Platform) -> tuple[float, float] | None: ...  # (total, free) GiB; None: cannot measure
     # Export (catalog/exporter.py): sizes, one `docker save` for all images, and registry pushes.
     def image_size(self, ref: str) -> int | None: ...
@@ -136,7 +137,7 @@ class DockerRuntime:
             self._image_ids[ref] = (time.monotonic(), value)
         return value
 
-    def start(self, p: Platform, s: Manifest) -> None:
+    def start(self, p: Platform, s: Manifest, env: dict[str, str] | None = None) -> None:
         try:
             stack.ensure_network(p.config.network)
             stack.ensure_assets(p, [s])
@@ -144,7 +145,7 @@ class DockerRuntime:
                 images.build(p, s)
                 with self._lock:
                     self._image_ids.pop(p.image(s), None)
-            stack.compose(p, "up", "-d", "--no-deps", "--no-build", s.name, capture=True)
+            stack.compose(p, "up", "-d", "--no-deps", "--no-build", s.name, capture=True, env=env)
         except stack.StackError as exc:
             raise StartError(str(exc)) from None
         except subprocess.CalledProcessError as exc:
@@ -165,19 +166,18 @@ class DockerRuntime:
         lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
         return "\n".join(lines[-15:])
 
+    def logs(self, p: Platform, name: str, tail: int) -> str:
+        r = stack.compose(p, "logs", "--no-color", "--tail", str(tail), name, capture=True, check=False)
+        return r.stdout or ""
+
     def gpu_memory(self, p: Platform) -> tuple[float, float] | None:
         # Device-wide, so it includes processes outside the platform. The catalog container gets
         # nvidia-smi from the NVIDIA runtime (utility capability, catalog/compose.yml).
-        try:
-            r = subprocess.run(["nvidia-smi", "--query-gpu=memory.total,memory.free", "--format=csv,noheader,nounits",
-                                "--id=0"], capture_output=True, text=True, timeout=10)
-            total, free = (float(v) / 1024 for v in r.stdout.strip().split(","))
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            if not self._gpu_warned:
-                self._gpu_warned = True
-                log.warning("cannot read GPU memory with nvidia-smi: fitting by declared footprints only")
-            return None
-        return total, free
+        gpu = measure_gpu()
+        if gpu is None and not self._gpu_warned:
+            self._gpu_warned = True
+            log.warning("cannot read GPU memory with nvidia-smi: GPU models start with util_limit of the GPU")
+        return gpu
 
     def image_size(self, ref: str) -> int | None:
         r = subprocess.run(["docker", "image", "inspect", "--format", "{{.Size}}", ref], capture_output=True, text=True)
@@ -208,8 +208,9 @@ class DockerRuntime:
 
 class FakeRuntime:
     """Containers in memory. `start_s` is how long a start takes; `fail` names services whose start fails.
-    Set `gpu_total_gib` to measure GPU memory: running GPU services take their budget, `gpu_other_gib` is used by
-    processes outside the platform."""
+    Set `gpu_total_gib` to measure GPU memory: a running GPU service takes what its start gave it (AISVC_VRAM_GB's
+    compose variable; its minimum without one), `gpu_other_gib` is used by processes outside the platform.
+    `envs` keeps the compose variables of each start."""
 
     def __init__(self, start_s: float = 0.0, fail: set[str] | None = None):
         self.start_s = start_s
@@ -224,6 +225,8 @@ class FakeRuntime:
         self.save_delay_s = 0.0
         self.gpu_total_gib: float | None = None
         self.gpu_other_gib = 0.0
+        self.envs: dict[str, dict[str, str]] = {}
+        self.log_text: dict[str, str] = {}  # name -> what logs() returns
         self._lock = threading.Lock()
 
     def containers(self, p: Platform) -> dict[str, ContainerInfo]:
@@ -265,12 +268,13 @@ class FakeRuntime:
         self.pushed.append((ref, target))
         return "sha256:" + (ref + target).encode().hex()[:64].ljust(64, "0")
 
-    def start(self, p: Platform, s: Manifest) -> None:
+    def start(self, p: Platform, s: Manifest, env: dict[str, str] | None = None) -> None:
         if s.name in self.fail:
             raise StartError(f"{s.name} failed to start (fake)")
         with self._lock:
             self.running[s.name] = time.monotonic() + self.start_s
             self.started.append(s.name)
+            self.envs[s.name] = dict(env or {})
 
     def stop(self, p: Platform, names: list[str]) -> None:
         with self._lock:
@@ -286,10 +290,14 @@ class FakeRuntime:
     def failure_detail(self, p: Platform, name: str) -> str:
         return ""
 
+    def logs(self, p: Platform, name: str, tail: int) -> str:
+        return self.log_text.get(name, "")
+
     def gpu_memory(self, p: Platform) -> tuple[float, float] | None:
         if self.gpu_total_gib is None:
             return None
         known = {s.name: s for s in p.services}
         with self._lock:
-            used = sum(budget_gib(known[n], self.gpu_total_gib) for n in self.running if n in known)
+            used = sum(float(self.envs.get(n, {}).get(VRAM_VAR) or budget_gib(known[n], self.gpu_total_gib))
+                       for n in self.running if n in known and known[n].gpu)
         return self.gpu_total_gib, self.gpu_total_gib - used - self.gpu_other_gib

@@ -1,4 +1,4 @@
-"""Pieces shared by every app factory: readiness state, background loading, /health, CORS."""
+"""Pieces shared by every app factory: readiness state, background loading, /health, /platform/memory, CORS."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+from .gpu import memory_stats
 
 log = logging.getLogger("aisvc")
 
@@ -74,5 +76,24 @@ def create_base_app(name: str, *, title: str, load: LoadFn | None, background: b
         if state.error:
             body["error"] = state.error
         return JSONResponse(body, status_code=503)
+
+    # GPU memory and batch limits, so the catalog can measure the image under load (aisvc/gpu.py).
+    @app.get("/platform/memory", tags=["platform"])
+    def memory() -> dict:
+        return memory_stats()
+
+    @app.post("/platform/memory/reset", tags=["platform"])
+    def memory_reset() -> dict:
+        return memory_stats(reset=True)
+
+    @app.post("/platform/batch-limits", tags=["platform"])
+    def batch_limits(body: dict) -> JSONResponse:
+        """{"max_items": n, "max_len": n or null} sets every batcher's limits; {"restore": true} undoes it."""
+        from .batch import set_limits
+
+        try:
+            return JSONResponse(set_limits(body.get("max_items"), body.get("max_len"), restore=bool(body.get("restore"))))
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
 
     return app

@@ -208,6 +208,47 @@ def test_oip_client_validates_before_sending():
         c.encode({k: v for k, v in good.items() if k != "MASK"})
 
 
+BATCH_SIG = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]},
+                        {"name": "LENGTHS", "datatype": "INT32", "shape": [-1]},
+                        {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1]}],
+             "outputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]}]}
+
+
+def test_oip_batch_signature_also_takes_one_clip_without_lengths():
+    """Callers that still send one clip (AUDIO [-1], no LENGTHS) to an enhancer or diarizer keep working."""
+    c = aicore.OIPClient("http://x", "enh", BATCH_SIG, http=object())
+    sr = np.array([16000], np.int32)
+    one = {t["name"]: t["shape"] for t in c.encode({"AUDIO": np.zeros(5, np.float32), "SAMPLE_RATE": sr})}
+    assert one == {"AUDIO": [5], "SAMPLE_RATE": [1]}  # sent as it is; the server takes it as one row
+    rows = c.encode({"AUDIO": np.zeros((2, 5), np.float32), "LENGTHS": np.array([5, 3], np.int32), "SAMPLE_RATE": sr})
+    assert [t["shape"] for t in rows] == [[2, 5], [2], [1]]
+    with pytest.raises(AicoreError, match="missing \\['LENGTHS'\\]"):  # a 2-D batch still needs its lengths
+        c.encode({"AUDIO": np.zeros((2, 5), np.float32), "SAMPLE_RATE": sr})
+    with pytest.raises(AicoreError, match="does not match"):
+        c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "SAMPLE_RATE": sr})
+
+
+ALIGN_SIG = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]},
+                        {"name": "LENGTHS", "datatype": "INT32", "shape": [-1]},
+                        {"name": "TEXT", "datatype": "BYTES", "shape": [-1]}],
+             "outputs": [{"name": "WORDS", "datatype": "BYTES", "shape": [-1]}]}
+
+
+def test_oip_client_sends_one_clip_to_a_batch_signature_as_it_is():
+    """Callers written for a single-clip signature keep working when it becomes a padded batch (AUDIO [-1, -1] +
+    LENGTHS): AUDIO [-1] without LENGTHS goes to the server unchanged, which answers it as one row."""
+    c = aicore.OIPClient("http://x", "m", ALIGN_SIG, http=object())
+    one = c.encode({"AUDIO": np.zeros(5, np.float32), "TEXT": np.array(["hi"])})
+    assert [(t["name"], t["shape"]) for t in one] == [("AUDIO", [5]), ("TEXT", [1])]
+    batch = c.encode({"AUDIO": np.zeros((2, 5), np.float32), "LENGTHS": np.array([5, 3], np.int32),
+                      "TEXT": np.array(["a", "b"])})
+    assert [t["shape"] for t in batch] == [[2, 5], [2], [2]]
+    with pytest.raises(AicoreError, match="missing \\['LENGTHS'\\]"):  # a 2-D batch still needs its lengths
+        c.encode({"AUDIO": np.zeros((2, 5), np.float32), "TEXT": np.array(["a", "b"])})
+    with pytest.raises(AicoreError, match="shape \\[5\\] does not match"):  # with LENGTHS, AUDIO must be 2-D
+        c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "TEXT": np.array(["a"])})
+
+
 def test_oip_error_response_raises(oip_stub):
     c = aicore.OIPClient("http://testserver", "other-model", STUB_SIG, http=oip_stub._http)
     with pytest.raises(aicore.oip.OIPError) as exc:
@@ -254,3 +295,43 @@ def test_text_service_client_itn():
 
 def test_generated_endpoints_file_location():
     assert aicore.endpoints.GENERATED == Path(aicore.__file__).with_name("endpoints.generated.yaml")
+
+
+def test_batch_size_from_the_catalog_or_the_default(monkeypatch):
+    from aicore.batching import batch_size
+    from aicore.catalog import FakeCatalog
+
+    cat = FakeCatalog([{"id": "wavlm-sv", "batch": {"recommendation": {"batch": 66}}}, {"id": "other"}])
+    assert batch_size("wavlm-sv", item_s=20, catalog=cat) == 66
+    assert batch_size("other", catalog=cat, default=4) == 4
+    assert cat.calls[0] == ("batch", ("wavlm-sv", None, 20, None, None))
+    monkeypatch.delenv("AICORE_CATALOG", raising=False)
+    assert batch_size("wavlm-sv") == 8  # no catalog: the default
+
+
+def test_map_batches_and_map_concurrent_keep_order():
+    import threading
+    import time
+
+    from aicore.batching import map_batches, map_concurrent
+
+    sizes = []
+    assert map_batches(lambda xs: (sizes.append(len(xs)), [x * 2 for x in xs])[1], list(range(7)), 3) == \
+        [0, 2, 4, 6, 8, 10, 12]
+    assert sizes == [3, 3, 1]
+    with pytest.raises(ValueError):
+        map_batches(lambda xs: xs[:1], [1, 2], 2)
+    active, peak = 0, 0
+    lock = threading.Lock()
+
+    def slow(x):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return -x
+
+    assert map_concurrent(slow, list(range(12)), 4) == [-x for x in range(12)] and peak == 4

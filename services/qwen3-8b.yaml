@@ -8,8 +8,9 @@ api: chat.completions
 model: /models/qwen3-8b-fp8
 port: 8201
 gpu:
-  util: 0.35                       # 11.2 GB: 9.4 GB FP8 checkpoint leaves ~1.5-2 GB KV (~10k tokens)
+  util: 0.48                       # least to load: 8.85 GiB weights + 4.5 GiB KV for one 32k sequence (144 KB/token) + ~1.5 GiB overhead
+  # measured 2026-10-25 with the whole GPU (util 0.90): KV cache 17.9 GiB = 130k tokens, 3.97 sequences of 32k at once
 args:
-  - --max-model-len=8192           # keeps the KV cache inside the 0.35 budget
+  - --max-model-len=32768          # native 32k (the config's 40960 includes room for output); was 8192 for the 0.35 budget
 description: "General chat, Qwen3 8B FP8 (thinking on by default; pass enable_thinking=false via chat_template_kwargs)"
 tasks: [chat, instruction-following, reasoning, coding, math, tool-calling, translation]

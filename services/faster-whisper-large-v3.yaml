@@ -6,11 +6,16 @@ api: audio.transcriptions
 port: 8102
 gpu:
   vram_gb: 5                       # measured 4.1 GB loaded, 4.25 GB peak (float16, RTX 5090)
+  # batch profile 2026-10-25 (0.2.0, single files of 30-600 s, nvidia-smi): peak GiB = 4.40 + 0.013 x seconds of the
+  # file, about 0.39 GiB per 30 s window; 57 windows per batch fit 29.6 GB, 25 fit 16 GB.
 description: "Speech-to-text with word timestamps (verbose_json + timestamp_granularities[]=word), Whisper large-v3 on CTranslate2"
 tasks: [speech-recognition, speech-translation, language-identification, voice-activity-detection]
+batch:                             # one request at a time; its 30 s windows are the batch, so measure long files
+  lengths_s: [30, 120, 300, 600]
+  max_n: 1
 build:
   context: custom/faster-whisper-large-v3
-  image: "{registry}/faster-whisper-large-v3:0.1.0"
+  image: "{registry}/faster-whisper-large-v3:0.2.0"
   base: py-cpu                     # CUDA 12 libraries come from pip wheels; no CUDA image needed
 weights:
   path: ${AI_ASSETS}/faster-whisper-large-v3    # existing local copy (Systran/faster-whisper-large-v3 @edaa852)

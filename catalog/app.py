@@ -28,6 +28,7 @@ from .index import IndexKeyError, OutputIndex
 from .planner import PlanError, plan
 from .registry import Registry
 from .runtime import DockerRuntime, Runtime
+from .batching import BatchProfiler, full_budget_gib
 from .scheduler import Scheduler, SchedulerError
 from .settings import Settings
 from .verifier import Verifier
@@ -49,14 +50,17 @@ class Catalog:
     gateway: Gateway
     hosted: HostedStore
     exporter: Exporter
+    profiler: BatchProfiler
 
     def start(self) -> None:
         self.exporter.recover()
         self.scheduler.start()
         self.builds.prewarm(self.scheduler.platform())
         self.verifier.start()
+        self.profiler.start()
 
     def shutdown(self) -> None:
+        self.profiler.shutdown()
         self.verifier.shutdown()
         self.scheduler.shutdown()
 
@@ -73,9 +77,11 @@ def build_catalog(settings: Settings | None = None, runtime: Runtime | None = No
     verifier = Verifier(db, scheduler, auto=settings.verify_on_new_build, hosted=hosted,
                         hosted_reverify_s=settings.hosted_reverify_s)
     registry = Registry(db, scheduler, verifier, settings, hosted)
+    profiler = BatchProfiler(db, scheduler, runtime)
+    scheduler.batch_env = profiler.start_env
     return Catalog(settings, db, events, runtime, builds, scheduler, verifier, registry, OutputIndex(db),
                    Gateway(scheduler, settings, hosted), hosted,
-                   Exporter(db, settings, scheduler, registry, runtime, events))
+                   Exporter(db, settings, scheduler, registry, runtime, events), profiler)
 
 
 # ----------------------------------------------------------------------------- request bodies
@@ -178,12 +184,14 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     def platform() -> dict[str, Any]:
         p = sched.platform()
         with sched.lock:
-            occupying = sorted(sched._occupying(p))
+            # What each start was given (the whole GPU as measured), else the minimum to load.
+            held = {m: sched.runs[m].given or sched.frac(p, m) for m in sorted(sched._occupying(p))}
+            swaps = sched.swaps
         return {"gpu_total_gb": p.config.gpu_total_gb, "util_limit": p.config.util_limit,
                 "reserve_gb": round((1 - p.config.util_limit) * p.config.gpu_total_gb, 2),
-                "used_fraction": round(sum(sched.frac(p, m) for m in occupying), 4),
-                "gpu_models": [{"id": m, "fraction": round(sched.frac(p, m), 4)} for m in occupying],
-                "platform_error": sched.platform_error}
+                "used_fraction": round(sum(held.values()), 4),
+                "gpu_models": [{"id": m, "fraction": round(f, 4)} for m, f in held.items()],
+                "swaps": swaps, "platform_error": sched.platform_error}
 
     @app.get("/api/models")
     def list_models(task: list[str] = Query(default=[]), tag: list[str] = Query(default=[]),
@@ -212,6 +220,38 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     def verify(model_id: str) -> dict[str, Any]:
         rec = reg.verify(model_id)
         return rec["capabilities"] or {"status": "pending"}
+
+    @app.get("/api/models/{model_id}/batch")
+    def batch(model_id: str, vram_gb: float | None = Query(default=None, gt=0),
+              item_s: float | None = Query(default=None, gt=0), item_tokens: int | None = Query(default=None, gt=0),
+              n: int | None = Query(default=None, ge=1)) -> dict[str, Any]:
+        """The batch profile of the model's current build: the recommended batch for vram_gb (default: the full
+        budget) and an item of item_s seconds (audio) or item_tokens tokens (vLLM), the memory batch `n` needs,
+        and a table of lengths against 16, 24 and 32 GB and the full budget."""
+        p = sched.platform()
+        try:
+            p.get(model_id)
+        except KeyError:
+            raise SchedulerError(404, f"unknown model {model_id!r}") from None
+        with sched.lock:
+            run = sched.runs.get(model_id)
+            bk = run.build.build_key if run and run.build else None
+        if bk is None:
+            try:
+                bk = cat.builds.current(p, p.get(model_id), None).build_key
+            except Exception:  # noqa: BLE001
+                bk = None
+        item = item_tokens if item_tokens is not None else item_s
+        return cat.profiler.view(model_id, bk, vram_gb=vram_gb, item=item, n=n, full_gib=full_budget_gib(p, sched))
+
+    @app.post("/api/models/{model_id}/batch-profile", status_code=202)
+    def batch_profile(model_id: str) -> dict[str, Any]:
+        """Measure the model's batch profile now (it leases the model and waits its turn)."""
+        try:
+            sched.platform().get(model_id)
+        except KeyError:
+            raise SchedulerError(404, f"unknown model {model_id!r}") from None
+        return {"model": model_id, "measuring": cat.profiler.enqueue(model_id)}
 
     @app.get("/api/models/{model_id}/card")
     def model_card(model_id: str) -> dict[str, Any]:

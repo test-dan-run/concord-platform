@@ -17,7 +17,8 @@ gpu:
   # graphs, KV 1.84 GiB = 24,112 tokens (5.9 requests of 4,096).
 args:
   - --max-model-len=4096           # native 16k (YaRN); audio is 10 tokens/s, so a 2 min clip (card's limit) is ~1.2k tokens plus transcript
-  - --max-num-seqs=4               # requests are sequential; keeps the profiling batch small
+  - --max-num-seqs=64              # boots at util 0.24 (1.7 GiB KV, 22k tokens) and at 0.90 (22.7 GiB KV, 298k tokens);
+                                   # 32 concurrent clips took 0.47 s against 0.22 s for one (2026-10-25). Was 4.
   - '--limit-mm-per-prompt={"audio": 1}'   # one clip per request; bounds encoder memory at profiling
 description: "Speech-to-text and speech translation, IBM Granite Speech 5.0 2B (en, fr, de, es, pt, ja); vLLM's transcription prompt gives raw transcripts, so punctuation, keyword biasing and language hints need chat.completions prompts from the model card"
 tasks: [speech-recognition, speech-translation, keyword-biasing]

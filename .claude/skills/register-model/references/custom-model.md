@@ -28,7 +28,7 @@ before writing anything.
 
   ```dockerfile
   # <name>: <contract> <what> on <CPU|GPU>. Weights are mounted at /models, never baked in.
-  ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+  ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
   FROM ${BASE_IMAGE}
   COPY requirements.txt /app/requirements.txt
   RUN pip install -r /app/requirements.txt
@@ -62,8 +62,9 @@ before writing anything.
   10,000 characters each).
 
   Read `NAME` from `AISVC_NAME` and the weights dir from `WEIGHTS_DIR`, both set by render. GPU
-  services call `aisvc.gpu.limit_torch_memory(torch)` in `load()`, which caps torch at the manifest's
-  `gpu.vram_gb` (passed in as `AISVC_VRAM_GB`). Bad input raises `OIPError` / `OpenAIError` with a
+  services call `aisvc.gpu.limit_torch_memory(torch)` in `load()`, which caps torch at `AISVC_VRAM_GB`.
+  The service runs alone on the GPU, so `AISVC_VRAM_GB` is the memory measured free at start less 1 GiB
+  (at most `util_limit` of the GPU), not the manifest's `gpu.vram_gb`. Bad input raises `OIPError` / `OpenAIError` with a
   400, and the factory formats the response.
 - **`weights.yaml`** (when weights are fetched rather than already in `$AI_ASSETS`):
 
@@ -123,6 +124,7 @@ build:
   context: custom/<name>
   image: "{registry}/<name>:0.1.0"
   base: py-cpu                      # key in custom/_bases/bases.yaml: py-cpu | py-cuda | py-cuda-torch211 | none
+                                    # a new service takes the current version; build.base_version pins an older one
 weights:
   path: ${AI_ASSETS}/custom-models/<name>/<version>   # or an existing dir under ${AI_ASSETS}
   mount: /models
@@ -139,16 +141,20 @@ signature:                          # oip-v2 only
 - Give scalar or constrained inputs an `example`. Without one, conformance sends zeros, which a
   `SAMPLE_RATE` check would reject.
 - Reuse an existing signature when the task matches. The two diarization services share theirs, so
-  apps can switch between them. Speech enhancement uses `deepfilternet3`'s: `AUDIO` + `SAMPLE_RATE` in,
-  `AUDIO` + `SAMPLE_RATE` out, with the same rate and length as the input (the catalog fails a length
-  more than 10 ms off). The output signature is what makes the catalog verify it as an enhancer.
-- `gpu` takes `vram_gb` only (never `util`). It counts as `vram_gb / 32` in the profile budget.
+  apps can switch between them. Speech enhancement uses the batch signature of `deepfilternet3`,
+  `nemotronlabs-re-use` and `wpe-dereverb`: `AUDIO` [-1, -1] + `LENGTHS` + `SAMPLE_RATE` in, and the
+  same three out, with each row at the rate and length of its input (the catalog fails a length more
+  than 10 ms off). The output signature is what makes the catalog verify it as an enhancer. A batch
+  `AUDIO` input needs a nested `example` (one short row) and a `LENGTHS` example, or conformance
+  sends a 16000 x 16000 array of zeros.
+- `gpu` takes `vram_gb` only (never `util`). It is the least memory the service needs to load (the
+  measured peak, rounded up), and at run time the service gets the whole GPU.
 
 ## Verify
 
 ```bash
 just test                 # in-process conformance with the fake model
-just validate && just vram <profile> && just render
+just validate && just vram <name> && just render
 just fetch-weights <name> # only if the user agreed to download
 just build <name>         # builds the base image too if it is missing
 just up <profile> && just conform <name>

@@ -3,16 +3,20 @@ kind: model
 engine: custom
 contract: oip-v2
 api: infer
-contract_reason: "No OpenAI route for speech enhancement; input and output are float audio arrays"
+contract_reason: "No OpenAI route for speech enhancement; input and output are batches of float audio arrays"
 port: 8411
 gpu:
   vram_gb: 4                       # measured 2026-10-24: peak 2.9 GiB allocated at every rate (8-48 kHz, 0.01-60 s);
                                    # one pass is capped at 240k samples, longer audio goes in 5 s chunks
+  # batch profile 2026-10-25 (0.2.0, sweep, torch): peak GiB = 1.23 + 0.266 x seconds of audio in the batch; 19 clips
+  # of 5 s fit 29.6 GB, 9 fit 16 GB. Only pieces of equal length share a pass.
 description: "Universal speech enhancement, NVIDIA NemotronLabs RE-USE (9.6M, bidirectional Mamba): noise, reverb, clipping, band limits, codec artifacts; 8-48 kHz, output keeps the input rate and length"
 tasks: [speech-enhancement, noise-suppression, dereverberation, speech-restoration]
+batch:
+  max_item_s: 15                   # one pass takes up to 240k samples (15 s at 16 kHz); longer audio goes in 5 s chunks
 build:
   context: custom/nemotronlabs-re-use
-  image: "{registry}/nemotronlabs-re-use:0.1.0"
+  image: "{registry}/nemotronlabs-re-use:0.2.0"
   base: py-cuda                    # torch 2.14; the Dockerfile compiles mamba-ssm's kernel against it
 weights:
   path: ${AI_ASSETS}/custom-models/nemotronlabs-re-use/31f82f2
@@ -21,10 +25,12 @@ custom_reason: >-
   Checked 2026-10-24: a convolutional encoder/decoder with 30 bidirectional Mamba (SSM) blocks over STFT
   magnitude and phase, not a transformer LM; vLLM v0.31.0 and SGLang v0.5.21 cannot serve it, and it needs
   mamba-ssm's CUDA kernels. Retire when an OIP-native engine can host the model (e.g. a TensorRT export).
-signature:
+signature:                         # the same as deepfilternet3 and wpe-dereverb; AUDIO [-1] without LENGTHS still works
   inputs:
-    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1], example: [[0.0, 0.1, -0.1, 0.05, 0.0, -0.05, 0.1, 0.0]]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1], example: [8]}
     - {name: SAMPLE_RATE, datatype: INT32, shape: [1], example: [16000]}
   outputs:
-    - {name: AUDIO, datatype: FP32, shape: [-1]}
+    - {name: AUDIO, datatype: FP32, shape: [-1, -1]}
+    - {name: LENGTHS, datatype: INT32, shape: [-1]}
     - {name: SAMPLE_RATE, datatype: INT32, shape: [1]}
