@@ -1,7 +1,7 @@
 # Hosted endpoint: a model a provider already serves online
 
 A hosted endpoint is registered in the Model Catalog only (`catalog/README.md`, "Hosted
-endpoints"). There is no manifest, port, VRAM, image, profile or pinned test to update. Apps call it
+endpoints"). There is no manifest, port, VRAM, image or pinned test to update. Apps call it
 through the catalog's gateway like any platform model; the gateway adds the stored API key, so apps
 never see it.
 

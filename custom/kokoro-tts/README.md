@@ -15,7 +15,7 @@ Custom because no pinned engine can serve it; see [WHY.md](WHY.md).
 ```bash
 just fetch-weights kokoro-tts
 just build kokoro-tts        # builds py-cuda-base first if needed (torch 2.14.1+cu130, sm_120)
-just up voice-chat
+just up kokoro-tts
 just conform kokoro-tts
 ```
 
