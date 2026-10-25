@@ -92,3 +92,31 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Rendered Markdown in model cards (components/ModelCard.tsx). */
+.markdown {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-fg);
+  overflow-wrap: anywhere;
+}
+.markdown > :first-child { margin-top: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 600; margin: 1.4em 0 0.5em; line-height: 1.3; }
+.markdown h1 { font-size: 18px; }
+.markdown h2 { font-size: 16px; border-bottom: 1px solid var(--color-track); padding-bottom: 0.3em; }
+.markdown h3 { font-size: 14px; }
+.markdown h4 { font-size: 13px; color: var(--color-muted); }
+.markdown p, .markdown ul, .markdown ol, .markdown pre, .markdown table, .markdown blockquote { margin: 0 0 0.9em; }
+.markdown ul, .markdown ol { padding-left: 1.4em; }
+.markdown ul { list-style: disc; }
+.markdown ol { list-style: decimal; }
+.markdown li { margin: 0.2em 0; }
+.markdown code { font-family: var(--font-mono); font-size: 12px; background: var(--color-canvas); border: 1px solid var(--color-track); border-radius: 4px; padding: 0 4px; }
+.markdown pre { background: var(--color-canvas); border: 1px solid var(--color-track); border-radius: 6px; padding: 10px; overflow-x: auto; }
+.markdown pre code { border: 0; padding: 0; background: none; font-size: 11px; }
+.markdown table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 12px; }
+.markdown th, .markdown td { border: 1px solid var(--color-track); padding: 4px 8px; text-align: left; vertical-align: top; }
+.markdown th { color: var(--color-muted); font-weight: 500; }
+.markdown blockquote { border-left: 3px solid var(--color-line); padding-left: 10px; color: var(--color-muted); }
+.markdown img { max-width: 100%; height: auto; border-radius: 4px; }
+.markdown hr { border: 0; border-top: 1px solid var(--color-track); margin: 1.2em 0; }

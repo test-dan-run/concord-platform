@@ -7,6 +7,8 @@ import * as I from "../components/icons";
 import { CapabilityChips, gpuLabel, Report, StateCell, VerifyChip } from "../components/model";
 import { TagInput } from "../components/TagInput";
 import { Button, Chip, ErrorNote, Fact, LinkButton, PageHeader, Panel, Select, Spinner } from "../components/ui";
+import { DetailTabs, useDetailTab } from "../components/DetailTabs";
+import { ModelCard } from "../components/ModelCard";
 import { HostedDetail } from "./HostedDetail";
 
 export function usage(m: Model): string {
@@ -27,6 +29,7 @@ export function ModelDetail() {
   const done = () => qc.invalidateQueries();
   const act = useMutation({ mutationFn: (action: "start" | "stop" | "verify") => api.post(`/models/${id}/${action}`), onSuccess: done });
   const unregister = useMutation({ mutationFn: () => api.del(`/models/${id}/register`), onSuccess: () => { void done(); nav("/"); } });
+  const [tab, setTab] = useDetailTab();
 
   if (m.isLoading) return <Spinner />;
   if (!m.data) return <ErrorNote error={m.error ?? "Unknown model"} />;
@@ -53,6 +56,10 @@ export function ModelDetail() {
           This platform service is not registered, so apps do not list it. <Link to={`/add?name=${d.id}`}>Add it</Link>.
         </div>
       )}
+      <DetailTabs tab={tab} onChange={setTab} />
+      {tab === "card" ? (
+        <ModelCard id={d.id} />
+      ) : (
       <div className="grid gap-5 xl:grid-cols-[1fr_340px] items-start">
         <div className="flex flex-col gap-5 min-w-0">
           <Panel title="Verification" subtitle={c?.build_key ? <>Build <span className="num">{c.build_key}</span>{c.verified_at && <> · {ago(c.verified_at)}</>}</> : "Not verified yet"} actions={<VerifyChip c={c} />}>
@@ -91,6 +98,7 @@ export function ModelDetail() {
           {d.registered && <Registration key={d.id} m={d} models={registered.data ?? []} onRemove={() => confirm(`Unregister ${d.id}? Apps stop listing it; its records and index entries are kept.`) && unregister.mutate()} />}
         </div>
       </div>
+      )}
     </>
   );
 }
