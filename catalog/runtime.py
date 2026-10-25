@@ -6,7 +6,6 @@ the catalog renders compose.yml whenever it reloads the manifests.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -110,21 +109,9 @@ class DockerRuntime:
         self._gpu_warned = False
 
     def containers(self, p: Platform) -> dict[str, ContainerInfo]:
-        ids = subprocess.run(["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={p.config.compose_project}"],
-                             capture_output=True, text=True, check=True).stdout.split()
-        if not ids:
-            return {}
-        out = subprocess.run(["docker", "inspect", *ids], capture_output=True, text=True, check=True).stdout
-        result = {}
-        for c in json.loads(out):
-            labels = c["Config"]["Labels"] or {}
-            name = labels.get("com.docker.compose.service") or labels.get("aiplatform.name")
-            if not name:
-                continue
-            health = (c["State"].get("Health") or {}).get("Status", "-")
-            result[name] = ContainerInfo(name, c["State"]["Status"], health, labels.get("aiplatform.gpu") == "true",
-                                         c.get("Image"), labels.get("aiplatform.config_hash"))
-        return result
+        return {c["name"]: ContainerInfo(c["name"], c["state"], c["health"], c["gpu"], c["image"],
+                                         c["labels"].get("aiplatform.config_hash"))
+                for c in stack.inspect_project(p)}
 
     def image_id(self, ref: str) -> str | None:
         with self._lock:

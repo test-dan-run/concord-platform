@@ -131,20 +131,37 @@ def ensure_assets(p: Platform, services: list[Manifest]) -> None:
                 raise StackError(f"{s.name}: local model {s.model} not found at {path} (AI_ASSETS={assets})")
 
 
-def containers(p: Platform) -> dict[str, Container]:
-    """Containers of this compose project, keyed by service name (any state)."""
+def _only_gone(stderr: str) -> bool:
+    """True when every error line of `docker inspect` is a missing ID (docker still prints the others)."""
+    lines = [ln for ln in stderr.splitlines() if ln.strip()]
+    return bool(lines) and all("no such object" in ln.lower() for ln in lines)
+
+
+def inspect_project(p: Platform) -> list[dict]:
+    """Containers of this compose project (any state) that carry a service name, as dicts with id, name,
+    state, health ("-" without a healthcheck), gpu, image and labels. Shared by containers() here and the
+    catalog's DockerRuntime. A container removed between `docker ps` and `docker inspect` is left out."""
     ids = subprocess.run(["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={p.config.compose_project}"],
                          capture_output=True, text=True, check=True).stdout.split()
     if not ids:
-        return {}
-    out = subprocess.run(["docker", "inspect", *ids], capture_output=True, text=True, check=True).stdout
-    result = {}
-    for c in json.loads(out):
+        return []
+    r = subprocess.run(["docker", "inspect", *ids], capture_output=True, text=True, check=False)
+    if r.returncode != 0 and not _only_gone(r.stderr):
+        raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
+    found = []
+    for c in json.loads(r.stdout or "[]"):
         labels = c["Config"]["Labels"] or {}
         name = labels.get("com.docker.compose.service") or labels.get("aiplatform.name")
-        health = (c["State"].get("Health") or {}).get("Status", "-")
-        result[name] = Container(c["Id"][:12], name, c["State"]["Status"], health, labels.get("aiplatform.gpu") == "true")
-    return result
+        if name:
+            found.append({"id": c["Id"], "name": name, "state": c["State"]["Status"],
+                          "health": (c["State"].get("Health") or {}).get("Status", "-"),
+                          "gpu": labels.get("aiplatform.gpu") == "true", "image": c.get("Image"), "labels": labels})
+    return found
+
+
+def containers(p: Platform) -> dict[str, Container]:
+    """Containers of this compose project, keyed by service name (any state)."""
+    return {c["name"]: Container(c["id"][:12], c["name"], c["state"], c["health"], c["gpu"]) for c in inspect_project(p)}
 
 
 def _logs_tail(p: Platform, name: str, lines: int = 80) -> None:
