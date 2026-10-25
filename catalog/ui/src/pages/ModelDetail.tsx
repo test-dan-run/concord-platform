@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, type Model } from "../lib/api";
+import { api, notFound, type Model } from "../lib/api";
 import { ago, rtf, secs } from "../lib/format";
 import * as I from "../components/icons";
 import { CapabilityChips, gpuLabel, Report, StateCell, VerifyChip } from "../components/model";
@@ -33,7 +33,7 @@ export function ModelDetail() {
   const [tab, setTab] = useDetailTab();
 
   if (m.isLoading) return <Spinner />;
-  if (!m.data) return <ErrorNote error={m.error ?? "Unknown model"} />;
+  if (!m.data || notFound(m.error)) return <ErrorNote error={m.error ?? "Unknown model"} />;
   if (m.data.hosted) return <HostedDetail m={m.data} models={registered.data ?? []} />;
   const d = m.data;
   const c = d.capabilities;
