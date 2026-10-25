@@ -75,6 +75,13 @@ def test_lookup_gives_digit_string_output_ids_as_ints(c):
     assert [h["output_id"] for h in hits] == [7, -3, "run-4"]
 
 
+def test_lookup_keeps_ids_that_are_not_plain_integers_as_text(c):
+    ids = ["007", "-0", "1" * 25, "²", "٣"]  # leading zero, minus zero, past int64, and digits that are not ASCII
+    keys = [{**KEY, "params_hash": f"{i}" * 16} for i in "abcde"]
+    c.index_record("bench", [{**k, "output_id": i} for k, i in zip(keys, ids, strict=True)])
+    assert [h["output_id"] for h in c.index_lookup("label", keys)] == ids
+
+
 def test_forget_compares_output_ids_as_strings(c):
     c.index_record("bench", [{**KEY, "output_id": 9}, {**KEY, "params_hash": "q" * 16, "output_id": "10"}])
     c.index_record("label", [{**KEY, "params_hash": "r" * 16, "output_id": 9}])

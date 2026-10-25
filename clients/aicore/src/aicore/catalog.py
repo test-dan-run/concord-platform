@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -27,6 +28,7 @@ TTL_S = 90
 WHOLE = -1.0  # span_start = span_end = -1: the whole file
 CHUNK = 500  # index keys per request
 LIVE = ("queued", "starting", "active")  # lease states that heartbeats keep alive
+_INT_ID = re.compile(r"0|-?[1-9][0-9]{0,18}")  # the output ids the server gives back as ints (catalog/index.py)
 
 OnWait = Callable[[dict[str, Any]], None]
 
@@ -61,8 +63,8 @@ def index_key(build_key: str, audio_sha256: str, span_start: float | None, span_
 
 
 def _output_id(v: Any) -> Any:
-    """An output id as the server returns it: it keeps ids as text and gives digits back as an int."""
-    return int(v) if isinstance(v, str) and v.removeprefix("-").isdecimal() else v
+    """An output id as the server returns it: it keeps ids as text and gives a plain integer back as an int."""
+    return int(v) if isinstance(v, str) and _INT_ID.fullmatch(v) else v
 
 
 class Lease:
