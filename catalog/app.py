@@ -441,6 +441,8 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
                     try:
                         event, data = q.get_nowait()
                     except queue.Empty:
+                        if q.dropped:  # it fell too far behind: end the stream, so the client reconnects
+                            return
                         await asyncio.sleep(0.25)
                         idle += 0.25
                         if idle >= 15:

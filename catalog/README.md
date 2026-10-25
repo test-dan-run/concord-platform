@@ -423,7 +423,9 @@ Response:
 capabilities_status}`), `lease` events (the lease JSON), `queue` events (`{queue: [{id, holder,
 position, waiting_for}]}`), `export` events (the export job JSON) and `dataset` events (`{id, n,
 action}`, see [Dataset Catalog](#dataset-catalog)). App backends can relay these or poll `GET /api/models` and
-`GET /api/leases/{id}`.
+`GET /api/leases/{id}`. Each connection starts with a `model` event per model. A client that falls more than
+1000 events behind gets no more events: its stream ends once it has read the ones already queued, and a
+reconnect (EventSource does this after 3 s) starts again with that snapshot.
 
 ## UI
 
