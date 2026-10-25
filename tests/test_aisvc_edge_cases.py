@@ -1,0 +1,42 @@
+"""aisvc edge cases: empty integer and boolean tensors."""
+
+import numpy as np
+import pytest
+from aisvc import create_oip_app
+from conformance import running
+
+EMPTY_SIG = {"inputs": [{"name": "N", "datatype": "INT32", "shape": [-1]}, {"name": "M", "datatype": "BOOL", "shape": [-1]},
+                        {"name": "U", "datatype": "UINT8", "shape": [-1, 2]}],
+             "outputs": [{"name": "K", "datatype": "INT32", "shape": [1]}]}
+
+
+def test_empty_int_and_bool_tensors_are_accepted():
+    seen = {}
+
+    def handler(x, p):
+        seen.update(x)
+        return {"K": np.array([sum(v.size for v in x.values())], np.int32)}
+
+    body = {"inputs": [{"name": "N", "datatype": "INT32", "shape": [0], "data": []},
+                       {"name": "M", "datatype": "BOOL", "shape": [0], "data": []},
+                       {"name": "U", "datatype": "UINT8", "shape": [0, 2], "data": [[]]}]}
+    with running(create_oip_app("m", EMPTY_SIG, handler)) as c:
+        r = c.post("/v2/models/m/infer", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["outputs"][0]["data"] == [0]
+    assert {k: (v.dtype, v.shape) for k, v in seen.items()} == {
+        "N": (np.int32, (0,)), "M": (np.bool_, (0,)), "U": (np.uint8, (0, 2))}
+
+
+@pytest.mark.parametrize("name, data, fragment", [("N", [0.5], "INT32 data must be integers"),
+                                                  ("N", ["x"], "INT32 data must be numeric"),
+                                                  ("M", [1], "BOOL data must be true/false")])
+def test_non_empty_tensors_are_still_checked(name, data, fragment):
+    inputs = {"N": [0], "M": [True], "U": [[1, 2]]}
+    inputs[name] = data
+    shapes = {"N": [len(inputs["N"])], "M": [len(inputs["M"])], "U": [1, 2]}
+    body = {"inputs": [{"name": k, "datatype": t, "shape": shapes[k], "data": inputs[k]}
+                       for k, t in (("N", "INT32"), ("M", "BOOL"), ("U", "UINT8"))]}
+    with running(create_oip_app("m", EMPTY_SIG, lambda x, p: {"K": np.array([0], np.int32)})) as c:
+        r = c.post("/v2/models/m/infer", json=body)
+    assert r.status_code == 400 and fragment in r.json()["error"], r.text

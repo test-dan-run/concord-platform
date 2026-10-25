@@ -79,12 +79,13 @@ def decode_tensor(spec: Tensor, req: RequestInput) -> np.ndarray:
             arr = np.array(_flatten(req.data), dtype=object)
         else:
             arr = np.asarray(req.data).reshape(-1)
-            if spec.datatype == "BOOL" and arr.dtype != np.bool_:
-                raise ValueError("BOOL data must be true/false")
-            if spec.datatype != "BOOL" and arr.dtype.kind not in "iuf":
-                raise ValueError(f"{spec.datatype} data must be numeric")
-            if arr.dtype.kind == "f" and NUMPY_DTYPES[spec.datatype]().dtype.kind in "iu":
-                raise ValueError(f"{spec.datatype} data must be integers")
+            if arr.size:  # numpy makes an empty list float64, so only values have a type to check
+                if spec.datatype == "BOOL" and arr.dtype != np.bool_:
+                    raise ValueError("BOOL data must be true/false")
+                if spec.datatype != "BOOL" and arr.dtype.kind not in "iuf":
+                    raise ValueError(f"{spec.datatype} data must be numeric")
+                if arr.dtype.kind == "f" and NUMPY_DTYPES[spec.datatype]().dtype.kind in "iu":
+                    raise ValueError(f"{spec.datatype} data must be integers")
             arr = arr.astype(NUMPY_DTYPES[spec.datatype])
     except (ValueError, TypeError) as exc:
         raise OIPError(400, f"input {req.name!r}: {exc}") from None
