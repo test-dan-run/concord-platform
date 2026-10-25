@@ -421,17 +421,15 @@ def sweep(send: Callable[[int, float], None], memory: Memory, lengths: list[floa
                 why = f"out of memory at {n}: {exc}"
                 break
             secs = time.perf_counter() - t0
-            if read is None:  # no reading for this batch; a bigger one will tell
-                n *= 2
-                continue
-            peak, how = read
-            points.append(Point(n=n, length_s=length, peak_gib=peak, seconds=round(secs, 3)))
-            here.append(points[-1])
-            log_fn(f"batch {n} x {length:g} s: peak {peak:.2f} GiB in {secs:.1f} s")
-            if budget_gib is not None and peak > 0.95 * budget_gib:
-                why = f"peak {peak:.1f} GiB near the {budget_gib:.1f} GiB budget at {n}"
-                break
-            if secs > SLOW_S:
+            if read is not None:  # None: no reading for this batch; a bigger one will tell
+                peak, how = read
+                points.append(Point(n=n, length_s=length, peak_gib=peak, seconds=round(secs, 3)))
+                here.append(points[-1])
+                log_fn(f"batch {n} x {length:g} s: peak {peak:.2f} GiB in {secs:.1f} s")
+                if budget_gib is not None and peak > 0.95 * budget_gib:
+                    why = f"peak {peak:.1f} GiB near the {budget_gib:.1f} GiB budget at {n}"
+                    break
+            if secs > SLOW_S:  # with or without a reading
                 why = f"{secs:.0f} s for a batch of {n}"
                 break
             n *= 2
