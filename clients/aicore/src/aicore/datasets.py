@@ -12,7 +12,8 @@ the audio store and holds.
     dc.version_dir(dataset_id, v["n"])                # read versions and audio from the mounted store
 
 The store is DATASET_STORE, else ${AI_DATA}/datasets, else ~/ai-data/datasets, the same default as the catalog
-service. `FakeDatasetCatalog` has the same methods, in memory and in a folder, for app tests.
+service. `FakeDatasetCatalog` has the same methods and the catalog's version rules, in memory and in a folder, for
+app tests.
 """
 
 from __future__ import annotations
@@ -350,8 +351,12 @@ def _probe(path: Path) -> dict[str, Any]:
 
 
 class FakeDatasetCatalog(_Mount):
-    """DatasetCatalog for app tests: the same methods and rules, with records in memory and audio and versions in a
-    folder laid out like the real store, so audio_path and version_dir work.
+    """DatasetCatalog for app tests: the same methods, with records in memory and audio and versions in a folder
+    laid out like the real store, so audio_path and version_dir work.
+
+    It checks and reads version folders with the catalog's own code (aicore.dataset_format), so it refuses what the
+    catalog refuses, with the same messages. It reads a folder as it is, where the catalog gets a zip of it and drops
+    .DS_Store and __MACOSX files.
 
     `root` is that folder (a temporary folder, removed with the fake, when not given). `add_audio` puts bytes in the
     store directly. Audio is probed only when it is WAV; give `duration` and `sample_rate` to `add_audio` for other

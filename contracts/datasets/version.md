@@ -141,8 +141,10 @@ with or without its audio.
 A version's `digest` identifies its content, so publishing the same content again returns the existing version.
 It is the hex sha256 over these parts, in this order:
 
-1. First, `manifest.json` as canonical JSON (keys sorted, no spaces) without `source`, `export_version`,
-   `created_at` and `audio_included`.
+1. First, `manifest.json` as canonical JSON (keys sorted, no spaces, and every character outside ASCII written
+   as a `\u` escape) without `source`, `export_version`, `created_at` and `audio_included`. So
+   `{"name": "Café"}` is hashed as `{"name":"Caf\u00e9"}`, and a character past U+FFFF as its two UTF-16
+   escapes.
 2. Second, the bytes of `files.csv`.
 3. Third, the bytes of each file under `refs/`, sorted by file name.
 

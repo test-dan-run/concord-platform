@@ -544,7 +544,7 @@ Every path is under `/api`. Errors have the same shape as the rest of the catalo
 | `POST /api/datasets` | `{"name", "language"?, "description"?, "tags"?, "app"}` -> 201 dataset. |
 | `GET`, `PATCH`, `DELETE /api/datasets/{id}` | The dataset with its versions, newest first. PATCH changes the name, description and tags. DELETE removes the dataset and every version. |
 | `POST /api/datasets/{id}/versions` | Multipart: a zip of a version folder (or of a whole reference package), plus `parent`, `app` and `force`. 201 for a new version, 200 when it matches the latest version, 409 `stale_parent` with `latest`, 422 when the folder is invalid or audio is missing. |
-| `POST /api/datasets/{id}/versions/audio` | `{"files": [{"path", "sha256"}], "parent"}` -> a version with audio only. 409 when the latest version has references. |
+| `POST /api/datasets/{id}/versions/audio` | `{"files": [{"path", "sha256"}], "parent", "app"?, "force"?}` -> a version with audio only: the latest version's files plus these. 409 `has_references` when the latest version has references, and 409 `stale_parent` unless `force`, as for a publish. |
 | `GET`, `DELETE /api/datasets/{id}/versions/{n}` | The version with its manifest and counts. DELETE removes it, 204. |
 | `GET /api/datasets/{id}/versions/{n}/files` | `?offset=&limit=` -> the files, with their segment counts and labels. |
 | `GET /api/datasets/{id}/versions/{n}/refs?path=` | The reference segments of one file. |
@@ -635,7 +635,12 @@ subclasses for the cases an app handles.
 
 `aicore.datasets.FakeDatasetCatalog` has the same methods for app tests. It keeps its records in memory, and it
 writes audio and versions to a folder laid out like the real store, so `audio_path` and `version_dir` work. It
-follows the same rules as the catalog service for publishing, holds and uses. Pass a folder such as pytest's
+checks a folder with the catalog service's own `check_folder` and reads references with the service's own reader,
+both in `aicore.dataset_format`, so it refuses the folders the service refuses, with the same problems, and it
+reports the same labels and files. Publishing (the digest, the parent rules and missing audio), versions with audio
+only, holds and uses follow the service's rules and messages too. One difference is that the fake reads the folder
+as it is, while the real client zips it and the service drops `.DS_Store` and `__MACOSX` files when it unzips, so
+the fake refuses a stray `.DS_Store` under `refs/` that the service ignores. Pass a folder such as pytest's
 `tmp_path` as `root`, or leave it out to get a temporary folder that is removed with the fake. A test can put
 audio straight into the store with `add_audio(data)`, and it can publish a version with `add_version(dataset_id,
 {path: bytes}, {refs file name: text})`. The fake reads the duration and sample rate of WAV files only, so pass
