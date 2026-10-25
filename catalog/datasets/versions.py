@@ -167,6 +167,7 @@ def check_folder(root: Path, *, package: bool = False, hash_audio: bool = True) 
             problems.append(f"refs/attributes.json is not JSON: {exc}")
     uids = root / "refs" / "uids.jsonl"
     if types and uids.is_file():
+        paths = set(stems.values())
         for n, line in enumerate(uids.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip():
                 try:
@@ -174,7 +175,7 @@ def check_folder(root: Path, *, package: bool = False, hash_audio: bool = True) 
                 except ValueError:
                     rec = {}
                 if not isinstance(rec, dict) or not {"file", "start", "end", "uid"} <= rec.keys() \
-                        or rec["file"] not in stems.values():
+                        or not isinstance(rec["file"], str) or rec["file"] not in paths:
                     problems.append(f"refs/uids.jsonl line {n}: needs file (a files.csv path), start, end, uid")
     if types and len(found) == 1 and not problems:
         try:
