@@ -186,9 +186,11 @@ class AudioStore:
                                    "hash_mismatch", actual=actual)
             return self._place(tmp, sha, rec["ext"])
 
-    def put_file(self, src: Path, ext: str | None, sha: str | None = None) -> dict[str, Any]:
+    def put_file(self, src: Path, ext: str | None, sha: str | None = None, *,
+                 probe: dict[str, Any] | None = None) -> dict[str, Any]:
         """Store a file already on the store's filesystem (under tmp/), moving it. With `sha`, 422 if it doesn't
-        match. A file the store already has is removed and the stored record returned."""
+        match. A file the store already has is removed and the stored record returned. Pass `probe` when the caller
+        has probed the file already, so ffprobe runs once."""
         actual = sha256_file(src)
         if sha is not None and actual != sha:
             src.unlink(missing_ok=True)
@@ -203,10 +205,11 @@ class AudioStore:
                 self.db.execute("INSERT INTO audio (sha256, size, ext, state, created_at) VALUES (?, 0, ?, 'partial', ?)",
                                 (actual, norm_ext(ext), now_iso()))
             self.tmp_path(actual).unlink(missing_ok=True)  # a stale partial upload of the same bytes
-            return self._place(src, actual, (rec or {}).get("ext") or norm_ext(ext))
+            return self._place(src, actual, (rec or {}).get("ext") or norm_ext(ext), probe)
 
-    def _place(self, src: Path, sha: str, ext: str) -> dict[str, Any]:
-        probe = self.probe(src)
+    def _place(self, src: Path, sha: str, ext: str, probe: dict[str, Any] | None = None) -> dict[str, Any]:
+        if probe is None:
+            probe = self.probe(src)
         os.chmod(src, 0o644)
         dest = self.path(sha)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -278,11 +281,12 @@ class AudioStore:
                     tmp = work / uuid.uuid4().hex
                     with zf.open(info) as src, open(tmp, "wb") as dst:
                         shutil.copyfileobj(src, dst, COPY_CHUNK)
-                    if self.ffprobe and self.probe(tmp)["duration"] is None:
+                    probe = self.probe(tmp) if self.ffprobe else None
+                    if probe is not None and probe["duration"] is None:
                         tmp.unlink()
                         skipped.append({"path": name, "error": "ffprobe can't read it"})
                         continue
-                    files.append({"path": name, **self.put_file(tmp, p.suffix)})
+                    files.append({"path": name, **self.put_file(tmp, p.suffix, probe=probe)})
         finally:
             shutil.rmtree(work, ignore_errors=True)
         with self.lock:
