@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,13 +33,45 @@ def image_label(ref: str, label: str) -> str | None:
     return (json.loads(r.stdout or "null") or {}).get(label) if r.returncode == 0 else None
 
 
+def _ignore_rules(context: Path) -> list[tuple[bool, re.Pattern]]:
+    """The context's .dockerignore as (re-include, regex) pairs: ** spans folders, * and ? stay in one."""
+    f = context / ".dockerignore"
+    rules = []
+    for line in f.read_text().splitlines() if f.is_file() else []:
+        pat = line.strip()
+        if pat and not pat.startswith("#"):
+            parts = re.split(r"(\*\*/|\*\*|\*|\?)", pat.removeprefix("!").strip("/"))
+            rx = "".join({"**/": "(.*/)?", "**": ".*", "*": "[^/]*", "?": "[^/]"}.get(s, re.escape(s)) for s in parts)
+            rules.append((pat.startswith("!"), re.compile(rx)))
+    return rules
+
+
+def _ignored(rel: str, rules: list[tuple[bool, re.Pattern]]) -> bool:
+    """Docker's rule: the last pattern that matches the path or one of its parent folders decides."""
+    paths = [rel.rsplit("/", n)[0] for n in range(rel.count("/") + 1)]
+    out = False
+    for keep, rx in rules:
+        if any(rx.fullmatch(p) for p in paths):
+            out = not keep
+    return out
+
+
 def base_digest(bases_dir: Path, spec: dict) -> str:
-    """Hash of everything a base image is built from: its Dockerfile, build args and the context files."""
+    """Hash of what a base image is built from: its Dockerfile, build args, the .dockerignore and the
+    context files its COPY lines read, less what .dockerignore leaves out. Other bases' files do not count."""
     h = hashlib.sha256(json.dumps({"dockerfile": spec["dockerfile"], "args": spec.get("args") or {}}, sort_keys=True).encode())
-    for f in sorted(bases_dir.rglob("*")):
-        if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc" and f.name != "bases.yaml":
-            h.update(str(f.relative_to(bases_dir)).encode())
-            h.update(f.read_bytes())
+    dockerfile = bases_dir / spec["dockerfile"]
+    rules = _ignore_rules(bases_dir)
+    files = {dockerfile, bases_dir / ".dockerignore"}
+    for line in dockerfile.read_text().splitlines():
+        words = line.split()
+        if words[:1] in (["COPY"], ["ADD"]):
+            for src in (bases_dir / w for w in words[1:-1] if not w.startswith("--")):
+                files |= {f for f in [src, *src.rglob("*")]
+                          if f.is_file() and not _ignored(f.relative_to(bases_dir).as_posix(), rules)}
+    for f in sorted(f for f in files if f.is_file()):
+        h.update(str(f.relative_to(bases_dir)).encode())
+        h.update(f.read_bytes())
     return h.hexdigest()[:16]
 
 
