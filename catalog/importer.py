@@ -146,7 +146,10 @@ def copy_weights(root: Path, manifest: dict[str, Any], platform_dir: Path, ids: 
             _say(f"{m['id']}: the manifest mounts no weights; skipped {src}")
             continue
         n = 0
-        for rel, f in identity.weight_files(src):
+        files = identity.weight_files(src)
+        # SOURCE.txt is the model card's provenance: copied, but never part of the weights hash
+        files += [(name, src / name) for name in sorted(identity.IGNORED_FILES) if (src / name).is_file()]
+        for rel, f in files:
             target = dst / rel
             if target.is_file() and target.stat().st_size == f.stat().st_size:
                 continue

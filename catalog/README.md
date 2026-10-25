@@ -264,7 +264,8 @@ not exported.
 
 The bundle is a folder under `CATALOG_EXPORT_DIR` (default `run/catalog/exports`; leave it out of
 `dev/.backups` tarballs): `manifest.json`, one `images.tar` from a single `docker save` (each shared
-layer once), and `models/<id>/` with `service.yaml`, `registration.json`, `weights/` and
+layer once), and `models/<id>/` with `service.yaml`, `registration.json`, `weights/` (with the
+weights folder's `SOURCE.txt`, which the model card reads; it stays out of the weights hash) and
 `verification.json`. The job checks free space against the estimate plus 10% first; a failure records
 its phase and removes the partial bundle; a restart marks a running job failed. For a registry, each
 image is tagged and pushed (the host's `~/.docker/config.json` is mounted read-only for the login)

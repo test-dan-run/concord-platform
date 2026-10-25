@@ -9,7 +9,7 @@ is a folder under Settings.export_dir:
       models/<id>/
         service.yaml
         registration.json  display name, tags, derived from
-        weights/           when weights are included
+        weights/           when weights are included, with the folder's SOURCE.txt for the model card
         verification.json  when verification records are included
 
 The download route streams the folder as one .tar while it reads, so it is never stored twice. Hosted
@@ -342,7 +342,10 @@ class Exporter:
         self._publish(job_id, force=True)
 
     def _copy_weights(self, src: Path, dst: Path, done: int, progress) -> int:
-        for rel, f in identity.weight_files(src):
+        files = identity.weight_files(src)
+        # SOURCE.txt is the model card's provenance: copied, but never part of the weights hash or size
+        files += [(name, src / name) for name in sorted(identity.IGNORED_FILES) if (src / name).is_file()]
+        for rel, f in files:
             target = dst / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(f, "rb") as fin, open(target, "wb") as fout:
