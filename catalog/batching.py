@@ -62,6 +62,9 @@ MAX_REQUEST_S = 6000.0
 # then logs a line per request, so a short tail misses them on a model that has served a while.
 LOG_TAIL = 1_000_000
 SWEEP_MAX_N = 128
+# Most concurrent requests the sweep sends an OpenAI transcription server: aisvc's route is a sync function that
+# Starlette runs in a pool of 40 threads, so more requests at once wait there and do not make a bigger batch.
+OPENAI_ASR_MAX_N = 32
 DEFAULT_LENGTHS_S = (2.0, 15.0, 60.0)
 SLOW_S = 120.0  # a batch that takes longer ends its length's sweep
 SAMPLE_S = 0.2  # nvidia-smi sampling interval during a request
@@ -665,6 +668,9 @@ class BatchProfiler:
         sched = self.scheduler
         url = sched.upstream_url(s.name)
         lengths, longest = lengths_for(s)
+        max_n = s.batch.max_n if s.batch and s.batch.max_n else SWEEP_MAX_N
+        if mode(meta) == "openai-asr":
+            max_n = min(max_n, OPENAI_ASR_MAX_N)
         beat = threading.Event()
 
         def keep_alive() -> None:
@@ -684,8 +690,7 @@ class BatchProfiler:
             try:
                 memory = Memory(url, http, lambda: self.runtime.gpu_memory(p), baseline)
                 points, stops, how = sweep(sender(meta, url, http), memory, lengths, budget_gib=given_gib,
-                                           max_n=(s.batch.max_n if s.batch and s.batch.max_n else SWEEP_MAX_N),
-                                           stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m),
+                                           max_n=max_n, stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m),
                                            relift=relift if lifted else None)
             finally:
                 beat.set()

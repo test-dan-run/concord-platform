@@ -184,7 +184,7 @@ because a rebuilt image can use memory differently.
 For a custom audio image, the measurement takes a lease (holder `catalog:batch`), so it waits its turn.
 It lifts the server's batch limits (`POST /platform/batch-limits` in `aisvc`), resets the peak, and sends
 batches of 1, 2, 4 and so on up to 128 items at three lengths: a short clip, a typical clip and the
-longest clip the server takes (`batch.max_item_s` in the manifest, or `batch.lengths_s` to choose them). A server that batches inside one item, like faster-whisper with the 30 s windows of a file, sets `batch.max_n: 1`, so the sweep sends single items of growing length.
+longest clip the server takes (`batch.max_item_s` in the manifest, or `batch.lengths_s` to choose them). A server that batches inside one item, like faster-whisper with the 30 s windows of a file, sets `batch.max_n: 1`, so the sweep sends single items of growing length. An OpenAI transcription server gets at most 32 requests at once, because the `aisvc` route runs in a pool of 40 threads and more requests only wait there.
 Each length stops at the first out of memory error, or when the server had to split a batch, or when a
 batch takes more than 120 s. A split lowers the server's limit, so the catalog lifts the limits again before
 the next length. It also stops before a batch it predicts to need more than the budget, because under WSL2 such a
