@@ -96,6 +96,12 @@ def test_long_audio_is_cut_into_30_s_chunks(client, model):
     assert out["text"] == "chunk480000 chunk480000 chunk80000" and out["duration"] == 65.0
 
 
+def test_a_tail_under_0_1_s_is_dropped():
+    x = np.zeros(480016, dtype=np.float32)  # 30 s and 16 samples
+    assert [len(c) for c in asr_mod.chunks(x)] == [480000]
+    assert [len(c) for c in asr_mod.chunks(np.zeros(481600, dtype=np.float32))] == [480000, 1600]
+    assert [len(c) for c in asr_mod.chunks(np.zeros(16, dtype=np.float32))] == [16]  # a short file is kept
+
 def test_text_format(client):
     r = post(client, wav(1.0), response_format="text")
     assert r.status_code == 200 and r.text == "chunk16000"
