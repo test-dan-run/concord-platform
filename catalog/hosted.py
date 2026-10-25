@@ -15,6 +15,7 @@ import json
 import re
 import threading
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -323,6 +324,77 @@ def _short(text: str, key: str | None) -> str:
     return text if len(text) < 200 else text[:200] + "..."
 
 
+Add = Callable[[str, str, str], None]
+
+
+def _reached(add: Add, h: Hosted) -> None:
+    tls = urlsplit(h.base_url).scheme == "https"
+    add("tls", "pass" if tls else "warn", "Reached the host over TLS" if tls else "Reached the host without TLS (http)")
+
+
+def _key_line(add: Add, h: Hosted, r: httpx.Response, key: str | None) -> bool:
+    """The key line, from the provider's first answer. False when the provider refused the key."""
+    if r.status_code in (401, 403):
+        add("key", "fail", f"the provider refused the key ({r.status_code}): {_short(r.text, key)}")
+        return False
+    if h.auth_type == "none":
+        add("key", "pass", "No key needed")
+    elif r.is_success:
+        add("key", "pass", "Key accepted")
+    else:  # e.g. a provider without GET /models: the key is only checked by the next request
+        add("key", "warn", f"not checked: {r.request.url.path} answered {r.status_code}, so only the next request "
+            "shows whether the key works")
+    return True
+
+
+def _test_oip(c: httpx.Client, h: Hosted, key: str | None, add: Add) -> dict[str, Any] | None:
+    r = c.get(f"/v2/models/{h.model}/ready")
+    _reached(add, h)
+    if not _key_line(add, h, r, key):
+        return None
+    meta = c.get(f"/v2/models/{h.model}")
+    if r.status_code != 200 or meta.status_code != 200:
+        bad = r if r.status_code != 200 else meta
+        add("contract", "fail", f"{bad.request.url.path} answered {bad.status_code}: {_short(bad.text, key)}")
+        return None
+    try:
+        data = meta.json()
+        signature = {"inputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("inputs", [])],
+                     "outputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("outputs", [])]}
+    except (ValueError, AttributeError, TypeError):
+        add("contract", "fail", f"{meta.request.url.path} did not answer OIP metadata JSON: {_short(meta.text, key)}")
+        return None
+    add("contract", "pass", f"Speaks {h.contract} / {h.api}: {h.model} is ready")
+    return signature
+
+
+def _test_openai(c: httpx.Client, h: Hosted, key: str | None, add: Add) -> None:
+    r = c.get("/v1/models")
+    _reached(add, h)
+    if not _key_line(add, h, r, key):
+        return None
+    label = f"{h.contract} / {h.api}"
+    listed = None
+    if r.status_code == 200:
+        try:
+            listed = [m.get("id") for m in r.json().get("data", [])]
+        except (ValueError, AttributeError, TypeError):
+            listed = None
+    if listed is not None and h.model in listed and h.api != "text.itn":
+        add("contract", "pass", f"Speaks {label}: /models lists {h.model}")
+    elif listed is not None and h.model not in listed:
+        add("contract", "fail", f"/models lists {len(listed)} model(s) but not {h.model!r}")
+    else:
+        m = _minimal(c, h)
+        if m.status_code in (401, 403):
+            add("contract", "fail", f"the provider refused the key ({m.status_code}): {_short(m.text, key)}")
+        elif m.status_code >= 400:
+            add("contract", "fail", f"a minimal {h.api} request answered {m.status_code}: {_short(m.text, key)}")
+        else:
+            add("contract", "pass", f"Speaks {label}: a minimal request was accepted")
+    return None
+
+
 def connection_test(store: HostedStore, h: Hosted, key: str | None) -> dict[str, Any]:
     """TLS, key and contract with one or two small requests; stores nothing. OIP also returns the signature."""
     lines: list[dict[str, str]] = []
@@ -331,55 +403,13 @@ def connection_test(store: HostedStore, h: Hosted, key: str | None) -> dict[str,
     def add(name: str, status: str, reason: str) -> None:
         lines.append({"name": name, "status": status, "reason": reason})
 
-    def auth_ok(r: httpx.Response) -> bool:
-        if r.status_code in (401, 403):
-            add("key", "fail", f"the provider refused the key ({r.status_code}): {_short(r.text, key)}")
-            return False
-        add("key", "pass", "Key accepted" if h.auth_type != "none" else "No key needed")
-        return True
-
-    tls = urlsplit(h.base_url).scheme == "https"
-    label = f"{h.contract} / {h.api}"
     try:
         with store.client(h, key, timeout=min(h.timeout_s, TEST_TIMEOUT_S)) as c:
-            if h.contract == "oip-v2":
-                r = c.get(f"/v2/models/{h.model}/ready")
-                add("tls", "pass" if tls else "warn", "Reached the host over TLS" if tls else "Reached the host without TLS (http)")
-                if not auth_ok(r):
-                    return {"ok": False, "lines": lines, "signature": None}
-                meta = c.get(f"/v2/models/{h.model}")
-                if r.status_code != 200 or meta.status_code != 200:
-                    bad = r if r.status_code != 200 else meta
-                    add("contract", "fail", f"{bad.request.url.path} answered {bad.status_code}: {_short(bad.text, key)}")
-                else:
-                    data = meta.json()
-                    signature = {"inputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("inputs", [])],
-                                 "outputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("outputs", [])]}
-                    add("contract", "pass", f"Speaks {label}: {h.model} is ready")
-            else:
-                r = c.get("/v1/models")
-                add("tls", "pass" if tls else "warn", "Reached the host over TLS" if tls else "Reached the host without TLS (http)")
-                if not auth_ok(r):
-                    return {"ok": False, "lines": lines, "signature": None}
-                listed = None
-                if r.status_code == 200:
-                    try:
-                        listed = [m.get("id") for m in r.json().get("data", [])]
-                    except (ValueError, AttributeError, TypeError):
-                        listed = None
-                if listed is not None and h.model in listed and h.api != "text.itn":
-                    add("contract", "pass", f"Speaks {label}: /models lists {h.model}")
-                elif listed is not None and h.model not in listed:
-                    add("contract", "fail", f"/models lists {len(listed)} model(s) but not {h.model!r}")
-                else:
-                    m = _minimal(c, h)
-                    if m.status_code in (401, 403):
-                        add("contract", "fail", f"the provider refused the key ({m.status_code}): {_short(m.text, key)}")
-                    elif m.status_code >= 400:
-                        add("contract", "fail", f"a minimal {h.api} request answered {m.status_code}: {_short(m.text, key)}")
-                    else:
-                        add("contract", "pass", f"Speaks {label}: a minimal request was accepted")
+            signature = (_test_oip if h.contract == "oip-v2" else _test_openai)(c, h, key, add)
     except httpx.HTTPError as exc:
-        add("tls", "fail", f"could not reach {h.host}: {type(exc).__name__}: {_short(str(exc), key)}")
+        # named after the step that was running: the first answer gives the tls and key lines together
+        step = next((n for n in ("tls", "key", "contract") if n not in {x["name"] for x in lines}), "contract")
+        where = f"could not reach {h.host}" if step == "tls" else f"{h.host} answered, then a request failed"
+        add(step, "fail", f"{where}: {type(exc).__name__}: {_short(str(exc), key)}")
     ok = bool(lines) and all(x["status"] != "fail" for x in lines) and any(x["name"] == "contract" for x in lines)
     return {"ok": ok, "lines": lines, "signature": signature, "tested_at": now_iso()}
