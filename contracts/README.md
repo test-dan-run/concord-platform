@@ -56,8 +56,9 @@ Follow the official OpenAI API shapes for the declared `api`. Every service also
 | `audio.speech` | `POST /v1/audio/speech` | `model`, `input`, `voice`, `response_format`, `speed` | audio bytes with the matching `content-type` (`audio/wav`, `audio/mpeg`, ...) |
 
 Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`. `aisvc` custom servers
-return 400 for invalid requests, 404 `model_not_found` for a wrong `model`, and 503 `not_ready`
-while loading. Streaming is engine-dependent; `aisvc` servers do not stream.
+return 400 `invalid_request` for invalid requests (a body that fails validation, or a `ValueError`
+from the handler), 404 `model_not_found` for a wrong `model`, and 503 `not_ready` while loading.
+Streaming is engine-dependent; `aisvc` servers do not stream.
 
 **Conformance:** `/health` 200; `/v1/models` lists the name; chat returns a non-empty completion
 (content or reasoning); transcription of `fixtures/tone_1s_16k.wav` (32 KB) returns a `text`
