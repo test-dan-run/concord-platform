@@ -94,23 +94,23 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("name")
     m.add_argument("--wait", action="store_true", help="wait for the measurement and print the result")
     args = ap.parse_args(argv)
-    cat = Catalog(timeout=30.0)
     try:
-        if args.cmd == "show":
-            item_s, item_tokens = args.item_s, args.item_tokens
-            if item_s is None and item_tokens is None:  # the catalog uses the one in the profile's unit
-                item_s, item_tokens = 20.0, 1024
-            show(cat.batch(args.name, vram_gb=args.vram, item_s=item_s, item_tokens=item_tokens, n=args.n))
+        with Catalog(timeout=30.0) as cat:
+            if args.cmd == "show":
+                item_s, item_tokens = args.item_s, args.item_tokens
+                if item_s is None and item_tokens is None:  # the catalog uses the one in the profile's unit
+                    item_s, item_tokens = 20.0, 1024
+                show(cat.batch(args.name, vram_gb=args.vram, item_s=item_s, item_tokens=item_tokens, n=args.n))
+                return 0
+            r = cat.batch_profile(args.name)
+            print(f"{args.name}: measurement {r['measuring']}")
+            while args.wait:
+                time.sleep(5)
+                v = cat.batch(args.name)
+                if not v.get("measuring"):
+                    show(v)
+                    return 0 if v["status"] == "measured" else 1
             return 0
-        r = cat.batch_profile(args.name)
-        print(f"{args.name}: measurement {r['measuring']}")
-        while args.wait:
-            time.sleep(5)
-            v = cat.batch(args.name)
-            if not v.get("measuring"):
-                show(v)
-                return 0 if v["status"] == "measured" else 1
-        return 0
     except CatalogError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

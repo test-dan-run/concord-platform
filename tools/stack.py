@@ -23,9 +23,9 @@ is leased, a request for a different GPU service refuses, with or without --hold
 
 When the Model Catalog is running (catalog/README.md), it owns the GPU: `up`, `down`, `lease`,
 `release` and `leases` go through its API instead, so its queue and leases stay the only ones.
-`up` then waits its turn in the catalog's queue (no --no-evict: the catalog decides what to stop),
-`lease` ignores --ttl (a catalog lease keeps the TTL it was taken with) and `status` shows the
-catalog's lease holders.
+`up` then waits its turn in the catalog's queue (no --no-evict: the catalog decides what to stop) and
+takes a --ttl of at most 3600 seconds, `lease` ignores --ttl (a catalog lease keeps the TTL it was
+taken with) and `status` shows the catalog's lease holders.
 Only a refused connection means there is no catalog: one that answers with an error or times out stops
 the command. AI_STACK_DIRECT=1 skips the catalog.
 """
@@ -55,6 +55,7 @@ from tools.vram_check import UTIL_VAR, budget, format_budget, measure_gpu, start
 DEFAULT_TIMEOUT = int(os.environ.get("AI_STACK_TIMEOUT", 15 * 60))
 GPU_FREE_WAIT_S = 30  # how long a GPU start waits for stopped services to give their memory back
 LEASES_DIR = PLATFORM_DIR / "run" / "leases"
+CATALOG_MAX_TTL = 3600  # the longest lease TTL the catalog takes (catalog/app.py LeaseIn.ttl_s)
 
 
 class StackError(Exception):
@@ -397,7 +398,7 @@ def logs(name: str) -> None:
 def catalog():
     """The running Model Catalog's client, or None when nothing listens at its URL (then this tool drives Docker
     itself). A catalog that is there but fails or times out stops the command: driving Docker then could stop
-    a model the catalog leased to an app."""
+    a model the catalog leased to an app. The caller closes the client."""
     if os.environ.get("AI_STACK_DIRECT") == "1":
         return None
     import httpx
@@ -407,8 +408,10 @@ def catalog():
     try:
         c.health()
     except httpx.ConnectError:
+        c.close()
         return None
     except (CatalogError, httpx.HTTPError) as exc:
+        c.close()
         raise StackError(f"catalog at {c.url} is not answering ({str(exc) or type(exc).__name__}); "
                          "AI_STACK_DIRECT=1 bypasses it") from None
     return c
@@ -449,6 +452,9 @@ def _wait_catalog(cat, names: list[str], timeout: int, lease_ids: list[str]) -> 
 
 
 def _catalog_up(cat, args: argparse.Namespace) -> None:
+    if args.holder and args.ttl > CATALOG_MAX_TTL:  # the catalog would refuse the lease with a 422
+        raise StackError(f"--ttl is at most {CATALOG_MAX_TTL} seconds with the catalog running; "
+                         f"`stack.py lease --holder {args.holder}` renews the lease to keep it longer")
     p = prepare()
     wanted = resolve(p, args.names)
     if not (b := budget(p, wanted)).ok:
@@ -544,7 +550,8 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help=f"seconds per service (default {DEFAULT_TIMEOUT})")
     u.add_argument("--holder", type=_holder, help="lease NAMEs to this holder (e.g. bench:job-12): no other `up` stops them")
     u.add_argument("--ttl", type=_ttl, default=DEFAULT_TTL,
-                   help=f"lease lifetime in seconds after each renewal (default {DEFAULT_TTL})")
+                   help=f"lease lifetime in seconds after each renewal (default {DEFAULT_TTL}; "
+                        f"at most {CATALOG_MAX_TTL} with the catalog running)")
     d = sub.add_parser("down", help="stop everything, or the named services")
     d.add_argument("names", nargs="*")
     sub.add_parser("status", help="table of services and container state")
@@ -560,13 +567,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cat = catalog() if args.cmd in CATALOG_COMMANDS else None
         if cat is not None:
-            return via_catalog(cat, args)
+            with cat:
+                return via_catalog(cat, args)
         if args.cmd == "up":
             up(args.names, args.timeout, evict=not args.no_evict, holder=args.holder, ttl=args.ttl)
         elif args.cmd == "down":
             down(args.names)
         elif args.cmd == "status":
-            status(cat=catalog())
+            cat = catalog()
+            with cat if cat is not None else contextlib.nullcontext():
+                status(cat=cat)
         elif args.cmd == "logs":
             logs(args.name)
         elif args.cmd == "lease":
