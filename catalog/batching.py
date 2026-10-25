@@ -29,6 +29,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -571,13 +572,16 @@ class BatchProfiler:
             run = sched.runs.get(s.name)
             if run is None or not run.running:
                 return None
-            given, batch = run.given, run.batch
+            given, batch, measured = run.given, run.batch, run.gpu_used_before is not None
         total = sched.gpu[0] if sched.gpu else p.config.gpu_total_gb
         started = None if batch is None else {
             "max_batch": int(batch["AISVC_MAX_BATCH"]) if "AISVC_MAX_BATCH" in batch else None,
             "max_len_s": int(batch["AISVC_MAX_BATCH_LEN"]) / 1000 if "AISVC_MAX_BATCH_LEN" in batch else None}
-        out: dict[str, Any] = {"vram_gb": round(given * total, 2) if given else None, "started_with": started,
-                               "batchers": []}
+        # The memory the start was given, as tools/vram_check.start_memory works it out: the share of the device
+        # measured then (gpu_used_before is set), floored to 0.01 GiB, else util_limit x gpu_total_gb.
+        gib = None if not given else (math.floor(given * total * 100) / 100 if measured
+                                      else round(given * p.config.gpu_total_gb, 2))
+        out: dict[str, Any] = {"vram_gb": gib, "started_with": started, "batchers": []}
         if s.engine != CUSTOM_ENGINE:
             return out
         try:

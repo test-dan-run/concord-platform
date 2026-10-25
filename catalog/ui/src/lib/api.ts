@@ -287,10 +287,12 @@ export type BatchView = {
   // custom GPU images only: the limits the next start gets at the full budget, and the ones set by hand
   limits?: BatchLimits & { vram_gb: number; measured: BatchLimits; source: Record<keyof BatchLimits, "override" | "measured" | "default"> };
   override?: (BatchLimits & { set_at: string }) | null;
-  // null when the service is not running; started_with is null when it was started outside the catalog
+  // null when the service is not running; started_with is null when it was started outside the catalog.
+  // limits (custom GPU images): the ones a start with vram_gb gets now, to compare with started_with
   running: {
     vram_gb: number | null;
     started_with: BatchLimits | null;
+    limits?: BatchLimits & { vram_gb: number };
     batchers: (BatchLimits & { name: string; backoffs: number; lowered_len_s: number | null })[];
   } | null;
 };

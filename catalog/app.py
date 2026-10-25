@@ -237,7 +237,8 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
         budget) and an item of item_s seconds (audio) or item_tokens tokens (vLLM), the memory batch `n` needs,
         and a table of lengths against 16, 24 and 32 GB and the full budget. For a custom GPU image, `limits` are
         the ones its next start gets at the full budget and `override` is what was set by hand. `running` is
-        what the running service started with and reports now."""
+        what the running service started with and reports now, and its `limits` are the ones a start with the
+        same memory gets now."""
         p = sched.platform()
         s = sched.manifest(model_id)
         with sched.lock:
@@ -255,6 +256,8 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
             out["limits"] = cat.profiler.limits(s.name, bk, full)
             out["override"] = cat.profiler.override(s.name)
         out["running"] = cat.profiler.in_use(p, s)
+        if "limits" in out and out["running"] and out["running"]["vram_gb"]:
+            out["running"]["limits"] = cat.profiler.limits(s.name, bk, out["running"]["vram_gb"])
         return out
 
     def _custom_gpu(model_id: str) -> str:
