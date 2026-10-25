@@ -62,17 +62,22 @@ export function ImportPage() {
       nav(versionPath(v.dataset_id, v.n));
     },
   });
+  const busy = check.isPending || run.isPending;
+  // While a zip is checked or imported, another one dropped on the page is ignored, and changing the target
+  // doesn't clear the running import: either would hide it and let a second import start beside it.
   const pick = (f: File | undefined) => {
-    if (!f) return;
+    if (!f || busy) return;
     setFile(f);
     run.reset();
     check.mutate(f);
+  };
+  const retarget = () => {
+    if (!run.isPending) run.reset();
   };
   const p = check.data?.preview;
   const m = p?.manifest;
   const sameTarget = check.data?.target === dest;
   const why = !p ? "Pick a zip first." : !p.ok ? "Fix the problems in the package." : p.missing.length ? "Audio is missing." : mode === "add" && !chosen ? "Pick a dataset." : "";
-  const busy = check.isPending || run.isPending;
 
   return (
     <>
@@ -119,7 +124,7 @@ export function ImportPage() {
           <Toggle
             label="Import as"
             value={mode}
-            onChange={(v) => (setMode(v as "new" | "add"), run.reset())}
+            onChange={(v) => (setMode(v as "new" | "add"), retarget())}
             options={[
               { value: "new", label: "New dataset" },
               { value: "add", label: "Next version" },
@@ -128,7 +133,7 @@ export function ImportPage() {
           />
           {mode === "add" ? (
             <>
-              <Select label="Dataset" value={target} onChange={(e) => (setTarget(e.target.value), run.reset())} className="!min-h-10 flex-1 min-w-0">
+              <Select label="Dataset" value={target} onChange={(e) => (setTarget(e.target.value), retarget())} className="!min-h-10 flex-1 min-w-0">
                 <option value="">Pick one</option>
                 {(datasets.data ?? []).map((d) => (
                   <option key={d.id} value={d.id}>
