@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
 
 from tools.schema import BASE_PATHS, Manifest, Platform
 
@@ -113,6 +116,14 @@ class Registry:
                                       f"not {h.contract} / {h.api}")
         if not h.base_url.startswith(("https://", "http://")):
             raise SchedulerError(422, "base_url must start with https:// (or http://)")
+        try:  # read as the records (urlsplit) and the gateway (httpx) read it, so a stored one never breaks them
+            u = urlsplit(h.base_url)
+            host, _ = u.hostname, u.port  # .port raises for a port that is not a number up to 65535
+            httpx.URL(h.base_url)
+        except (ValueError, httpx.InvalidURL) as exc:
+            raise SchedulerError(422, f"base_url is not a valid URL: {exc}") from None
+        if not host:
+            raise SchedulerError(422, "base_url must name a host, such as https://api.example.com/v1")
         if not h.model.strip():
             raise SchedulerError(422, "model (the provider's model name) must not be empty")
         if h.auth_type not in hosted_mod.AUTH_TYPES:
