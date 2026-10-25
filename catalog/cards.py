@@ -3,8 +3,9 @@
 Sources, all read from disk at request time (nothing is fetched here; `just fetch-cards` does that):
 
 - provenance from `tools/model_cards.source_of` (SOURCE.txt, the manifest comment, or weights.yaml);
-- the upstream model card: README.md in the weights folder, else a copy fetched into
-  ${AI_ASSETS}/model-cards; its YAML header gives license, languages, base model and datasets;
+- the upstream model card: README.md in the weights folder when the provenance came from SOURCE.txt there
+  (`model_cards.pinned_readme`), else a copy fetched into ${AI_ASSETS}/model-cards; its YAML header gives
+  license, languages, base model and datasets;
 - facts from the checkpoint's config.json and safetensors headers (architecture, context
   length, precision, quantization, parameters) and the weights folder's size on disk;
 - for a rule-based custom service (no model weights), its README.md. A model's own service README and
@@ -332,7 +333,7 @@ def build(p: Platform, s: Manifest) -> dict[str, Any]:
 
     # The upstream card: the pinned copy in the weights folder, else one fetched by `just fetch-cards`.
     readme_dir, revision, fetched = None, (src.ref if src else None), None
-    if folder is not None and (folder / "README.md").is_file() and src and src.origin == "SOURCE.txt":
+    if model_cards.pinned_readme(folder, src) is not None:
         readme_dir = folder
     elif src is not None and (found := model_cards.cache_dirs(p, src)):
         readme_dir = found[0]

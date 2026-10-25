@@ -8,7 +8,8 @@ then the `source` URL in a custom service's `weights.yaml` (Hugging Face or GitH
 
 Fetched files go to ${AI_ASSETS}/model-cards/<host>/<org>/<repo>/<revision>/, never into a weights
 folder: every file in a weights folder is part of its build key, so adding a README there would make a
-new build. Engine models whose weights folder already holds the upstream README.md need no fetch.
+new build. A model needs no fetch when its weights folder holds the upstream README.md and the source came
+from SOURCE.txt in that folder (`pinned_readme`).
 """
 
 from __future__ import annotations
@@ -92,6 +93,15 @@ def source_of(p: Platform, s: Manifest) -> Source | None:
         spec = yaml.safe_load(src.path.read_text()) or {}
         if spec.get("source") and (found := _parse_url(str(spec["source"]), "weights.yaml")):
             return found
+    return None
+
+
+def pinned_readme(folder: Path | None, src: Source | None) -> Path | None:
+    """The README.md in the weights folder, when it is the model's card: only when the source came from
+    SOURCE.txt in that folder, which records the repo and revision the folder was downloaded from. Otherwise
+    None, and the card is a copy fetched by `just fetch-cards`."""
+    if folder is not None and (folder / "README.md").is_file() and src is not None and src.origin == "SOURCE.txt":
+        return folder / "README.md"
     return None
 
 
@@ -191,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
                        else "no source recorded (add SOURCE.txt with repo and revision to its weights folder)")
                 print(f"  -          {s.name}: {why}")
                 continue
-            if folder is not None and (folder / "README.md").is_file() and src.origin == "SOURCE.txt":
+            if pinned_readme(folder, src) is not None:
                 print(f"  on disk    {s.name}: {src.repo} README.md is in its weights folder")
                 continue
             if not args.force and cache_dirs(p, src):

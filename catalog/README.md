@@ -164,9 +164,10 @@ the platform already holds (`catalog/cards.py`); the UI shows it on a model's pa
   are chosen by heading (`cards.digest`). A rule-based service with no model weights has its README,
   without code, in place of an upstream card. `gaps` lists what is missing and how to fill it.
 
-Upstream cards come from the weights folder when it holds one, else from `just fetch-cards [NAME ...]`,
-which downloads only README and LICENSE at the recorded revision into `${AI_ASSETS}/model-cards/`
-(never into a weights folder: every file there is part of the build key).
+Upstream cards come from the README.md in the weights folder when the source came from `SOURCE.txt` in
+that folder, else from `just fetch-cards [NAME ...]`, which downloads only README and LICENSE at the
+recorded revision into `${AI_ASSETS}/model-cards/` (never into a weights folder: every file there is part
+of the build key).
 
 ## Batch profiles
 
