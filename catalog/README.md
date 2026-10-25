@@ -330,7 +330,9 @@ priority.
 - The scheduler stops a GPU model to make room only when nobody leases it, no call to it is in flight,
   and it has run for its settle time (2 x cold start, at least 60 s) or its lease has ended. If any
   other GPU model can't be stopped yet, the request waits, and `waiting_for` names the model it waits
-  for and the reason.
+  for and the reason. If the stop that makes room fails, the new GPU model does not start next to the
+  old one: its request goes back to its place in the queue (`waiting for <model> to stop`), and the
+  stop is tried again.
 - One model starts at a time, and no GPU model starts while another GPU model is still loading. vLLM
   sizes its KV cache from the free memory it measures at start, so a neighbour that loads at the same
   time breaks its start ("No available memory for the cache blocks").
@@ -345,8 +347,9 @@ priority.
   `AISVC_VRAM_GB`. The 1 GiB stays free because Windows keeps some GPU memory for the display under
   WSL2, and vLLM fails to start when the memory it asks for isn't free. Without `nvidia-smi`, a GPU
   model gets `util_limit` x `gpu_total_gb`.
-- Stopping one GPU model to start a different one counts as a swap. `GET /api/platform` returns the
-  count as `swaps`, and the catalog keeps it in its database across restarts.
+- Stopping one GPU model to start a different one counts as a swap, once also when that stop has to be
+  tried again. `GET /api/platform` returns the count as `swaps`, and the catalog keeps it in its
+  database across restarts.
 - **Models a lease brought up are spun down when nothing needs them.** Once its last lease ends, a model
   is stopped after `CATALOG_RELEASE_LINGER_S` (default 30 s, so a back-to-back lease on the same model
   keeps it loaded) unless a live or queued request names it or a call is in flight. A request that

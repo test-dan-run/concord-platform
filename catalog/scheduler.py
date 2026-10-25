@@ -543,7 +543,8 @@ class Scheduler:
 
     def _grant(self, p: Platform, r: Request, evict: list[str], now: float) -> None:
         r.state, r.granted_at, r.waiting_for = "starting", now, None
-        if any(self.frac(p, m) > 0 for m in evict) and any(
+        # An eviction tried again after its stop failed is the same swap.
+        if any(self.frac(p, m) > 0 for m in evict) and not any(self.runs[m].stop_failures for m in evict) and any(
                 self.frac(p, m) > 0 and self._down(m) and not self.runs[m].starting for m in self._local(r)):
             self._count_swap()
         for m in evict:
@@ -707,8 +708,11 @@ class Scheduler:
 
     def _start_env(self, p: Platform, s: Manifest, run: Run) -> dict[str, str] | None:
         """Wait until the GPU has the memory the start needs, note on the run what the start is given, and return
-        its compose variables. None when too little is free: the start is not made and its request queues again."""
-        short, env, gpu = self._wait_for_gpu(p, s)
+        its compose variables. None when another GPU model is still up or too little is free: the start is not
+        made and its request queues again."""
+        short, env, gpu = self._still_up(p, s.name), {}, None
+        if not short:
+            short, env, gpu = self._wait_for_gpu(p, s)
         if short:
             log.warning("not starting %s: %s", s.name, short)
             with self.lock:
@@ -722,6 +726,16 @@ class Scheduler:
             run.batch = {k: env[v] for k, v in BATCH_VARS.items() if v in env} if VRAM_VAR in env else None
             run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
         return env
+
+    def _still_up(self, p: Platform, name: str) -> str | None:
+        """One GPU model at a time: a GPU model does not start while another one runs that is not being stopped
+        (an eviction whose stop failed). Without a GPU reading nothing else would notice."""
+        if self.frac(p, name) <= 0:
+            return None
+        with self.lock:
+            up = sorted(m for m, run in self.runs.items()
+                        if m != name and run.running and not run.stopping and self.frac(p, m) > 0)
+        return f"waiting for {', '.join(up)} to stop" if up else None
 
     def _launch(self, p: Platform, s: Manifest, env: dict[str, str]) -> tuple[str | None, float] | None:
         """Start the container and wait for its health check: (why it failed, or None; seconds it took). None
