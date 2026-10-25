@@ -214,11 +214,16 @@ def create_oip_app(name: str, signature: Any, handler: Callable[[dict[str, np.nd
             raise OIPError(400, str(exc)) from None
         except Exception as exc:
             raise OIPError(500, f"{type(exc).__name__}: {exc}") from None
-        for out in wanted:
-            if out not in result:
-                raise OIPError(500, f"handler did not produce output {out!r}")
-        response = {"model_name": name, "model_version": version,
-                    "outputs": [encode_tensor(out_specs[o], result[o]) for o in wanted]}
+        try:
+            for out in wanted:
+                if out not in result:
+                    raise OIPError(500, f"handler did not produce output {out!r}")
+            outputs = [encode_tensor(out_specs[o], result[o]) for o in wanted]
+        except OIPError:
+            raise
+        except Exception as exc:  # a result that does not fit the signature is the server's error, also a ValueError
+            raise OIPError(500, f"{type(exc).__name__}: {exc}") from None
+        response = {"model_name": name, "model_version": version, "outputs": outputs}
         if body.id is not None:
             response["id"] = body.id
         return response
