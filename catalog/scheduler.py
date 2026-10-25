@@ -493,24 +493,31 @@ class Scheduler:
         if len(evict) == len(others):
             return Fit(True, evict)
         # Fail if waiting cannot help: the holder's own lease keeps the GPU busy.
-        own = {x for q in self._live() if q.kind == "lease" and q.holder == r.holder and q.state != "queued"
-               for x in q.models} & others
+        own = self._leased_by(r.holder) & others
         if own:
             return Fit(False, fatal=True, reason=f"{r.holder} already leases {', '.join(sorted(own))} and only one GPU "
                                                  f"model runs at a time; release that lease before asking for {m}")
-        blockers = []
-        for x in sorted(others):
-            run = self.runs[x]
-            if x in protected:
-                blockers.append(f"{x} (leased by {' and '.join(sorted(set(protected[x])))})")
-            elif run.in_flight:
-                blockers.append(f"{x} ({run.in_flight} call(s) in flight)")
-            elif run.starting:
-                blockers.append(f"{x} (starting)")
-            elif not self._settled(p, x, now) and not self._unneeded(x):
-                left = self.settle_s(p, x) - (now - (run.ready_at or now))
-                blockers.append(f"{x} (settling, {max(0, left):.0f}s left)")
+        blockers = filter(None, (self._kept(p, x, protected, now) for x in sorted(others)))
         return Fit(False, reason=f"one GPU model runs at a time: {m} waits for " + (", ".join(blockers) or "running models"))
+
+    def _leased_by(self, holder: str) -> set[str]:
+        """Models the holder's granted leases hold."""
+        return {x for q in self._live() if q.kind == "lease" and q.holder == holder and q.state != "queued"
+                for x in q.models}
+
+    def _kept(self, p: Platform, x: str, protected: dict[str, list[str]], now: float) -> str | None:
+        """What keeps GPU model x from being stopped now, as a waiting request shows it (None: nothing to show)."""
+        run = self.runs[x]
+        if x in protected:
+            return f"{x} (leased by {' and '.join(sorted(set(protected[x])))})"
+        if run.in_flight:
+            return f"{x} ({run.in_flight} call(s) in flight)"
+        if run.starting:
+            return f"{x} (starting)"
+        if not self._settled(p, x, now) and not self._unneeded(x):
+            left = self.settle_s(p, x) - (now - (run.ready_at or now))
+            return f"{x} (settling, {max(0, left):.0f}s left)"
+        return None
 
     def _evictable(self, p: Platform, m: str, now: float) -> bool:
         run = self.runs[m]
@@ -567,38 +574,57 @@ class Scheduler:
             if r.state == "queued":
                 continue
             local = self._local(r)
-            short = [m for m in local if self.runs[m].short and not self.runs[m].running and not self.runs[m].starting]
-            if short:
-                # Not loaded at all rather than partly: back in its queue place, fitted again on the next tick.
-                r.state, r.granted_at, r.waiting_for = "queued", None, "; ".join(self.runs[m].short for m in short)
-                self._save(r)
+            if self._requeue_short(r, local):
                 continue
-            failed = [m for m in local if self.runs[m].failed and not self.runs[m].running and not self.runs[m].starting]
-            if failed and r.state == "starting":
-                self._end(r, "failed", now, "; ".join(f"{m}: {self.runs[m].failed}" for m in failed))
-                continue
-            down = [m for m in local if self._down(m)]
-            # Active means callable *and* identified: outputs made under a lease can always be indexed.
-            unkeyed = [m for m in local if not (self.runs[m].build and self.runs[m].build.build_key)]
-            if not down and unkeyed and r.state == "starting":
-                r.waiting_for = "; ".join(f"{m}: {self.runs[m].build.pending if self.runs[m].build else 'build not inspected yet'}"
-                                          for m in unkeyed)
-                continue
-            if not down and r.state == "starting":
-                r.ready_at = now
-                if r.kind == "start":
-                    self._end(r, "done", now)
-                else:
-                    r.state = "active"
-                    self._save(r)
-            elif down and r.state == "active":
-                for m in down:  # a leased model crashed or was stopped by hand: bring it back
-                    run = self.runs[m]
-                    if not run.starting:
-                        run.starting, run.failed = True, None
-                        self._jobs.put(("start", m))
-                r.state = "starting"
-                self._save(r)
+            if r.state == "starting":
+                self._finish_start(r, local, now)
+            else:
+                self._restart_down(r, local)
+
+    def _requeue_short(self, r: Request, local: list[str]) -> bool:
+        """A start found too little free GPU memory: the model is not loaded at all rather than partly, and the
+        request goes back to its queue place, fitted again on the next tick."""
+        short = [m for m in local if self.runs[m].short and not self.runs[m].running and not self.runs[m].starting]
+        if short:
+            r.state, r.granted_at, r.waiting_for = "queued", None, "; ".join(self.runs[m].short for m in short)
+            self._save(r)
+        return bool(short)
+
+    def _finish_start(self, r: Request, local: list[str], now: float) -> None:
+        """A starting request fails with its models' start errors, or ends (a start request) or becomes active
+        (a lease) once every model is up and has a build key."""
+        failed = [m for m in local if self.runs[m].failed and not self.runs[m].running and not self.runs[m].starting]
+        if failed:
+            self._end(r, "failed", now, "; ".join(f"{m}: {self.runs[m].failed}" for m in failed))
+            return
+        if any(self._down(m) for m in local):
+            return
+        # Active means callable *and* identified: outputs made under a lease can always be indexed.
+        unkeyed = [m for m in local if not (self.runs[m].build and self.runs[m].build.build_key)]
+        if unkeyed:
+            r.waiting_for = "; ".join(f"{m}: {self.runs[m].build.pending if self.runs[m].build else 'build not inspected yet'}"
+                                      for m in unkeyed)
+            return
+        r.ready_at = now
+        if r.kind == "start":
+            self._end(r, "done", now)
+        else:
+            r.state = "active"
+            self._save(r)
+
+    def _restart_down(self, r: Request, local: list[str]) -> None:
+        """An active lease whose model crashed or was stopped by hand: bring the model back, and the lease is
+        starting again."""
+        down = [m for m in local if self._down(m)]
+        if not down:
+            return
+        for m in down:
+            run = self.runs[m]
+            if not run.starting:
+                run.starting, run.failed = True, None
+                self._jobs.put(("start", m))
+        r.state = "starting"
+        self._save(r)
 
     def _positions(self) -> None:
         n = 0
@@ -660,74 +686,17 @@ class Scheduler:
                     self._stamp(run)
                     return
             s = p.get(name)
-            short, env, gpu = self._wait_for_gpu(p, s)
-            if short:
-                log.warning("not starting %s: %s", name, short)
-                with self.lock:
-                    run.starting, run.short = False, short
-                    self._stamp(run)
+            env = self._start_env(p, s, run)
+            if env is None:
                 return
-            if VRAM_VAR in env:
-                env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
-            with self.lock:
-                run.given = float(env[UTIL_VAR]) if UTIL_VAR in env else None
-                run.batch = {k: env[v] for k, v in BATCH_VARS.items() if v in env} if VRAM_VAR in env else None
-                run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
-            url = self.upstream_url(name)
-            t0 = time.monotonic()
-            error = None
-            try:
-                log.info("starting %s%s", name, f" with {env[UTIL_VAR]} of the GPU" if UTIL_VAR in env else "")
-                self.runtime.start(p, s, env)
-                while True:
-                    if self.runtime.healthy(p, s, url):
-                        break
-                    c = None
-                    try:
-                        c = self.runtime.containers(p).get(name)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    if c is not None and (c.state in ("exited", "dead") or c.health == "unhealthy"):
-                        error = f"container {c.state}/{c.health}"
-                        break
-                    if time.monotonic() - t0 > self.settings.start_timeout_s:
-                        error = f"not healthy after {self.settings.start_timeout_s:.0f}s"
-                        break
-                    if self._stop.wait(1.0):
-                        return
-            except StartError as exc:
-                error = str(exc)
-            seconds = time.monotonic() - t0
+            launched = self._launch(p, s, env)
+            if launched is None:
+                return  # the catalog is shutting down
+            error, seconds = launched
             if error:
-                detail = ""
-                try:
-                    detail = self.runtime.failure_detail(p, name)
-                except Exception:  # noqa: BLE001
-                    pass
-                log.warning("start of %s failed: %s", name, error)
-                with self.lock:
-                    run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
-                    self._stamp(run)
-                try:  # a container left half started holds GPU memory
-                    self.runtime.stop(p, [name])
-                except Exception as exc:  # noqa: BLE001 - the start's own error is what the request reports
-                    log.warning("stop of %s after its failed start failed: %s", name, exc)
-                return
-            build = None
-            try:
-                c = self.runtime.containers(p).get(name)
-                build = self.builds.current(p, s, c)
-            except Exception:  # noqa: BLE001
-                pass
-            self.db.execute("INSERT INTO cold_start (model_id, build_key, seconds, at) VALUES (?, ?, ?, ?)",
-                            (name, build.build_key if build else None, seconds, now_iso()))
-            with self.lock:
-                self._cold_cache.clear()
-                run.starting, run.running, run.ready_at, run.failed = False, True, time.time(), None
-                self._stamp(run)
-                if build:
-                    run.build = build
-            log.info("%s healthy after %.1fs", name, seconds)
+                self._start_failed(p, name, run, error)
+            else:
+                self._start_done(p, s, run, seconds)
         except Exception as exc:  # noqa: BLE001 - not a refused start (a bug, docker missing): never left starting
             log.exception("start of %s crashed", name)
             with self.lock:
@@ -735,6 +704,85 @@ class Scheduler:
                 if run.starting:  # a failed start whose clean-up stop crashed keeps the start's own error
                     run.starting, run.failed = False, f"start crashed: {exc}"
                     self._stamp(run)
+
+    def _start_env(self, p: Platform, s: Manifest, run: Run) -> dict[str, str] | None:
+        """Wait until the GPU has the memory the start needs, note on the run what the start is given, and return
+        its compose variables. None when too little is free: the start is not made and its request queues again."""
+        short, env, gpu = self._wait_for_gpu(p, s)
+        if short:
+            log.warning("not starting %s: %s", s.name, short)
+            with self.lock:
+                run.starting, run.short = False, short
+                self._stamp(run)
+            return None
+        if VRAM_VAR in env:
+            env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
+        with self.lock:
+            run.given = float(env[UTIL_VAR]) if UTIL_VAR in env else None
+            run.batch = {k: env[v] for k, v in BATCH_VARS.items() if v in env} if VRAM_VAR in env else None
+            run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
+        return env
+
+    def _launch(self, p: Platform, s: Manifest, env: dict[str, str]) -> tuple[str | None, float] | None:
+        """Start the container and wait for its health check: (why it failed, or None; seconds it took). None
+        when the catalog shuts down meanwhile."""
+        url = self.upstream_url(s.name)
+        t0 = time.monotonic()
+        error = None
+        try:
+            log.info("starting %s%s", s.name, f" with {env[UTIL_VAR]} of the GPU" if UTIL_VAR in env else "")
+            self.runtime.start(p, s, env)
+            while not self.runtime.healthy(p, s, url):
+                c = None
+                try:
+                    c = self.runtime.containers(p).get(s.name)
+                except Exception:  # noqa: BLE001
+                    pass
+                if c is not None and (c.state in ("exited", "dead") or c.health == "unhealthy"):
+                    error = f"container {c.state}/{c.health}"
+                    break
+                if time.monotonic() - t0 > self.settings.start_timeout_s:
+                    error = f"not healthy after {self.settings.start_timeout_s:.0f}s"
+                    break
+                if self._stop.wait(1.0):
+                    return None
+        except StartError as exc:
+            error = str(exc)
+        return error, time.monotonic() - t0
+
+    def _start_failed(self, p: Platform, name: str, run: Run, error: str) -> None:
+        """The start's error and the container's last log lines on the run; then stop what it left half started."""
+        detail = ""
+        try:
+            detail = self.runtime.failure_detail(p, name)
+        except Exception:  # noqa: BLE001
+            pass
+        log.warning("start of %s failed: %s", name, error)
+        with self.lock:
+            run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
+            self._stamp(run)
+        try:  # a container left half started holds GPU memory
+            self.runtime.stop(p, [name])
+        except Exception as exc:  # noqa: BLE001 - the start's own error is what the request reports
+            log.warning("stop of %s after its failed start failed: %s", name, exc)
+
+    def _start_done(self, p: Platform, s: Manifest, run: Run, seconds: float) -> None:
+        """A healthy start: its cold-start time (per build) and the build it runs."""
+        build = None
+        try:
+            c = self.runtime.containers(p).get(s.name)
+            build = self.builds.current(p, s, c)
+        except Exception:  # noqa: BLE001
+            pass
+        self.db.execute("INSERT INTO cold_start (model_id, build_key, seconds, at) VALUES (?, ?, ?, ?)",
+                        (s.name, build.build_key if build else None, seconds, now_iso()))
+        with self.lock:
+            self._cold_cache.clear()
+            run.starting, run.running, run.ready_at, run.failed = False, True, time.time(), None
+            self._stamp(run)
+            if build:
+                run.build = build
+        log.info("%s healthy after %.1fs", s.name, seconds)
 
     def _batch_env(self, p: Platform, s: Manifest, gib: float) -> dict[str, str]:
         """Compose variables for the batch limits of this build's profile at `gib` (none without a profile)."""
