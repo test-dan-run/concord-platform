@@ -180,7 +180,7 @@ export function ExportPage() {
               </div>
             )}
             <span className="text-xs text-muted">
-              Image layers shared between models are written once, so the images file is smaller than the sum of the image sizes. On the target, <span className="num text-fg">python -m catalog import &lt;bundle&gt;</span> loads the bundle and re-verifies each build; a matching build key keeps its existing outputs. Hosted models are not exported: they have no image or weights.
+              Image layers shared between models are written once, so the images file is smaller than the sum of the image sizes. On the target, <span className="num text-fg">python -m catalog import &lt;bundle&gt;</span> loads the bundle and verifies each build it has no record of; a matching build key keeps its existing outputs. Hosted models are not exported: they have no image or weights.
             </span>
           </Panel>
           <Panel title="Destination">
@@ -189,7 +189,7 @@ export function ExportPage() {
               {(
                 [
                   ["bundle", "Bundle file", "One .tar to carry over, for air-gapped or offline targets"],
-                  ["registry", "Push to a registry", "Images are retagged and pushed; the bundle holds only the manifest"],
+                  ["registry", "Push to a registry", "Images are retagged and pushed; the bundle holds the rest: manifest, records and weights"],
                 ] as const
               ).map(([v, t, d]) => (
                 <label key={v} className={cx("flex items-start gap-2.5 rounded-md p-3 cursor-pointer border", o.destination === v ? "border-primary bg-primary/10" : "border-line")}>
