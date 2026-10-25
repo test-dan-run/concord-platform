@@ -427,7 +427,9 @@ def make_bundle(p: Platform, services: list[Manifest], out_dir: Path, with_image
         if with_weights:
             files |= {f"assets/{w.path}/{rel}": src for s in services if (w := weights_of(p, s))
                       for rel, src in w.files.items()}
-        write_tar(target, "w" if big else "w:gz", title, files, log)
+        part = Path(tmp) / target.name  # in out_dir, so the rename below stays on one filesystem
+        write_tar(part, "w" if big else "w:gz", title, files, log)
+        os.replace(part, target)  # a failed or stopped run leaves the tarball that was there before
     return target
 
 
