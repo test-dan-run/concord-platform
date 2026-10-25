@@ -24,7 +24,8 @@ is leased, a request for a different GPU service refuses, with or without --hold
 When the Model Catalog is running (catalog/README.md), it owns the GPU: `up`, `down`, `lease`,
 `release` and `leases` go through its API instead, so its queue and leases stay the only ones.
 `up` then waits its turn in the catalog's queue (no --no-evict: the catalog decides what to stop).
-AI_STACK_DIRECT=1 skips the catalog.
+Only a refused connection means there is no catalog: one that answers with an error or times out stops
+the command. AI_STACK_DIRECT=1 skips the catalog.
 """
 
 from __future__ import annotations
@@ -385,15 +386,23 @@ def logs(name: str) -> None:
 # ----------------------------------------------------------------------------- catalog mode
 
 def catalog():
-    """The running Model Catalog's client, or None (then this tool drives Docker itself)."""
+    """The running Model Catalog's client, or None when nothing listens at its URL (then this tool drives Docker
+    itself). A catalog that is there but fails or times out stops the command: driving Docker then could stop
+    a model the catalog leased to an app."""
     if os.environ.get("AI_STACK_DIRECT") == "1":
         return None
-    try:
-        from aicore.catalog import Catalog
-    except ImportError:
-        return None
+    import httpx
+    from aicore.catalog import Catalog, CatalogError
+
     c = Catalog(timeout=5.0)
-    return c if c.available() else None
+    try:
+        c.health()
+    except httpx.ConnectError:
+        return None
+    except (CatalogError, httpx.HTTPError) as exc:
+        raise StackError(f"catalog at {c.url} is not answering ({str(exc) or type(exc).__name__}); "
+                         "AI_STACK_DIRECT=1 bypasses it") from None
+    return c
 
 
 def _wait_catalog(cat, names: list[str], timeout: int, lease_ids: list[str]) -> None:
@@ -430,52 +439,69 @@ def _wait_catalog(cat, names: list[str], timeout: int, lease_ids: list[str]) -> 
         time.sleep(2)
 
 
+def _catalog_up(cat, args: argparse.Namespace) -> None:
+    p = prepare()
+    wanted = resolve(p, args.names)
+    if not (b := budget(p, wanted)).ok:
+        raise StackError(b.problem())
+    names = [s.name for s in wanted]
+    print(f"catalog at {cat.url}: queueing {', '.join(names)}" + (f" for {args.holder}" if args.holder else ""))
+    if args.no_evict:
+        print("note: --no-evict is ignored; the catalog stops only unleased, idle, settled models")
+    if args.holder:
+        lease = cat.request_lease(args.holder, names, ttl_s=args.ttl)
+        ids = [lease["id"]]
+    else:
+        ids = [r["request"]["id"] for n in names if (r := cat.start(n))["request"]]
+    _wait_catalog(cat, names, args.timeout, ids)
+    print(f"up: {', '.join(names)}" + (f" (leased to {args.holder})" if args.holder else ""))
+
+
+def _catalog_down(cat, args: argparse.Namespace) -> None:
+    names = args.names or [m["id"] for m in cat.models(all=True) if m["state"] in ("running", "starting")]
+    for n in names:
+        m = cat.model(n)
+        if m["leased_by"]:
+            print(f"warning: stopping leased service {m['id']} (held by {' and '.join(m['leased_by'])})")
+        cat.stop(n, force=True)
+    print(f"stopping {', '.join(names) or 'nothing'}")
+
+
+def _catalog_lease(cat, args: argparse.Namespace) -> None:
+    """`lease` renews and `release` ends every lease of the holder."""
+    mine = [r for r in cat.leases() if r["holder"] == args.holder]
+    if not mine:
+        raise StackError(f"no live lease for {args.holder} (expired or released)" if args.cmd == "lease"
+                         else f"{args.holder} held no leases")
+    for r in mine:
+        cat.heartbeat(r["id"]) if args.cmd == "lease" else cat.release(r["id"])
+    models = sorted({m for r in mine for m in r["models"]})
+    print(f"{'renewed' if args.cmd == 'lease' else 'released'} {args.holder}: {', '.join(models)}")
+
+
+def _catalog_leases(cat, args: argparse.Namespace) -> None:
+    rows = [(m, r["holder"], r["state"] + (f" #{r['position']}" if r["position"] else ""))
+            for r in cat.leases() for m in r["models"]]
+    if not rows:
+        print("no leases")
+    else:
+        _table([("SERVICE", "HOLDER", "STATE"), *sorted(rows)])
+
+
+CATALOG_COMMANDS = {"up": _catalog_up, "down": _catalog_down, "lease": _catalog_lease, "release": _catalog_lease,
+                    "leases": _catalog_leases}
+
+
 def via_catalog(cat, args: argparse.Namespace) -> int:
+    import httpx
     from aicore.catalog import CatalogError
 
     try:
-        if args.cmd == "up":
-            p = prepare()
-            wanted = resolve(p, args.names)
-            if not (b := budget(p, wanted)).ok:
-                raise StackError(b.problem())
-            names = [s.name for s in wanted]
-            print(f"catalog at {cat.url}: queueing {', '.join(names)}" + (f" for {args.holder}" if args.holder else ""))
-            if args.no_evict:
-                print("note: --no-evict is ignored; the catalog stops only unleased, idle, settled models")
-            if args.holder:
-                lease = cat.request_lease(args.holder, names, ttl_s=args.ttl)
-                ids = [lease["id"]]
-            else:
-                ids = [r["request"]["id"] for n in names if (r := cat.start(n))["request"]]
-            _wait_catalog(cat, names, args.timeout, ids)
-            print(f"up: {', '.join(names)}" + (f" (leased to {args.holder})" if args.holder else ""))
-        elif args.cmd == "down":
-            names = args.names or [m["id"] for m in cat.models(all=True) if m["state"] in ("running", "starting")]
-            for n in names:
-                m = cat.model(n)
-                if m["leased_by"]:
-                    print(f"warning: stopping leased service {m['id']} (held by {' and '.join(m['leased_by'])})")
-                cat.stop(n, force=True)
-            print(f"stopping {', '.join(names) or 'nothing'}")
-        elif args.cmd in ("lease", "release"):
-            mine = [r for r in cat.leases() if r["holder"] == args.holder]
-            if not mine:
-                raise StackError(f"no live lease for {args.holder} (expired or released)" if args.cmd == "lease"
-                                 else f"{args.holder} held no leases")
-            for r in mine:
-                cat.heartbeat(r["id"]) if args.cmd == "lease" else cat.release(r["id"])
-            models = sorted({m for r in mine for m in r["models"]})
-            print(f"{'renewed' if args.cmd == 'lease' else 'released'} {args.holder}: {', '.join(models)}")
-        elif args.cmd == "leases":
-            rows = [(m, r["holder"], r["state"] + (f" #{r['position']}" if r["position"] else ""))
-                    for r in cat.leases() for m in r["models"]]
-            if not rows:
-                print("no leases")
-            else:
-                _table([("SERVICE", "HOLDER", "STATE"), *sorted(rows)])
+        CATALOG_COMMANDS[args.cmd](cat, args)
     except CatalogError as exc:
         raise StackError(f"catalog: {exc.message}") from None
+    except httpx.HTTPError as exc:
+        raise StackError(f"catalog at {cat.url} is not answering ({str(exc) or type(exc).__name__})") from None
     return 0
 
 
@@ -514,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("leases", help="live leases: service, holder, seconds until expiry")
     args = ap.parse_args(argv)
     try:
-        cat = catalog() if args.cmd in ("up", "down", "lease", "release", "leases") else None
+        cat = catalog() if args.cmd in CATALOG_COMMANDS else None
         if cat is not None:
             return via_catalog(cat, args)
         if args.cmd == "up":
