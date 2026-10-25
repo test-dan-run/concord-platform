@@ -8,6 +8,7 @@ convention: `collar` seconds forgiven on each side of every reference boundary.
 from __future__ import annotations
 
 import itertools
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ import numpy as np
 
 FRAME = 0.01
 COLLAR = 0.25
+MAPPINGS_MAX = 40_320  # one-to-one speaker mappings DER tries by brute force (8!); past it, greedy
 _WS = re.compile(r"\s+")
 _SPLITTERS = re.compile(r"[\-‐‑‒–—―/\\_]+")
 
@@ -77,17 +79,23 @@ def der(ref: list[Turn], hyp: list[Turn], duration: float, collar: float = COLLA
     total = ra.sum()
     if not total:
         return None
-    nr, nh = ra.shape[1], (ha.shape[1] if hyp else 0)
+    nr, nh = ra.shape[1], len(hn)
     overlap = np.array([[int((ra[:, i] & ha[:, j]).sum()) for j in range(nh)] for i in range(nr)]).reshape(nr, nh)
     # Optimal one-to-one mapping by brute force over the smaller side: the check clip has two speakers.
     best = 0
-    if nh and nr <= 7 and nh <= 7:
+    if nh and math.perm(max(nr, nh), min(nr, nh)) <= MAPPINGS_MAX:
         if nh >= nr:
             best = max(sum(overlap[i, j] for i, j in enumerate(perm)) for perm in itertools.permutations(range(nh), nr))
         else:
             best = max(sum(overlap[i, j] for j, i in enumerate(perm)) for perm in itertools.permutations(range(nr), nh))
-    elif nh:
-        best = int(overlap.max(axis=1).sum())  # many speakers: greedy is close enough for a sanity check
+    elif nh:  # many speakers: still one to one, the largest overlaps first; close enough for a sanity check
+        used_r: set[int] = set()
+        used_h: set[int] = set()
+        for v, i, j in sorted(((int(overlap[i, j]), i, j) for i in range(nr) for j in range(nh)), reverse=True):
+            if i not in used_r and j not in used_h:
+                best += v
+                used_r.add(i)
+                used_h.add(j)
     nref, nhyp = ra.sum(1), ha.sum(1)
     missed = np.maximum(nref - nhyp, 0).sum()
     fa = np.maximum(nhyp - nref, 0).sum()
