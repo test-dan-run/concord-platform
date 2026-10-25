@@ -189,6 +189,7 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
                                       f"{_refusal(health)}; the models were imported but not registered, so import "
                                       "again once it answers")
                 done = []
+                step = "registering"
                 try:
                     for r in regs:  # parents first are not guaranteed: register, then set parents that exist
                         resp = c.post(f"/api/models/{r['id']}/register", json={"display_name": r["display_name"],
@@ -198,6 +199,7 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
                         else:  # the catalog's rules (e.g. too big for this GPU) apply to an import too
                             _say(f"{r['id']}: the catalog refused to register it ({resp.status_code}): "
                                  f"{_refusal(resp)}")
+                    step = "setting derived from"
                     for r in done:
                         if r["parent_id"]:
                             resp = c.patch(f"/api/models/{r['id']}", json={"parent_id": r["parent_id"]})
@@ -207,8 +209,12 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
                 except httpx.TransportError as exc:  # it answered /api/health: never write its database behind its back
                     _say(f"registered {len(done)} of {len(regs)} model(s) with the catalog at {catalog} before it "
                          "stopped answering")
-                    raise BundleError(f"the catalog at {catalog} stopped answering ({exc}); the models were imported "
-                                      "but not all registered, so import again once it answers") from None
+                    if step == "registering":
+                        raise BundleError(f"the catalog at {catalog} stopped answering ({exc}); the models were "
+                                          "imported but not all registered, so import again once it answers") from None
+                    raise BundleError(f"the catalog at {catalog} stopped answering while setting derived from ({exc}); "
+                                      "every model it accepted was registered, so import again once it answers to set the "
+                                      "parents") from None
             _say(f"registered {len(done)} of {len(regs)} model(s) with the catalog at {catalog}; it verifies each "
                  "build now")
             return
