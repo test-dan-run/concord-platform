@@ -9,7 +9,7 @@ api: chat.completions              # images/video go in message content parts (i
 model: /models/qwen3.5-4b
 port: 8205
 gpu:
-  util: 0.40                       # 12.7 GB: 8.8 GB bf16 checkpoint (incl. vision tower) + KV/state + encoder cache
+  util: 0.40                       # 12.8 GB: 8.8 GB bf16 checkpoint (incl. vision tower) + KV/state + encoder cache
   # TODO(verify): first start of a hybrid (linear-attention) VLM on sm_120 is untested; if profiling
   # reports too little memory, lower --max-model-len or the multimodal limits before raising util.
 args:
