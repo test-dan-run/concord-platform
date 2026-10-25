@@ -408,9 +408,12 @@ class FakeCatalog:
 
     def index_lookup(self, app: str, keys: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
         self._log("index_lookup", app, len(keys))
+        by_key: dict[tuple, list[dict[str, Any]]] = {}  # one pass over the index, in the order entries were recorded
+        for (key, _), v in self._index.items():
+            by_key.setdefault(key, []).append(v)
         out = []
         for k in keys:
-            owners = [v for (key, _), v in self._index.items() if key == self._key(k)]
+            owners = by_key.get(self._key(k), [])
             mine = [v for v in owners if v["owner"] == app]
             hit = (mine or owners or [None])[0]
             out.append(dict(hit) if hit else None)
