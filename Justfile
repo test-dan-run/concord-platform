@@ -34,7 +34,7 @@ down *names:
 status:
     {{py}} tools/stack.py status
 
-# GPU service leases held by apps' jobs (`stack.py up --holder`): service, holder, expires in
+# leases held by apps' jobs (`stack.py up --holder`): service, holder, and seconds left (with the catalog running: its lease state)
 leases:
     {{py}} tools/stack.py leases
 

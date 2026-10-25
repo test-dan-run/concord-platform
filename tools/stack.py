@@ -23,7 +23,9 @@ is leased, a request for a different GPU service refuses, with or without --hold
 
 When the Model Catalog is running (catalog/README.md), it owns the GPU: `up`, `down`, `lease`,
 `release` and `leases` go through its API instead, so its queue and leases stay the only ones.
-`up` then waits its turn in the catalog's queue (no --no-evict: the catalog decides what to stop).
+`up` then waits its turn in the catalog's queue (no --no-evict: the catalog decides what to stop),
+`lease` ignores --ttl (a catalog lease keeps the TTL it was taken with) and `status` shows the
+catalog's lease holders.
 Only a refused connection means there is no catalog: one that answers with an error or times out stops
 the command. AI_STACK_DIRECT=1 skips the catalog.
 """
@@ -330,11 +332,16 @@ def _table(rows: list[tuple[str, ...]]) -> None:
         print("  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip())
 
 
-def status() -> None:
+def status(cat=None) -> None:
+    """The service table. With the catalog running (`cat`), LEASED BY comes from its leases, not run/leases."""
     require_docker()
     p = prepare()
     cs = containers(p)
-    leased = _leased()
+    if cat is None:
+        leased = _leased()
+    else:
+        with catalog_errors(cat):
+            leased = {m["id"]: list(m["leased_by"]) for m in cat.models(all=True) if m.get("leased_by")}
     rows = [("NAME", "KIND", "CONTRACT", "VRAM", "STATE", "HEALTH", "PORT", "LEASED BY")]
     for s in p.services:
         c = cs.get(s.name)
@@ -469,6 +476,8 @@ def _catalog_down(cat, args: argparse.Namespace) -> None:
 
 def _catalog_lease(cat, args: argparse.Namespace) -> None:
     """`lease` renews and `release` ends every lease of the holder."""
+    if args.cmd == "lease" and args.ttl is not None:
+        print("note: --ttl is ignored; a catalog lease keeps the TTL it was taken with")
     mine = [r for r in cat.leases() if r["holder"] == args.holder]
     if not mine:
         raise StackError(f"no live lease for {args.holder} (expired or released)" if args.cmd == "lease"
@@ -492,16 +501,23 @@ CATALOG_COMMANDS = {"up": _catalog_up, "down": _catalog_down, "lease": _catalog_
                     "leases": _catalog_leases}
 
 
-def via_catalog(cat, args: argparse.Namespace) -> int:
+@contextlib.contextmanager
+def catalog_errors(cat):
+    """Catalog API and transport errors as StackError, so they print as one error line."""
     import httpx
     from aicore.catalog import CatalogError
 
     try:
-        CATALOG_COMMANDS[args.cmd](cat, args)
+        yield
     except CatalogError as exc:
         raise StackError(f"catalog: {exc.message}") from None
     except httpx.HTTPError as exc:
         raise StackError(f"catalog at {cat.url} is not answering ({str(exc) or type(exc).__name__})") from None
+
+
+def via_catalog(cat, args: argparse.Namespace) -> int:
+    with catalog_errors(cat):
+        CATALOG_COMMANDS[args.cmd](cat, args)
     return 0
 
 
@@ -534,10 +550,10 @@ def main(argv: list[str] | None = None) -> int:
     lg.add_argument("name")
     le = sub.add_parser("lease", help="renew all of a holder's leases")
     le.add_argument("--holder", type=_holder, required=True)
-    le.add_argument("--ttl", type=_ttl, default=DEFAULT_TTL, help=f"seconds from now (default {DEFAULT_TTL})")
+    le.add_argument("--ttl", type=_ttl, help=f"seconds from now (default {DEFAULT_TTL}); ignored with the catalog running")
     rl = sub.add_parser("release", help="end all of a holder's leases")
     rl.add_argument("--holder", type=_holder, required=True)
-    sub.add_parser("leases", help="live leases: service, holder, seconds until expiry")
+    sub.add_parser("leases", help="live leases: service, holder, and seconds until expiry (with the catalog: lease state)")
     args = ap.parse_args(argv)
     try:
         cat = catalog() if args.cmd in CATALOG_COMMANDS else None
@@ -548,11 +564,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "down":
             down(args.names)
         elif args.cmd == "status":
-            status()
+            status(cat=catalog())
         elif args.cmd == "logs":
             logs(args.name)
         elif args.cmd == "lease":
-            lease(args.holder, args.ttl)
+            lease(args.holder, DEFAULT_TTL if args.ttl is None else args.ttl)
         elif args.cmd == "release":
             release(args.holder)
         elif args.cmd == "leases":
