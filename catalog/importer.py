@@ -6,8 +6,9 @@
    differs is left alone unless --force). The platform must still load afterwards, or nothing is kept.
 3. Weights: `models/<id>/weights/` is copied to where the manifest mounts weights from (under $AI_ASSETS).
 4. Registration: display name, tags and "derived from" are registered through the running catalog
-   (AICORE_CATALOG, else http://127.0.0.1:8700), which queues verification; without a running catalog
-   they are written to its database and verified on its next start.
+   (AICORE_CATALOG, else http://127.0.0.1:8700), which queues verification; a model it refuses is
+   reported with its reason and left unregistered. Only when no catalog answers at all are they written
+   to its database, and verified on its next start.
 
 The target re-verifies every build. A build key that matches one the target already knows (same image
 id, config and weights) keeps the outputs indexed under it.
@@ -172,16 +173,29 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
     if catalog:
         try:
             with httpx.Client(base_url=catalog, timeout=30) as c:
-                c.get("/api/health").raise_for_status()
+                health = c.get("/api/health")
+                if not health.is_success:  # something answers: never write the database behind its back
+                    raise BundleError(f"the catalog at {catalog} answered {health.status_code} on /api/health: "
+                                      f"{_refusal(health)}; the models were imported but not registered, so import "
+                                      "again once it answers")
+                done = []
                 for r in regs:  # parents first are not guaranteed: register, then set parents that exist
-                    c.post(f"/api/models/{r['id']}/register", json={"display_name": r["display_name"],
-                                                                    "tags": r["tags"]}).raise_for_status()
-                for r in regs:
+                    resp = c.post(f"/api/models/{r['id']}/register", json={"display_name": r["display_name"],
+                                                                           "tags": r["tags"]})
+                    if resp.is_success:
+                        done.append(r)
+                    else:  # the catalog's rules (e.g. too big for this GPU) apply to an import too
+                        _say(f"{r['id']}: the catalog refused to register it ({resp.status_code}): {_refusal(resp)}")
+                for r in done:
                     if r["parent_id"]:
-                        c.patch(f"/api/models/{r['id']}", json={"parent_id": r["parent_id"]})
-            _say(f"registered {len(regs)} model(s) with the catalog at {catalog}; it verifies each build now")
+                        resp = c.patch(f"/api/models/{r['id']}", json={"parent_id": r["parent_id"]})
+                        if not resp.is_success:
+                            _say(f"{r['id']}: the catalog did not set derived from {r['parent_id']} "
+                                 f"({resp.status_code}): {_refusal(resp)}")
+            _say(f"registered {len(done)} of {len(regs)} model(s) with the catalog at {catalog}; it verifies each "
+                 "build now")
             return
-        except httpx.HTTPError as exc:
+        except httpx.TransportError as exc:
             _say(f"the catalog at {catalog} is not answering ({exc}); writing registrations to {db_path}")
     from .db import DB, now_iso
 
@@ -195,6 +209,14 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
     finally:
         db.close()
     _say(f"registered {len(regs)} model(s) in {db_path}; the catalog verifies them when it starts")
+
+
+def _refusal(r: httpx.Response) -> str:
+    """The catalog's error message, else the start of the body."""
+    try:
+        return str(r.json()["error"]["message"])
+    except (ValueError, KeyError, TypeError):
+        return r.text.strip()[:300] or r.reason_phrase
 
 
 def import_bundle(path: Path, platform_dir: Path = PLATFORM_DIR, catalog: str | None = None,
