@@ -44,7 +44,8 @@ OIPDatatype = Literal[
 ]
 BASE_PATHS: dict[str, str] = {"openai": "/v1", "openai-inspired": "/v1", "oip-v2": "/v2"}
 
-_KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")  # names, aliases, tasks; bundle model ids (catalog/importer.py)
+_KEBAB = KEBAB  # the old private name, kept for code that still imports it
 
 
 class PlatformError(Exception):
@@ -60,7 +61,7 @@ class _Strict(BaseModel):
 
 
 def _kebab(value: str, what: str) -> str:
-    if not _KEBAB.match(value):
+    if not KEBAB.match(value):
         raise ValueError(f"{what} must be kebab-case ([a-z0-9-]), got {value!r}")
     return value
 

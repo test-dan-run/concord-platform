@@ -32,7 +32,7 @@ from typing import Any
 import httpx
 
 from tools import identity
-from tools.schema import _KEBAB, PLATFORM_DIR, PlatformError, load_platform
+from tools.schema import KEBAB, PLATFORM_DIR, PlatformError, load_platform
 
 Run = Callable[..., subprocess.CompletedProcess]
 
@@ -239,7 +239,7 @@ def import_bundle(path: Path, platform_dir: Path = PLATFORM_DIR, catalog: str | 
         raise BundleError(f"bundle format {manifest.get('format')!r} is not supported (this catalog reads format 1)")
     if not isinstance(manifest.get("models"), list) or not all(isinstance(m, dict) for m in manifest["models"]):
         raise BundleError(f"{mf} has no list of models")
-    bad = [m.get("id") for m in manifest["models"] if not isinstance(m.get("id"), str) or not _KEBAB.match(m["id"])]
+    bad = [m.get("id") for m in manifest["models"] if not isinstance(m.get("id"), str) or not KEBAB.match(m["id"])]
     if bad:  # ids name files and folders here: services/<id>.yaml, models/<id>/
         raise BundleError(f"model ids must be kebab-case ([a-z0-9-]), got {', '.join(repr(x) for x in bad)}")
     _say(f"importing {len(manifest['models'])} model(s) from {root.name} (exported {manifest.get('created_at')})")
