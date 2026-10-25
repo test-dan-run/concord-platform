@@ -187,7 +187,8 @@ footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
   });
   const cpuCount = DATA.services.length - DATA.gpu.length;
   $("#legend").textContent = `Bar = ${DATA.gpu_total_gb} GB; the marker is util_limit ${DATA.util_limit}. ` +
-    `Any services can run together if their shares add up to no more than the limit (check with \`just vram NAME...\`). ` +
+    `Only one GPU service runs at a time: it gets the GPU memory free at its start less 1 GiB, up to the limit, and CPU ` +
+    `services run next to it (check a set with \`just vram NAME...\`). ` +
     `${cpuCount} more services run on CPU.`;
 
   // ---------------------------------------------------------------- filters
