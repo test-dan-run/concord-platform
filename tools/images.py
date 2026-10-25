@@ -66,6 +66,9 @@ def base_digest(bases_dir: Path, spec: dict) -> str:
     for line in dockerfile.read_text().splitlines():
         words = line.split()
         if words[:1] in (["COPY"], ["ADD"]):
+            if words[-1] == "\\" or any(w.startswith("[") for w in words[1:]):  # would miss files: never guess
+                raise ValueError(f"{dockerfile.name}: base_digest reads one-line COPY/ADD without the JSON form; "
+                                 f"write this one that way or extend base_digest: {line.strip()}")
             for src in (bases_dir / w for w in words[1:-1] if not w.startswith("--")):
                 files |= {f for f in [src, *src.rglob("*")]
                           if f.is_file() and not _ignored(f.relative_to(bases_dir).as_posix(), rules)}
