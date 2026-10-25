@@ -100,7 +100,7 @@ def check_folder(root: Path, *, package: bool = False, hash_audio: bool = True) 
     if types and len(found) == 1 and not problems:
         try:  # the same reading publishing does, so a folder that passes here can be stored
             parsed = parse(root)
-        except (ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:
+        except (ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError) as exc:
             problems.append(f"refs/{found[0].name}: can't be read ({exc!r})")
         else:
             problems += _time_problems(found[0].name, parsed) + _speaker_problems(found[0].name, parsed)
