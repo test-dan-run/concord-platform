@@ -229,9 +229,10 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
         return rec["capabilities"] or {"status": "pending"}
 
     @app.get("/api/models/{model_id}/batch")
-    def batch(model_id: str, vram_gb: float | None = Query(default=None, gt=0),
-              item_s: float | None = Query(default=None, gt=0), item_tokens: int | None = Query(default=None, gt=0),
-              n: int | None = Query(default=None, ge=1)) -> dict[str, Any]:
+    def batch(model_id: str, vram_gb: float | None = Query(default=None, gt=0, le=10_000, allow_inf_nan=False),
+              item_s: float | None = Query(default=None, ge=0.001, le=86_400, allow_inf_nan=False),
+              item_tokens: int | None = Query(default=None, gt=0, le=10_000_000),
+              n: int | None = Query(default=None, ge=1, le=1_000_000)) -> dict[str, Any]:
         """The batch profile of the model's current build: the recommended batch for vram_gb (default: the full
         budget) and an item of item_s seconds (audio) or item_tokens tokens (vLLM), the memory batch `n` needs,
         and a table of lengths against 16, 24 and 32 GB and the full budget. For a custom GPU image, `limits` are

@@ -526,8 +526,8 @@ class BatchProfiler:
             raise ValueError("give max_batch, max_len_s or both (DELETE the override to use the measured limits)")
         if max_batch is not None and not 1 <= max_batch <= LIFT["max_items"]:
             raise ValueError(f"max_batch must be from 1 to {LIFT['max_items']}")
-        if max_len_s is not None and not 0 < max_len_s <= MAX_REQUEST_S:
-            raise ValueError(f"max_len_s must be over 0 and at most {MAX_REQUEST_S:g} s")
+        if max_len_s is not None and not 0.001 <= max_len_s <= MAX_REQUEST_S:  # the image takes whole ms, at least 1
+            raise ValueError(f"max_len_s must be from 0.001 to {MAX_REQUEST_S:g} s")
         self.db.execute("INSERT INTO batch_override (model_id, max_batch, max_len_s, set_at) VALUES (?, ?, ?, ?) "
                         "ON CONFLICT(model_id) DO UPDATE SET max_batch = excluded.max_batch, "
                         "max_len_s = excluded.max_len_s, set_at = excluded.set_at",
