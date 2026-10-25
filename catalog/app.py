@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import cards
 from .builds import Builds
 from .db import DB
 from .events import Events
@@ -210,6 +211,14 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     def verify(model_id: str) -> dict[str, Any]:
         rec = reg.verify(model_id)
         return rec["capabilities"] or {"status": "pending"}
+
+    @app.get("/api/models/{model_id}/card")
+    def model_card(model_id: str) -> dict[str, Any]:
+        h = cat.hosted.get(model_id) if model_id in cat.hosted else None
+        if h is not None:
+            return cards.build_hosted(h)
+        p = sched.platform()
+        return cards.build(p, sched.manifest(model_id))
 
     @app.post("/api/models/{model_id}/test")
     def test_model(model_id: str) -> dict[str, Any]:

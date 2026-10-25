@@ -67,6 +67,10 @@ push name:
 fetch-weights name *flags:
     {{py}} tools/fetch_weights.py {{name}} {{flags}}
 
+# upstream model cards (README, LICENSE) at each model's pinned revision into ${AI_ASSETS}/model-cards, for the catalog
+fetch-cards *names:
+    {{py}} tools/model_cards.py {{names}}
+
 # run the contract conformance suite against a running service (all services if no NAME); skips when down
 conform name="": render
     uv run pytest contracts/conformance -rs {{ if name == "" { "" } else { "--service " + name } }}

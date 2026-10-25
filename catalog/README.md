@@ -136,6 +136,31 @@ spoken-form phrases with `return_spans` and compares only the digits of each out
 exceeds the whole host is rejected at registration (422). New builds of registered models are verified
 automatically.
 
+## Model cards
+
+`GET /api/models/{id}/card` describes the model behind a service, assembled at request time from what
+the platform already holds (`catalog/cards.py`); the UI shows it on a model's page under **Model card**
+(`/models/{id}?tab=card`).
+
+- `source`: Hugging Face or GitHub repo and revision, from `SOURCE.txt` in the weights folder, the
+  manifest comment `# Local copy of <repo> @<sha>`, or the `source` URL in `weights.yaml`; `pinned` is
+  false when no revision is recorded. Hosted endpoints show their provider instead.
+- `license`: name and link (from `weights.yaml` or the upstream card's header) and the LICENSE text.
+- `upstream`: base model, languages and training datasets from the upstream card's YAML header.
+  `facts`: architecture, context length, precision, quantization, parameters (from safetensors headers,
+  left out for packed 4-bit formats) and size on disk.
+- `sections`: the upstream model card cut down to what describes the model: overview, architecture,
+  inputs and outputs, languages, training data, intended use and limitations (`markdown`), with its
+  evaluation results apart (`evaluation`, shown collapsed) and a link to the full card (`full_url`).
+  Sections on installing, running, serving or fine-tuning the model, citations, news and contacts are
+  left out, and so are code blocks, badges and raw HTML (HTML tables become Markdown tables). Sections
+  are chosen by heading (`cards.digest`). A rule-based service with no model weights has its README,
+  without code, in place of an upstream card. `gaps` lists what is missing and how to fill it.
+
+Upstream cards come from the weights folder when it holds one, else from `just fetch-cards [NAME ...]`,
+which downloads only README and LICENSE at the recorded revision into `${AI_ASSETS}/model-cards/`
+(never into a weights folder: every file there is part of the build key).
+
 ## Hosted endpoints
 
 A model a provider already serves online, registered with its contract, base URL, provider model name

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api, probeFor, type ConnectionTest, type Model } from "../lib/api";
+import { api, isTextNormaliser, probeFor, type ConnectionTest, type Model } from "../lib/api";
 import * as I from "../components/icons";
 import { AuthFields, body, contractOf, EndpointFields, TestLines, type Auth, type Endpoint } from "../components/hosted";
 import { gpuLabel, StateCell } from "../components/model";
@@ -10,14 +10,14 @@ import { Button, Chip, cx, Empty, ErrorNote, Fact, PageHeader, Panel, Select, Sp
 
 const GROUPS = [
   { key: "speech", title: "Speech models", note: "ASR, VAD, diarisation and speech enhancement: verified with a capability probe on the check clip" },
-  { key: "itn", title: "Text normalisation", note: "Inverse text normalisation (text.itn): verified with spoken-form phrases" },
+  { key: "itn", title: "Text normalisation", note: "ITN services (text.itn), verified with spoken-form phrases, and text.transform normalisers, verified on their protocol" },
   { key: "model", title: "Other models", note: "Chat, embeddings, TTS and others: verified on their protocol" },
   { key: "utility", title: "Utilities", note: "Non-AI services: verified on their protocol" },
 ];
 
 function group(m: Model): string {
+  if (isTextNormaliser(m)) return "itn"; // before the kind: text-normalizer is a utility
   const probe = probeFor(m);
-  if (probe === "itn") return "itn";
   if (probe) return "speech"; // before the kind: wpe-dereverb is a utility with the enhancement signature
   if (m.kind === "utility") return "utility";
   return "model";

@@ -9,6 +9,8 @@ import { ago, rtf } from "../lib/format";
 import { AuthFields, body, EndpointFields, TestLines, type Auth, type Endpoint } from "../components/hosted";
 import { CapabilityChips, Report, VerifyChip } from "../components/model";
 import { Button, Chip, ErrorNote, Fact, PageHeader, Panel, Spinner } from "../components/ui";
+import { DetailTabs, useDetailTab } from "../components/DetailTabs";
+import { ModelCard } from "../components/ModelCard";
 import { Registration, usage } from "./ModelDetail";
 
 function until(iso: string | null): string {
@@ -28,6 +30,7 @@ export function HostedDetail({ m, models }: { m: Model; models: Model[] }) {
   const verify = useMutation({ mutationFn: () => api.post(`/models/${m.id}/verify`), onSuccess: done });
   const remove = useMutation({ mutationFn: () => api.del(`/hosted/${m.id}`), onSuccess: () => { void done(); nav("/"); } });
   const [ep, setEp] = useState<Endpoint>({ contract: `${m.contract}|${m.api}`, base_url: h.base_url, model: h.model, timeout_s: h.timeout_s, max_concurrency: h.max_concurrency, max_upload_mb: h.max_upload_mb });
+  const [tab, setTab] = useDetailTab();
   const [auth, setAuth] = useState<Auth>({ auth_type: h.auth_type, header_name: h.header_name ?? "", key: "" });
   const saveEp = useMutation({
     mutationFn: () => {
@@ -61,6 +64,10 @@ export function HostedDetail({ m, models }: { m: Model; models: Model[] }) {
       />
       <ErrorNote error={test.error ?? verify.error ?? remove.error} />
       {m.state_detail && <div role="alert" className="border border-bad/50 bg-bad/10 text-[13px] rounded-md px-3 py-2">{m.state_detail}</div>}
+      <DetailTabs tab={tab} onChange={setTab} />
+      {tab === "card" ? (
+        <ModelCard id={m.id} />
+      ) : (
       <div className="grid gap-5 xl:grid-cols-[1fr_340px] items-start">
         <div className="flex flex-col gap-5 min-w-0">
           <Panel
@@ -124,6 +131,7 @@ export function HostedDetail({ m, models }: { m: Model; models: Model[] }) {
           />
         </div>
       </div>
+      )}
     </>
   );
 }
