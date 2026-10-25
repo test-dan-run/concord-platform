@@ -31,6 +31,10 @@ class VadParams:
         unknown = sorted(set(params) - set(cls.__dataclass_fields__))
         if unknown:
             raise ValueError(f"unknown parameters {unknown}; supported: {sorted(cls.__dataclass_fields__)}")
+        for k, v in known.items():
+            number = isinstance(v, (int, float)) and not isinstance(v, bool)
+            if not number and not (k == "neg_threshold" and v is None):  # a null neg_threshold is its default
+                raise ValueError(f"{k} must be a number")
         p = cls(**known)
         if not 0.0 < p.threshold < 1.0:
             raise ValueError("threshold must be in (0, 1)")
