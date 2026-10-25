@@ -36,7 +36,7 @@ def normalize(text: str, opts: Options | None = None) -> str:
     if not out:
         return out
     if opts.capitalize:
-        out = _SENTENCE_START.sub(lambda m: m.group(1) + m.group(2).upper(), out)
+        out = _SENTENCE_START.sub(lambda m: m.group(1) + m.group(2).title(), out)  # titlecase: ß -> Ss, not SS
     if opts.terminal_punctuation and not out.endswith(_TERMINAL) and out[-1].isalnum():
         last = _LAST_SENTENCE.search(out)
         first_word = (last.group(1) if last else out).split(" ", 1)[0].lower()
