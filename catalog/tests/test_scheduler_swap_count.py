@@ -15,8 +15,8 @@ def _failing(p, names):
 
 def test_two_gpu_models_up_an_uncounted_eviction_hides_a_later_real_swap(cat, runtime):
     """M and OTHER both run (started outside the catalog). A lease for M (already up) evicts OTHER: no swap,
-    rightly. That stop fails, so OTHER keeps evicting=True. Later a request for X stops M and OTHER and starts X:
-    a real swap, which must count once."""
+    rightly, and OTHER is not marked as being evicted in a swap. That stop fails, so OTHER stays up. Later a
+    request for X stops M and OTHER and starts X: a real swap, which must count once."""
     s = cat.scheduler
     runtime.running.update({M: 0.0, OTHER: 0.0})
     s.tick()

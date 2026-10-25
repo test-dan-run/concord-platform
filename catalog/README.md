@@ -350,7 +350,8 @@ priority.
   model gets `util_limit` x `gpu_total_gb`.
 - Stopping one GPU model to start a different one counts as a swap, once also when that stop has to be
   tried again. `GET /api/platform` returns the count as `swaps`, and the catalog keeps it in its
-  database across restarts.
+  database across restarts. The count is made when the request is granted, so it can be one off when a
+  stop keeps failing together with a model started outside the catalog or a catalog restart.
 - **Models a lease brought up are spun down when nothing needs them.** Once its last lease ends, a model
   is stopped after `CATALOG_RELEASE_LINGER_S` (default 30 s, so a back-to-back lease on the same model
   keeps it loaded) unless a live or queued request names it or a call is in flight. A request that
