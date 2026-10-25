@@ -701,7 +701,7 @@ class Scheduler:
             log.exception("start of %s crashed", name)
             with self.lock:
                 run = self.runs[name]
-                if run.starting:  # a failed start whose clean-up stop crashed keeps the start's own error
+                if run.starting:  # a start that already noted how it ended keeps that
                     run.starting, run.failed = False, f"start crashed: {exc}"
                     self._stamp(run)
 
@@ -751,20 +751,21 @@ class Scheduler:
         return error, time.monotonic() - t0
 
     def _start_failed(self, p: Platform, name: str, run: Run, error: str) -> None:
-        """The start's error and the container's last log lines on the run; then stop what it left half started."""
+        """Stop what the start left half started; then the start's error and the container's last log lines on
+        the run. The run stays starting until then: a tick during the stop still lists the container running."""
         detail = ""
         try:
             detail = self.runtime.failure_detail(p, name)
         except Exception:  # noqa: BLE001
             pass
         log.warning("start of %s failed: %s", name, error)
-        with self.lock:
-            run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
-            self._stamp(run)
         try:  # a container left half started holds GPU memory
             self.runtime.stop(p, [name])
         except Exception as exc:  # noqa: BLE001 - the start's own error is what the request reports
             log.warning("stop of %s after its failed start failed: %s", name, exc)
+        with self.lock:
+            run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
+            self._stamp(run)
 
     def _start_done(self, p: Platform, s: Manifest, run: Run, seconds: float) -> None:
         """A healthy start: its cold-start time (per build) and the build it runs."""
