@@ -5,11 +5,14 @@ audio and `problems` on an invalid version."""
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
+import anyio
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -21,6 +24,8 @@ from .versions import Versions
 
 if TYPE_CHECKING:
     from ..app import Catalog
+
+T = TypeVar("T")
 
 
 class MissingIn(BaseModel):
@@ -98,6 +103,20 @@ def _save(upload: UploadFile, store: AudioStore) -> Path:
     return path
 
 
+@contextlib.asynccontextmanager
+async def _in_thread(cm: contextlib.AbstractContextManager[T]) -> AsyncIterator[T]:
+    """A blocking context manager entered and left on a worker thread, so its waits for the store's locks never
+    stall the event loop."""
+    value = await anyio.to_thread.run_sync(cm.__enter__)
+    try:
+        yield value
+    except BaseException as exc:
+        if not await anyio.to_thread.run_sync(cm.__exit__, type(exc), exc, exc.__traceback__):
+            raise
+    else:
+        await anyio.to_thread.run_sync(cm.__exit__, None, None, None)
+
+
 def _version_response(version: dict[str, Any], created: bool) -> JSONResponse:
     return JSONResponse(version, status_code=201 if created else 200)
 
@@ -120,11 +139,12 @@ def add_dataset_routes(app: FastAPI, cat: Catalog) -> DatasetCatalog:
 
     @app.put("/api/store/audio/{sha256}")
     async def store_put(sha256: str, request: Request, ext: str = "", offset: int = Query(0, ge=0)) -> dict[str, Any]:
-        with store.upload(sha256, ext, offset) as fh:
+        # Async to stream the body; the store's database calls run on a worker thread.
+        async with _in_thread(store.upload(sha256, ext, offset)) as fh:
             if fh is not None:
                 async for chunk in request.stream():
                     fh.write(chunk)
-        return {"size": store.upload_size(sha256)}
+        return {"size": await anyio.to_thread.run_sync(store.upload_size, sha256)}
 
     @app.post("/api/store/audio/{sha256}/commit")
     def store_commit(sha256: str) -> dict[str, Any]:
