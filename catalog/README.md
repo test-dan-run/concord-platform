@@ -464,6 +464,9 @@ plan = cat.plan(stages=[...])
 cat.batch("wavlm-sv", item_s=20)["recommendation"]  # {"batch": ..., "vram_gb": ...} once a profile exists
 ```
 
+A `Catalog` keeps its HTTP connections open until `cat.close()`; `with Catalog() as cat:` closes them at the
+end of the block.
+
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are
 granted at once; models and capabilities come from the constructor).
 

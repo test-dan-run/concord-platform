@@ -165,6 +165,15 @@ class Catalog:
         except (CatalogError, httpx.HTTPError):
             return False
 
+    def close(self) -> None:
+        self._http.close()
+
+    def __enter__(self) -> Catalog:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     # -------------------------------------------------------------------------- models
 
     def models(self, task: str | list[str] | None = None, tag: str | list[str] | None = None,
@@ -326,6 +335,15 @@ class FakeCatalog:
 
     def available(self) -> bool:
         return True
+
+    def close(self) -> None:
+        pass  # nothing to close
+
+    def __enter__(self) -> FakeCatalog:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
 
     def models(self, task=None, tag=None, state=None, all=False) -> list[dict[str, Any]]:  # noqa: A002
         tasks = [task] if isinstance(task, str) else list(task or [])

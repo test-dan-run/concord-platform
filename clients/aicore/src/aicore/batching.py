@@ -30,14 +30,11 @@ MAX = 256
 
 @lru_cache(maxsize=256)
 def _recommended(service: str, item_s: float | None, item_tokens: int | None, catalog_url: str | None) -> int | None:
-    from .catalog import Catalog, CatalogError
+    from .catalog import Catalog
 
     try:
-        cat = Catalog(catalog_url, timeout=5.0)
-        rec = cat.batch(service, item_s=item_s, item_tokens=item_tokens).get("recommendation")
-    except (CatalogError, OSError, ValueError) as exc:
-        log.debug("no batch recommendation for %s: %s", service, exc)
-        return None
+        with Catalog(catalog_url, timeout=5.0) as cat:
+            rec = cat.batch(service, item_s=item_s, item_tokens=item_tokens).get("recommendation")
     except Exception as exc:  # noqa: BLE001 - a batch size is never worth failing a job over
         log.debug("no batch recommendation for %s: %s", service, exc)
         return None
