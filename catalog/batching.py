@@ -385,13 +385,17 @@ def lengths_for(s: Manifest) -> tuple[list[float], float | None]:
 
 def sweep(send: Callable[[int, float], None], memory: Memory, lengths: list[float], *, budget_gib: float | None,
           max_n: int = SWEEP_MAX_N, stop: threading.Event | None = None,
-          log_fn: Callable[[str], None] = log.info) -> tuple[list[Point], list[dict[str, Any]], str]:
+          log_fn: Callable[[str], None] = log.info,
+          relift: Callable[[], None] | None = None) -> tuple[list[Point], list[dict[str, Any]], str]:
     """Batches of 1, 2, 4, ... at each length until the first out of memory point, a slow batch, the budget or
-    max_n. Returns (points, where each length stopped, how memory was read)."""
+    max_n. Returns (points, where each length stopped, how memory was read). `relift` runs before each length
+    after the first: a split at one length lowers the server's limit until it is lifted again."""
     points: list[Point] = []
     stops: list[dict[str, Any]] = []
     how = ""
-    for length in lengths:
+    for i, length in enumerate(lengths):
+        if i and relift is not None:
+            relift()
         n, why = 1, "max batch"
         here: list[Point] = []
         while n <= max_n:
@@ -673,11 +677,16 @@ class BatchProfiler:
         threading.Thread(target=keep_alive, daemon=True).start()
         with httpx.Client(timeout=SLOW_S * 5) as http:
             lifted = http.post(f"{url}/platform/batch-limits", json=LIFT).status_code == 200
+
+            def relift() -> None:  # an out of memory split keeps the server's limit lowered until this
+                http.post(f"{url}/platform/batch-limits", json=LIFT)
+
             try:
                 memory = Memory(url, http, lambda: self.runtime.gpu_memory(p), baseline)
                 points, stops, how = sweep(sender(meta, url, http), memory, lengths, budget_gib=given_gib,
                                            max_n=(s.batch.max_n if s.batch and s.batch.max_n else SWEEP_MAX_N),
-                                           stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m))
+                                           stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m),
+                                           relift=relift if lifted else None)
             finally:
                 beat.set()
                 if lifted:
