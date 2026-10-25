@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import traceback
 from collections import deque
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from tools import render
 
 from ..db import DB, dumps, now_iso
+from ..hosted import redact, redact_all
 from ..scheduler import Scheduler, SchedulerError
 from . import probes
 
@@ -207,10 +209,17 @@ class Verifier:
         meta = {"name": h.model, "contract": h.contract, "api": h.api, "signature": _with_examples(h.signature), "hosted": True,
                 # a hosted chat model is probed with audio, and verified as a text model if it takes none
                 "tasks": ["audio"] if h.api == "chat.completions" else [], "audio_optional": True}
-        rep = probes.verify(meta, "http://hosted", self.hosted.client(h, key))  # verify() closes the client
+        try:
+            rep = probes.verify(meta, "http://hosted", self.hosted.client(h, key))  # verify() closes the client
+        except Exception as exc:  # noqa: BLE001 - logged and stored here, so the key can be redacted first
+            log.error("verification of %s failed\n%s", h.id, redact(traceback.format_exc(), key).rstrip())
+            self._store_failure(h.id, redact(f"verification crashed: {exc}", key))
+            return
         audio, _, _ = probes.clip()
-        record = rep.record(len(audio) / 16000)
-        self._store(h.id, h.build_key, "verified" if rep.ok else "failed", record, rep.report(), record["rtf"])
+        # a provider may quote the key back in an error or an output: none of it is stored
+        record = redact_all(rep.record(len(audio) / 16000), key)
+        self._store(h.id, h.build_key, "verified" if rep.ok else "failed", record, redact_all(rep.report(), key),
+                    record["rtf"])
         log.info("%s %s (%s)", h.id, "verified" if rep.ok else "failed verification", h.build_key)
 
 

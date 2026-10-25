@@ -235,7 +235,10 @@ and API key. Apps call it through the gateway like any platform model, and never
 - Record: `state: "hosted"`, `gpu: null`, `image: null`, `cold_start_s: 0`, `served_name` = the provider
   model name, and `hosted: {base_url, model, host, auth_type, header_name, key_hint, timeout_s,
   max_concurrency, max_upload_mb, resolved_url, data_ack_at, next_check_at, last_test}`. The key is
-  never returned, logged or exported; `key_hint` is its last four characters.
+  never returned, logged or exported; `key_hint` is its last four characters. When a provider quotes
+  the key back, connection tests, verification reports and the verifier's log show `••••` in its
+  place. The gateway streams provider replies as they are, so a provider that echoes the key shows it
+  to the calling app (a stream is not redacted).
 - Build key: sha256 of contract, api, base URL and model name. Changing any of them is a new build
   (verified again); limits and key replacement are not. Hosted models are also re-verified when their
   last verification is over 24 hours old. Verification takes no lease.

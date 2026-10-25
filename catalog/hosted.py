@@ -3,7 +3,8 @@
 The gateway and the verifier both call a provider through this module, so URL building and auth live in
 one place. Keys are encrypted with Fernet under a master key kept outside PLATFORM_DIR
 (Settings.master_key_file); only the encrypted bytes and the last four characters are stored. A key is
-never returned by the API and never written to logs, errors, events or export bundles.
+never returned by the API and never written to logs, errors, events or export bundles: provider text that
+quotes it is redacted first. Only the gateway's stream of a provider reply passes through unchanged.
 """
 
 from __future__ import annotations
@@ -132,6 +133,17 @@ def strip_auth(headers: list[tuple[str, str]], h: Hosted) -> list[tuple[str, str
 
 def redact(text: str, key: str | None) -> str:
     return text.replace(key, "••••") if key and len(key) >= 4 else text
+
+
+def redact_all(value: Any, key: str | None) -> Any:
+    """value with the key redacted from every string in it: a verification report or record before it is stored."""
+    if isinstance(value, str):
+        return redact(value, key)
+    if isinstance(value, dict):
+        return {redact_all(k, key): redact_all(v, key) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [redact_all(v, key) for v in value]
+    return value
 
 
 class Keys:
