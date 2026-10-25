@@ -111,6 +111,7 @@ class Run:
     given: float | None = None  # fraction of the device its start was given (None: CPU, or started elsewhere)
     gpu_used_before: float | None = None  # GiB the device had in use just before its start (batch measurement)
     batch: dict[str, str] | None = None  # AISVC_MAX_BATCH / _LEN its start was given ({}: the image's defaults)
+    gen: int = 0  # Scheduler._gen at the starter's last change to running, starting or stopping
 
 
 @dataclass
@@ -133,6 +134,7 @@ class Scheduler:
         self.requests: dict[str, Request] = {}
         self.runs: dict[str, Run] = {}
         self._seq = 0
+        self._gen = 0  # counts the starter's changes to runs; a tick ignores a listing older than a run's change
         self._jobs: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -238,6 +240,8 @@ class Scheduler:
 
     def tick(self) -> None:
         p = self.platform()
+        with self.lock:
+            gen = self._gen  # the starter's changes after this may be newer than the listing
         try:
             containers = self.runtime.containers(p)
         except Exception as exc:  # noqa: BLE001 - docker hiccup: keep the last view
@@ -259,9 +263,10 @@ class Scheduler:
         with self.lock:
             self.gpu = gpu
             if containers is not None:
-                self._reconcile(p, containers, now)
+                self._reconcile(p, containers, now, gen)
             for name, b in builds.items():
-                self.runs[name].build = b
+                if self.runs[name].gen <= gen:
+                    self.runs[name].build = b
             self._expire(now)
             self._drop_unknown(p, now)
             self._drop_stale_pins()
@@ -274,13 +279,13 @@ class Scheduler:
             self._flush_usage()
             self._publish(p)
 
-    def _reconcile(self, p: Platform, containers: dict[str, ContainerInfo], now: float) -> None:
+    def _reconcile(self, p: Platform, containers: dict[str, ContainerInfo], now: float, gen: int) -> None:
         for name in set(self.runs) | set(containers):
             run = self.runs.setdefault(name, Run())
             c = containers.get(name)
             run.container = c
-            if run.starting or run.stopping:
-                continue  # the starter thread owns these until it finishes
+            if run.starting or run.stopping or run.gen > gen:
+                continue  # the starter thread owns these until it finishes; the next tick sees what it did
             up = c is not None and c.state == "running" and c.health in ("healthy", "-")
             # Docker's health check lags the HTTP one the starter waits on: "starting" is not "down".
             alive = c is not None and c.state == "running" and c.health != "unhealthy"
@@ -587,6 +592,11 @@ class Scheduler:
                 log.exception("%s %s failed", kind, name)
             self.wake()
 
+    def _stamp(self, run: Run) -> None:
+        """The starter changed the run (under the lock): a container listing taken before now is stale for it."""
+        self._gen += 1
+        run.gen = self._gen
+
     def _do_stop(self, name: str) -> None:
         try:
             self.runtime.stop(self.platform(), [name])
@@ -594,9 +604,11 @@ class Scheduler:
             log.warning("stop of %s failed: %s", name, exc)
             with self.lock:
                 self.runs[name].stopping = False
+                self._stamp(self.runs[name])
             return
         with self.lock:
             run = self.runs[name]
+            self._stamp(run)
             run.stopping, run.running, run.ready_at = False, False, None
             run.pinned, run.released_at, run.given, run.batch = False, None, None, None
 
@@ -607,6 +619,7 @@ class Scheduler:
                 run = self.runs[name]
                 if run.running:
                     run.starting = False
+                    self._stamp(run)
                     return
                 run.start_began = time.time()
             s = p.get(name)
@@ -615,6 +628,7 @@ class Scheduler:
                 log.warning("not starting %s: %s", name, short)
                 with self.lock:
                     run.starting, run.short = False, short
+                    self._stamp(run)
                 return
             if VRAM_VAR in env:
                 env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
@@ -656,6 +670,7 @@ class Scheduler:
                 log.warning("start of %s failed: %s", name, error)
                 with self.lock:
                     run.starting, run.running, run.failed = False, False, error + (f"\n{detail}" if detail else "")
+                    self._stamp(run)
                 if self.settings.docker:
                     self.runtime.stop(p, [name])
                 return
@@ -670,6 +685,7 @@ class Scheduler:
             with self.lock:
                 self._cold_cache.clear()
                 run.starting, run.running, run.ready_at, run.failed = False, True, time.time(), None
+                self._stamp(run)
                 if build:
                     run.build = build
             log.info("%s healthy after %.1fs", name, seconds)
@@ -679,6 +695,7 @@ class Scheduler:
                 run = self.runs[name]
                 if run.starting:  # a failed start whose clean-up stop crashed keeps the start's own error
                     run.starting, run.failed = False, f"start crashed: {exc}"
+                    self._stamp(run)
 
     def _batch_env(self, p: Platform, s: Manifest, gib: float) -> dict[str, str]:
         """Compose variables for the batch limits of this build's profile at `gib` (none without a profile)."""

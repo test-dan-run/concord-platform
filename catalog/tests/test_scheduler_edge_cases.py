@@ -166,3 +166,56 @@ def test_a_pin_from_a_start_that_never_ran_is_dropped(cat, runtime):
     s.release(r.id)
     step(cat)
     assert "whisper-large-v3" in runtime.stopped and "whisper-large-v3" not in runtime.running
+
+
+# The tick lists containers before it takes the lock: the starter can finish a start or stop in between.
+
+def tick_with_stale_listing(cat, runtime, meanwhile=None) -> None:
+    """One tick whose container listing is taken just before the starter runs its queued jobs."""
+    real = runtime.containers
+
+    def containers(p):
+        listing = real(p)
+        runtime.containers = real
+        drain(cat)  # the starter finishes while the tick is outside the lock
+        if meanwhile:
+            meanwhile()
+        return listing
+
+    runtime.containers = containers
+    cat.scheduler.tick()
+    assert runtime.containers is real
+
+
+def test_a_stale_listing_keeps_what_a_start_was_given(cat, runtime):
+    s = cat.scheduler
+    r = s.request("bench:job-1", ["whisper-large-v3"])
+    tick_with_stale_listing(cat, runtime)  # listed before the start finished: no container yet
+    run = s.runs["whisper-large-v3"]
+    assert run.running and run.given is not None and run.batch is not None
+    step(cat)
+    assert run.given is not None and run.batch is not None and not run.pinned
+    assert s.get(r.id).state == "active" and runtime.started == ["whisper-large-v3"]
+
+
+def test_a_stale_listing_does_not_start_a_restarted_model_twice(cat, runtime):
+    s = cat.scheduler
+    r = s.request("bench:job-1", ["whisper-large-v3"])
+    step(cat)
+    runtime.running.pop("whisper-large-v3")  # crashed
+    s.tick()  # the lease queues a restart
+    # Listed before the restart finished; then another request makes the lease active again.
+    tick_with_stale_listing(cat, runtime, lambda: s.request("bench:job-2", ["silero-vad"]))
+    assert ("start", "whisper-large-v3") not in list(s._jobs.queue) and s.runs["whisper-large-v3"].running
+    step(cat)
+    assert s.get(r.id).state == "active" and runtime.started.count("whisper-large-v3") == 2
+
+
+def test_a_stale_listing_does_not_bring_back_a_stopped_model(cat, runtime):
+    s = cat.scheduler
+    run = spun_down(cat, "whisper-large-v3")
+    tick_with_stale_listing(cat, runtime)  # listed before the stop finished: still running
+    assert not s.is_up("whisper-large-v3") and not run.running and not run.pinned
+    runtime.running["whisper-large-v3"] = 0.0  # then started outside the catalog: still picked up
+    s.tick()
+    assert s.is_up("whisper-large-v3") and run.pinned
