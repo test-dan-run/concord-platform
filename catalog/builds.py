@@ -85,6 +85,8 @@ class WeightsHasher:
                     log.info("hashed weights %s in %.1fs", path, time.monotonic() - t0)
             except OSError as exc:
                 log.warning("cannot hash weights %s: %s", path, exc)
+            except Exception:  # noqa: BLE001 - e.g. a locked database: keep hashing the other folders
+                log.exception("cannot hash weights %s", path)
             finally:
                 with self._lock:
                     self._queued.discard(str(path))
