@@ -4,10 +4,10 @@
     python tools/vram_check.py qwen3-8b silero-vad     # one set (names or aliases); exit 1 if it cannot run
 
 gpu.util (engines) and gpu.vram_gb / gpu_total_gb (custom) are the least memory a service needs to load.
-A set can run when it has at most one GPU service and that minimum is within util_limit; CPU services
-run next to it. At start the GPU service gets min(util_limit, (free - 1 GiB) / total) of the device,
-measured with nvidia-smi right before the start (start_memory), so memory Windows keeps for the display
-under WSL2 is left alone.
+A set can run when it has at most one GPU service; CPU services run next to it (load_platform already
+refuses a service whose minimum is over util_limit). At start the GPU service gets
+min(util_limit, (free - 1 GiB) / total) of the device, measured with nvidia-smi right before the start
+(start_memory), so memory Windows keeps for the display under WSL2 is left alone.
 """
 
 from __future__ import annotations
@@ -55,19 +55,13 @@ class Budget:
         return [r.name for r in self.rows if r.source != "cpu"]
 
     @property
-    def too_big(self) -> list[str]:
-        return [r.name for r in self.rows if r.fraction > self.limit + 1e-9]
-
-    @property
     def ok(self) -> bool:
-        return len(self.gpu) <= 1 and not self.too_big
+        return len(self.gpu) <= 1
 
     def problem(self) -> str | None:
         if len(self.gpu) > 1:
             return (f"{', '.join(sorted(self.gpu))} are {len(self.gpu)} GPU services; only one GPU service runs at a "
                     "time and it gets the whole GPU, so start one GPU service per stage (CPU services may join it)")
-        if self.too_big:
-            return f"{', '.join(self.too_big)} needs more than util_limit {self.limit} of the GPU"
         return None
 
 

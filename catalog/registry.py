@@ -50,9 +50,7 @@ class Registry:
                  parent_id: str | None = None) -> dict[str, Any]:
         if model_id in self.hosted:  # always registered: only the fields change
             return self.update(model_id, _given(display_name=display_name, tags=tags, parent_id=parent_id))
-        p, s = self._manifest(model_id)
-        if s.vram_fraction(p.config.gpu_total_gb) > p.config.util_limit + 1e-9:
-            raise SchedulerError(422, f"{s.name} needs more GPU memory than this host has (util_limit {p.config.util_limit})")
+        _, s = self._manifest(model_id)  # the schema already refused a model over util_limit
         if parent_id:
             parent_id = self._parent(parent_id)
         row = self.db.one("SELECT * FROM registration WHERE model_id = ?", (s.name,))

@@ -47,7 +47,6 @@ from .settings import Settings
 
 log = logging.getLogger("catalog.scheduler")
 LIVE = ("queued", "starting", "active")
-EPS = 1e-9
 STOP_RETRY_S = 5.0  # a spin-down stop that failed twice waits this long before the next try, doubling each time
 STOP_RETRY_MAX_S = 300.0
 
@@ -464,17 +463,14 @@ class Scheduler:
                                  "free" + (f" (about {other:.1f} GiB is used outside the platform's models)" if other > 0.5 else ""))
 
     def _fit_declared(self, p: Platform, r: Request, protected: dict[str, list[str]], now: float) -> Fit:
-        """One GPU model at a time: the request's GPU model is granted once every other GPU model can be stopped."""
-        limit = p.config.util_limit
+        """One GPU model at a time: the request's GPU model is granted once every other GPU model can be stopped.
+        No model needs more than util_limit: the schema refuses one at load."""
         need = sorted(m for m in r.models if self.frac(p, m) > 0)
         if len(need) > 1:
             return Fit(False, reason=one_gpu_model(need), fatal=True)
         if not need:
             return Fit(True)
         [m] = need
-        if self.frac(p, m) > limit + EPS:
-            return Fit(False, fatal=True, reason=f"{m} needs {self.frac(p, m):.2f} of the GPU, over util_limit {limit}; "
-                                                 "it can never run")
         others = (self._occupying(p) | {x for x in protected if self.frac(p, x) > 0}) - {m}
         if not others:
             return Fit(True)
