@@ -25,11 +25,13 @@ def plan(scheduler: Scheduler, index: OutputIndex, body: dict[str, Any]) -> dict
     stages = body.get("stages") or []
     if not stages:
         raise PlanError("stages must not be empty")
-    p = scheduler.platform()
-    names = {st.get("name") for st in stages}
+    if not isinstance(stages, list) or not all(isinstance(st, dict) for st in stages):
+        raise PlanError("stages must be a list of objects")
     for st in stages:
-        if not st.get("name") or not st.get("models"):
-            raise PlanError("every stage needs a name and models")
+        _check_stage(st)
+    p = scheduler.platform()
+    names = {st["name"] for st in stages}
+    for st in stages:
         if st.get("after") and st["after"] not in names:
             raise PlanError(f"stage {st['name']!r} runs after unknown stage {st['after']!r}")
     stages = _order(stages)
@@ -79,15 +81,29 @@ def plan(scheduler: Scheduler, index: OutputIndex, body: dict[str, Any]) -> dict
                 stays = all_fit and i in loaded_inner
                 load = missing != 0 and not info[i]["running"] and not stays
                 steps.append(_step(inner["name"], i, info[i], items, hits, missing, missing == 0, load=load,
-                                   alongside=o))
+                                   alongside=info[o]["name"]))
                 if load or info[i]["running"]:
                     loaded_inner.add(i)
 
     loads = sum(1 for s in steps if s["load"])
-    fits = sum(info[m]["frac"] > 0 for m in {s["model"] for s in steps}) <= 1
+    frac = {i["name"]: i["frac"] for i in info.values()}  # info is keyed by the ids asked for, steps by name
+    fits = sum(frac[m] > 0 for m in {s["model"] for s in steps}) <= 1
     return {"pipeline": pipeline, "steps": steps, "loads": loads,
             "est_load_s": round(sum(s["cold_start_s"] for s in steps if s["load"]), 1),
             "hits": sum(s["hits"] or 0 for s in steps), "fits_together": fits}
+
+
+def _check_stage(st: dict[str, Any]) -> None:
+    if not st.get("name") or not st.get("models"):
+        raise PlanError("every stage needs a name and models")
+    if not isinstance(st["name"], str) or not isinstance(st.get("after") or "", str):
+        raise PlanError("a stage's name and after must be strings")
+    if not isinstance(st["models"], list) or not all(isinstance(m, str) for m in st["models"]):
+        raise PlanError(f"stage {st['name']!r}: models must be a list of model ids")
+    keys = st.get("keys") or {}
+    if not isinstance(keys, dict) or not all(v is None or (isinstance(v, list) and all(isinstance(k, dict) for k in v))
+                                             for v in keys.values()):
+        raise PlanError(f"stage {st['name']!r}: keys must map a model to a list of index keys")
 
 
 def _step(stage: str, model: str, i: dict[str, Any], items, hits, missing, skip: bool, load: bool,
