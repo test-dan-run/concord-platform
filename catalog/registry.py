@@ -167,7 +167,9 @@ class Registry:
         if model_id not in self.hosted:
             raise SchedulerError(409, f"{model_id} is not a hosted endpoint; platform services are tested by verification")
         h = self._hosted(model_id)
-        result = hosted_mod.connection_test(self.hosted, h, self.hosted.key(h))
+        key = self.hosted.key(h)
+        self._check_hosted(h, key)  # a row saved before base_url was checked must not reach the test as a 500
+        result = hosted_mod.connection_test(self.hosted, h, key)
         self.db.execute("UPDATE hosted SET signature = COALESCE(?, signature) WHERE id = ?",
                         (json.dumps(result["signature"]) if result.get("signature") else None, h.id))
         self._last_test[h.id] = result
