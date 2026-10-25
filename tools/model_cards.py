@@ -36,7 +36,6 @@ LICENSE_RE = re.compile(r"^(LICEN[CS]E|COPYING)(\.(md|txt))?$", re.IGNORECASE)
 _HF_TREE = re.compile(r"^https://huggingface\.co/([^/]+/[^/]+?)(?:/(?:tree|resolve|blob)/([^/]+)(?:/(.*))?)?/?$")
 _GH_TREE = re.compile(r"^https://github\.com/([^/]+/[^/]+?)(?:/(?:tree|blob)/([^/]+)(?:/(.*))?)?/?$")
 _COMMENT = re.compile(r"#\s*Local copy of (\S+) @(\w+)")
-_FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 TIMEOUT_S = 30.0
 
 
