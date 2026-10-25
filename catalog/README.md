@@ -397,6 +397,7 @@ gave always finds the entry.
 | `POST /api/index/lookup` | `{"app": "label", "keys": [{"build_key", "audio_sha256", "span_start", "span_end", "params_hash"}]}` | `{"hits": [null \| {"owner": "bench", "output_id": 812, "owner_url": "http://…"}]}`, one per key, in order; the asking app's own entries are preferred |
 | `POST /api/index/record` | `{"app": "bench", "entries": [{…key, "output_id": 812}]}` | `{"recorded": n}` |
 | `POST /api/index/forget` | `{"app": "bench", "output_ids": [812]}` | `{"forgotten": n}` |
+| `GET /api/index/stats` | | `[{"owner": "bench", "outputs": n}]`, indexed outputs per app (the Output index page) |
 | `POST /api/apps` | `{"name": "bench", "base_url": "http://concord-bench:8000"}` | registers where other apps read this app's outputs |
 | `GET /api/apps` | | registered apps |
 
@@ -468,9 +469,14 @@ Model Catalog and the Dataset Catalog, whose pages are under `/datasets` (see [P
 
 - `POST /api/models/{id}/start`, `POST /api/models/{id}/stop` (`?force=1` stops a leased model, the
   owner's override). `tools/stack.py up/down` use these when the catalog is running, so `just up`,
-  `just down` and Synthetics' `stack.py` calls keep working.
+  `just down` and Synthetics' `stack.py` calls keep working. Start answers 202 with `model` (the
+  record) and `request` (the request that brings it up, or `null` when it is already up). Its `?holder=`
+  (default `manual`) names who asked in the queue; any holder but `gateway` pins the model so it
+  stays up after leases end, while `holder=gateway` starts it like a gateway call, stopped after
+  `CATALOG_GATEWAY_IDLE_S` without a call.
 - `GET /api/usage`: calls, errors and last use per model.
 - `GET /api/health`.
+- `GET /api/docs`: the API docs, from `GET /api/openapi.json`.
 
 ## Python client (aicore)
 
