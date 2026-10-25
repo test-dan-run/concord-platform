@@ -86,8 +86,9 @@ def _binds(flag: str) -> bool:
 
 
 def _plain(src: str) -> bool:
-    """A COPY/ADD source that names files in the context the way it reads: no wildcards, not absolute, no .."""
-    return not (any(c in src for c in "*?[") or src.startswith("/") or ".." in src.split("/"))
+    """A COPY/ADD source that names files in the context the way it reads: no wildcards, no build variables, no
+    heredoc, not absolute, no .."""
+    return not (any(c in src for c in "*?[$") or src.startswith(("/", "<<")) or ".." in src.split("/"))
 
 
 def base_digest(bases_dir: Path, spec: dict) -> str:
@@ -96,6 +97,12 @@ def base_digest(bases_dir: Path, spec: dict) -> str:
     A COPY/ADD, RUN --mount or .dockerignore pattern it cannot read exactly is a ValueError: never guess."""
     h = hashlib.sha256(json.dumps({"dockerfile": spec["dockerfile"], "args": spec.get("args") or {}}, sort_keys=True).encode())
     dockerfile = bases_dir / spec["dockerfile"]
+    for line in dockerfile.read_text().splitlines():  # parser directives come first, as comment lines
+        if not line.strip().startswith("#"):
+            break
+        if re.match(r"#\s*escape\s*=", line.strip(), re.IGNORECASE):  # a backslash would no longer continue a line
+            raise ValueError(f"{dockerfile.name}: base_digest reads Dockerfiles with the default escape character; "
+                             f"remove this directive or extend base_digest: {line.strip()}")
     rules = _ignore_rules(bases_dir)
     files = {dockerfile, bases_dir / ".dockerignore"}
     for lines in _instructions(dockerfile.read_text()):
@@ -110,7 +117,8 @@ def base_digest(bases_dir: Path, spec: dict) -> str:
             if (lines[0].endswith("\\") or any(f.startswith("--from=") for f in flags)
                     or any(w.startswith("[") for w in words[1:]) or not all(map(_plain, srcs))):
                 raise ValueError(f"{dockerfile.name}: base_digest reads one-line COPY/ADD of plain paths in the "
-                                 f"context (no wildcards, absolute paths, .., --from or JSON form); write this one "
+                                 f"context (no wildcards, build variables, heredocs, absolute paths, .., --from or "
+                                 f"JSON form); write this one "
                                  f"that way or extend base_digest: {text}")  # it would miss files: never guess
             for src in (bases_dir / w for w in srcs):
                 files |= {f for f in [src, *src.rglob("*")]
