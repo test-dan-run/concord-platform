@@ -82,6 +82,12 @@ CREATE TABLE IF NOT EXISTS batch_profile (
     error TEXT,
     measured_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS batch_override (
+    model_id TEXT PRIMARY KEY,
+    max_batch INTEGER,
+    max_len_s REAL,
+    set_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS counter (
     name TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0

@@ -110,6 +110,7 @@ class Run:
     short: str | None = None  # the start found too little free GPU memory: its request queues again
     given: float | None = None  # fraction of the device its start was given (None: CPU, or started elsewhere)
     gpu_used_before: float | None = None  # GiB the device had in use just before its start (batch measurement)
+    batch: dict[str, str] | None = None  # AISVC_MAX_BATCH / _LEN its start was given ({}: the image's defaults)
 
 
 @dataclass
@@ -289,7 +290,7 @@ class Scheduler:
                 run.pinned = not any(name in r.models for r in self._live() if r.kind == "lease")
             elif not alive and run.running:
                 run.running, run.ready_at = False, None
-                run.pinned, run.released_at, run.given = False, None, None
+                run.pinned, run.released_at, run.given, run.batch = False, None, None, None
 
     def _expire(self, now: float) -> None:
         for r in self.requests.values():
@@ -580,7 +581,7 @@ class Scheduler:
             with self.lock:
                 run = self.runs[name]
                 run.stopping, run.running, run.ready_at = False, False, None
-                run.pinned, run.released_at, run.given = False, None, None
+                run.pinned, run.released_at, run.given, run.batch = False, None, None, None
 
     def _do_start(self, name: str) -> None:
         p = self.platform()
@@ -601,6 +602,7 @@ class Scheduler:
             env.update(self._batch_env(p, s, float(env[VRAM_VAR])))
         with self.lock:
             run.given = float(env[UTIL_VAR]) if UTIL_VAR in env else None
+            run.batch = {k: env[v] for k, v in BATCH_VARS.items() if v in env} if VRAM_VAR in env else None
             run.gpu_used_before = round(gpu[0] - gpu[1], 3) if gpu and s.gpu else None
         url = self.upstream_url(name)
         t0 = time.monotonic()

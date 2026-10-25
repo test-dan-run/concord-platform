@@ -44,6 +44,7 @@ export const api = {
   get: <T>(p: string) => request<T>("GET", p),
   post: <T>(p: string, b?: unknown) => request<T>("POST", p, b),
   patch: <T>(p: string, b?: unknown) => request<T>("PATCH", p, b),
+  put: <T>(p: string, b?: unknown) => request<T>("PUT", p, b),
   del: <T>(p: string) => request<T>("DELETE", p),
 };
 
@@ -279,4 +280,16 @@ export type BatchView = {
   measured_at: string | null;
   profile?: BatchProfile;
   table?: { unit: "s" | "tokens"; budgets_gb: number[]; full_gb: number | null; rows: { length: number; batch: number[] }[] };
+  // custom GPU images only: the limits the next start gets at the full budget, and the ones set by hand
+  limits?: BatchLimits & { vram_gb: number; measured: BatchLimits; source: Record<keyof BatchLimits, "override" | "measured" | "default"> };
+  override?: (BatchLimits & { set_at: string }) | null;
+  // null when the service is not running; started_with is null when it was started outside the catalog
+  running: {
+    vram_gb: number | null;
+    started_with: BatchLimits | null;
+    batchers: (BatchLimits & { name: string; backoffs: number; lowered_len_s: number | null })[];
+  } | null;
 };
+
+// null = not set: the image's own default
+export type BatchLimits = { max_batch: number | null; max_len_s: number | null };
