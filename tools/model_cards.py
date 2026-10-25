@@ -176,7 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     except PlatformError as exc:
         print("\n".join(exc.errors), file=sys.stderr)
         return 1
-    services = [p.get(n) for n in args.names] if args.names else p.services
+    try:
+        services = [p.get(n) for n in args.names] if args.names else p.services
+    except KeyError as exc:
+        print(exc.args[0], file=sys.stderr)
+        return 2
     failed = 0
     with httpx.Client(headers={"User-Agent": "aiplatform-fetch-cards"}) as http:
         for s in services:
