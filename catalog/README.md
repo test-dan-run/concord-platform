@@ -286,7 +286,8 @@ pulls the pushed refs), writes each `service.yaml` into `services/` (a differing
 unless `--force`; nothing is kept if the platform no longer loads), copies weights to where the
 manifest mounts them (which must be under `AI_ASSETS`; model ids must be kebab case), and registers each model with the running catalog, which verifies every build.
 A model the catalog refuses (too big for this GPU, say) is named with the catalog's reason and left
-unregistered. Only when no catalog answers are the registrations written to its database.
+unregistered. Only when no catalog answers are the registrations written to its database. A catalog
+that stops answering partway stops the import; run it again once the catalog answers.
 A build key that matches keeps its indexed outputs.
 
 ## Leases and the queue

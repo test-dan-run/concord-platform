@@ -9,7 +9,8 @@
 4. Registration: display name, tags and "derived from" are registered through the running catalog
    (AICORE_CATALOG, else http://127.0.0.1:8700), which queues verification; a model it refuses is
    reported with its reason and left unregistered. Only when no catalog answers at all are they written
-   to its database, and verified on its next start.
+   to its database, and verified on its next start. A catalog that stops answering partway stops the
+   import: run it again.
 
 A bundle's model ids must be kebab case, as in a manifest, because they name files here. The target
 re-verifies every build. A build key that matches one the target already knows (same image id, config
@@ -188,19 +189,26 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
                                       f"{_refusal(health)}; the models were imported but not registered, so import "
                                       "again once it answers")
                 done = []
-                for r in regs:  # parents first are not guaranteed: register, then set parents that exist
-                    resp = c.post(f"/api/models/{r['id']}/register", json={"display_name": r["display_name"],
-                                                                           "tags": r["tags"]})
-                    if resp.is_success:
-                        done.append(r)
-                    else:  # the catalog's rules (e.g. too big for this GPU) apply to an import too
-                        _say(f"{r['id']}: the catalog refused to register it ({resp.status_code}): {_refusal(resp)}")
-                for r in done:
-                    if r["parent_id"]:
-                        resp = c.patch(f"/api/models/{r['id']}", json={"parent_id": r["parent_id"]})
-                        if not resp.is_success:
-                            _say(f"{r['id']}: the catalog did not set derived from {r['parent_id']} "
-                                 f"({resp.status_code}): {_refusal(resp)}")
+                try:
+                    for r in regs:  # parents first are not guaranteed: register, then set parents that exist
+                        resp = c.post(f"/api/models/{r['id']}/register", json={"display_name": r["display_name"],
+                                                                               "tags": r["tags"]})
+                        if resp.is_success:
+                            done.append(r)
+                        else:  # the catalog's rules (e.g. too big for this GPU) apply to an import too
+                            _say(f"{r['id']}: the catalog refused to register it ({resp.status_code}): "
+                                 f"{_refusal(resp)}")
+                    for r in done:
+                        if r["parent_id"]:
+                            resp = c.patch(f"/api/models/{r['id']}", json={"parent_id": r["parent_id"]})
+                            if not resp.is_success:
+                                _say(f"{r['id']}: the catalog did not set derived from {r['parent_id']} "
+                                     f"({resp.status_code}): {_refusal(resp)}")
+                except httpx.TransportError as exc:  # it answered /api/health: never write its database behind its back
+                    _say(f"registered {len(done)} of {len(regs)} model(s) with the catalog at {catalog} before it "
+                         "stopped answering")
+                    raise BundleError(f"the catalog at {catalog} stopped answering ({exc}); the models were imported "
+                                      "but not all registered, so import again once it answers") from None
             _say(f"registered {len(done)} of {len(regs)} model(s) with the catalog at {catalog}; it verifies each "
                  "build now")
             return
