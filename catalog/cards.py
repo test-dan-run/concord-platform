@@ -20,6 +20,7 @@ and images are rewritten to the upstream repo at the same revision.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import struct
 from html.parser import HTMLParser
@@ -85,12 +86,16 @@ def split_front_matter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def rewrite_links(markdown: str, src: Source, revision: str, folder: str = "") -> str:
-    """Point relative links and images at the upstream repo, at the same revision."""
+    """Point relative links and images at the upstream repo, at the same revision. A link that climbs out of
+    the repo is left as it is."""
     def absolute(m: re.Match) -> str:
         bang, label, target, rest = m.groups()
         if re.match(r"^([a-z][a-z0-9+.-]*:|#|/)", target, re.I):
             return m.group(0)
-        path = "/".join(x for x in (folder, target.lstrip("./")) if x)
+        path = posixpath.normpath(posixpath.join(folder, target))  # as a browser resolves it: ".github" stays
+        if path == ".." or path.startswith("../"):
+            return m.group(0)
+        path = "" if path == "." else path
         if src.host == "huggingface":
             url = f"https://huggingface.co/{src.repo}/{'resolve' if bang else 'blob'}/{revision}/{path}"
         elif bang:
