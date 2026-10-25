@@ -198,6 +198,9 @@ class Registry:
 
     def update_hosted(self, model_id: str, body: dict[str, Any]) -> dict[str, Any]:
         old = self._hosted(model_id)
+        fields = {k: body[k] for k in ("display_name", "tags", "parent_id") if k in body}
+        if fields.get("parent_id"):  # an unknown parent is a 404 before anything is saved
+            fields["parent_id"] = self._parent(fields["parent_id"])
         h = self._spec(model_id, body, old)
         key = body.get("key")
         self._check_hosted(h, key)
@@ -218,7 +221,7 @@ class Registry:
         self.hosted.update(h, key)
         if h.build_key != old.build_key:  # a new build: verify it; limits and keys keep the build
             self.verifier.enqueue(model_id)
-        return self.record(model_id)
+        return self.update(model_id, fields)  # the registration fields given, as PATCH /api/models/{id} writes them
 
     def delete_hosted(self, model_id: str) -> None:
         self._hosted(model_id)
