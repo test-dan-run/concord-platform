@@ -40,6 +40,11 @@ def error(status: int, message: str, type_: str, headers: dict[str, str] | None 
                         headers=headers)
 
 
+def _raw(headers: list[tuple[str, str]]) -> list[tuple[bytes, bytes]]:
+    """Headers for a response's raw_headers: a header sent twice (two Set-Cookie) stays two, not one joined by ", "."""
+    return [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers]
+
+
 class TooLarge(Exception):
     pass
 
@@ -170,12 +175,12 @@ class Gateway:
                                            "it is not forwarded", "upstream_error")
         body = hosted_mod.redact(data.decode("utf-8", "surrogateescape"), key).encode("utf-8", "surrogateescape")
         drop = HOP_BY_HOP | {"content-length", "content-encoding"}  # the body changed: Response sets its length
-        headers = {k: v for k, v in resp.headers.items() if k.lower() not in drop and hosted_mod.redact(v, key) == v}
-        return Response(body, status_code=resp.status_code, headers=headers)
+        out = Response(body, status_code=resp.status_code)
+        out.raw_headers += _raw([(k, v) for k, v in resp.headers.multi_items()
+                                 if k.lower() not in drop and hosted_mod.redact(v, key) == v])
+        return out
 
     def _stream(self, resp: httpx.Response, end) -> StreamingResponse:
-        out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in HOP_BY_HOP}
-
         async def close() -> None:
             await resp.aclose()
             end(resp.status_code >= 500)
@@ -190,8 +195,9 @@ class Gateway:
             finally:  # also runs when the client disconnects mid-stream, so in-flight counts never leak
                 await close()
 
-        return StreamingResponse(body(), status_code=resp.status_code, headers=out_headers,
-                                 background=BackgroundTask(close))
+        out = StreamingResponse(body(), status_code=resp.status_code, background=BackgroundTask(close))
+        out.raw_headers = _raw([(k, v) for k, v in resp.headers.multi_items() if k.lower() not in HOP_BY_HOP])
+        return out
 
     async def forward(self, request: Request, model: str, path: str) -> Response:
         sched = self.scheduler
