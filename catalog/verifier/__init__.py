@@ -17,12 +17,11 @@ import threading
 import time
 import traceback
 from collections import deque
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from tools import render
 
-from ..db import DB, dumps, now_iso
+from ..db import DB, dumps, from_iso, now_iso
 from ..hosted import redact, redact_all
 from ..scheduler import LeaseLost, Scheduler, SchedulerError
 from . import probes
@@ -114,7 +113,7 @@ class Verifier:
         for h in self.hosted.all() if self.hosted else []:
             row = self.db.one("SELECT verified_at, updated_at FROM capability WHERE build_key = ?", (h.build_key,))
             at = (row or {}).get("verified_at") or (row or {}).get("updated_at")
-            if at is None or time.time() - _ts(at) > self.hosted_reverify_s:
+            if at is None or time.time() - from_iso(at) > self.hosted_reverify_s:
                 self.enqueue(h.id)
         for row in self.db.all("SELECT model_id FROM registration"):
             m = row["model_id"]
@@ -199,7 +198,3 @@ def _with_examples(signature: dict[str, Any] | None) -> dict[str, Any] | None:
     inputs = [dict(t, example=[16000]) if t.get("name") == "SAMPLE_RATE" and "example" not in t else t
               for t in signature.get("inputs", [])]
     return {**signature, "inputs": inputs}
-
-
-def _ts(value: str) -> float:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()

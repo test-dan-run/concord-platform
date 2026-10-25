@@ -8,13 +8,12 @@ search works the same for both kinds.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import Any
 
 from tools.schema import BASE_PATHS, Manifest, Platform
 
 from . import hosted as hosted_mod
-from .db import DB, iso, now_iso
+from .db import DB, from_iso, iso, now_iso
 from .hosted import CONTRACTS, Hosted, HostedStore
 from .scheduler import Scheduler, SchedulerError
 from .settings import Settings
@@ -318,7 +317,7 @@ class Registry:
         caps = self.capabilities(h.id, h.build_key)
         public = h.public()
         verified = (caps or {}).get("verified_at")
-        public["next_check_at"] = iso(_ts(verified) + self.settings.hosted_reverify_s) if verified else None
+        public["next_check_at"] = iso(from_iso(verified) + self.settings.hosted_reverify_s) if verified else None
         public["last_test"] = self._last_test.get(h.id)
         detail = None if self.hosted.keys.available or h.auth_type == "none" else \
             f"key unavailable: master key file {self.hosted.keys.path} is missing"
@@ -380,7 +379,3 @@ def _tags(tags: list[str] | None) -> list[str]:
         if t and t not in seen:
             seen.append(t)
     return seen
-
-
-def _ts(value: str) -> float:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()

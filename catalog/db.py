@@ -153,6 +153,11 @@ def iso(ts: float | None) -> str | None:
     return None if ts is None else datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def from_iso(value: str) -> float:
+    """The epoch seconds of a time that iso() or now_iso() wrote."""
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
+
+
 def dumps(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
