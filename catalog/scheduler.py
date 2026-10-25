@@ -119,7 +119,7 @@ class Run:
     repin: bool = False  # pinned while being stopped: the pin outlives that stop
     pinned_by: str | None = None  # the request that brings up a model pinned while down: the pin goes if it ends first
     stop_failures: int = 0  # stops in a row that failed; the spin-down tries again at stop_retry_at
-    evicting: bool = False  # stopped to make room for another GPU model, until that stop succeeds: one swap
+    evicting: bool = False  # stopped in a counted swap, until that stop succeeds: retrying it counts no new swap
     stop_retry_at: float | None = None
     released_at: float | None = None  # when the last lease holding it ended: spun down once nothing needs it
     short: str | None = None  # the start found too little free GPU memory: its request queues again
@@ -546,12 +546,13 @@ class Scheduler:
 
     def _grant(self, p: Platform, r: Request, evict: list[str], now: float) -> None:
         r.state, r.granted_at, r.waiting_for = "starting", now, None
-        # An eviction tried again after its stop failed is the same swap.
-        if any(self.frac(p, m) > 0 for m in evict) and not any(self.runs[m].evicting for m in evict) and any(
-                self.frac(p, m) > 0 and self._down(m) and not self.runs[m].starting for m in self._local(r)):
+        swap = any(self.frac(p, m) > 0 for m in evict) and any(
+            self.frac(p, m) > 0 and self._down(m) and not self.runs[m].starting for m in self._local(r))
+        if swap and not any(self.runs[m].evicting for m in evict):  # an eviction tried again is the same swap
             self._count_swap()
         for m in evict:
-            self.runs[m].stopping = self.runs[m].evicting = True
+            self.runs[m].stopping = True
+            self.runs[m].evicting = self.runs[m].evicting or swap
             self._jobs.put(("stop", m))
             log.info("stopping %s to make room for %s", m, r.holder)
         for m in self._local(r):
