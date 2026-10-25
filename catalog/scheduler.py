@@ -49,6 +49,13 @@ from .settings import Settings
 log = logging.getLogger("catalog.scheduler")
 LIVE = ("queued", "starting", "active")
 EPS = 1e-9
+STOP_RETRY_S = 5.0  # a spin-down stop that failed twice waits this long before the next try, doubling each time
+STOP_RETRY_MAX_S = 300.0
+
+
+def stop_retry_s(failures: int) -> float:
+    """The wait after `failures` stops in a row failed: none after the first (a Docker hiccup), then doubling."""
+    return 0.0 if failures < 2 else min(STOP_RETRY_MAX_S, STOP_RETRY_S * 2 ** min(failures - 2, 16))
 
 
 def one_gpu_model(names: list[str]) -> str:
@@ -107,6 +114,8 @@ class Run:
     usage_dirty: bool = False
     pinned: bool = False  # started on purpose (manual start, `just up`, outside the catalog): never spun down
     repin: bool = False  # pinned while being stopped: the pin outlives that stop
+    stop_failures: int = 0  # stops in a row that failed; the spin-down tries again at stop_retry_at
+    stop_retry_at: float | None = None
     released_at: float | None = None  # when the last lease holding it ended: spun down once nothing needs it
     short: str | None = None  # the start found too little free GPU memory: its request queues again
     given: float | None = None  # fraction of the device its start was given (None: CPU, or started elsewhere)
@@ -304,6 +313,7 @@ class Scheduler:
             elif not alive and run.running:
                 run.running, run.ready_at = False, None
                 run.pinned, run.released_at, run.given, run.batch = False, None, None, None
+                run.stop_failures, run.stop_retry_at = 0, None
 
     def _expire(self, now: float) -> None:
         for r in self.requests.values():
@@ -344,6 +354,8 @@ class Scheduler:
         for name, run in self.runs.items():
             if run.pinned or name in wanted or not run.running or run.starting or run.stopping or run.in_flight:
                 continue
+            if run.stop_retry_at is not None and now < run.stop_retry_at:
+                continue  # its last stops failed
             if run.released_at is not None:
                 idle, limit, why = now - max(run.released_at, run.last_used or 0), self.settings.release_linger_s, \
                     "its lease ended and no request needs it"
@@ -613,16 +625,21 @@ class Scheduler:
         try:
             self.runtime.stop(self.platform(), [name])
         except Exception as exc:  # noqa: BLE001 - still up as far as we know: a later tick tries again
-            log.warning("stop of %s failed: %s", name, exc)
             with self.lock:
-                self.runs[name].stopping = self.runs[name].repin = False
-                self._stamp(self.runs[name])
+                run = self.runs[name]
+                run.stopping = run.repin = False
+                run.stop_failures += 1
+                wait = stop_retry_s(run.stop_failures)
+                run.stop_retry_at = time.time() + wait
+                self._stamp(run)
+            log.warning("stop of %s failed: %s%s", name, exc, f" (trying again in {wait:.0f}s)" if wait else "")
             return
         with self.lock:
             run = self.runs[name]
             self._stamp(run)
             run.stopping, run.running, run.ready_at = False, False, None
             run.pinned, run.repin, run.released_at, run.given, run.batch = run.repin, False, None, None, None
+            run.stop_failures, run.stop_retry_at = 0, None
 
     def _do_start(self, name: str) -> None:
         try:

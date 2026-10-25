@@ -346,7 +346,9 @@ priority.
 - **Models a lease brought up are spun down when nothing needs them.** Once its last lease ends, a model
   is stopped after `CATALOG_RELEASE_LINGER_S` (default 30 s, so a back-to-back lease on the same model
   keeps it loaded) unless a live or queued request names it or a call is in flight. A request that
-  comes after the stop has begun waits until the model has stopped and started again. Models started on
+  comes after the stop has begun waits until the model has stopped and started again. A stop that
+  fails is tried again on the next tick, then after 5 s, doubling after each failure up to 5 minutes,
+  until one works (`POST /api/models/{id}/stop` still tries at once). Models started on
   purpose (`POST /api/models/{id}/start`, `just up`, or found running outside the catalog) stay up
   until they are evicted or stopped, also when the start was asked for while the model was being
   stopped. A model the gateway started for a call without a lease is stopped
