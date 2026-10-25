@@ -49,7 +49,7 @@ class Registry:
     def register(self, model_id: str, display_name: str | None = None, tags: list[str] | None = None,
                  parent_id: str | None = None) -> dict[str, Any]:
         if model_id in self.hosted:  # always registered: only the fields change
-            return self.update(model_id, {"display_name": display_name, "tags": tags, "parent_id": parent_id})
+            return self.update(model_id, _given(display_name=display_name, tags=tags, parent_id=parent_id))
         p, s = self._manifest(model_id)
         if s.vram_fraction(p.config.gpu_total_gb) > p.config.util_limit + 1e-9:
             raise SchedulerError(422, f"{s.name} needs more GPU memory than this host has (util_limit {p.config.util_limit})")
@@ -60,7 +60,7 @@ class Registry:
             self.db.execute("INSERT INTO registration (model_id, display_name, tags, parent_id, registered_at) "
                             "VALUES (?, ?, ?, ?, ?)", (s.name, display_name, json.dumps(_tags(tags)), parent_id, now_iso()))
         else:
-            self._update(s.name, display_name=display_name, tags=tags, parent_id=parent_id)
+            self._update(s.name, **_given(display_name=display_name, tags=tags, parent_id=parent_id))
         rec = self.record(s.name)
         if rec["capabilities"] is None or rec["capabilities"]["status"] == "stale":
             self.verifier.enqueue(s.name)
@@ -68,10 +68,9 @@ class Registry:
         return rec
 
     def _update(self, model_id: str, **fields: Any) -> None:
+        """Write every field given. None is NULL, and None tags are no tags."""
         sets, args = [], []
         for k, v in fields.items():
-            if v is None:
-                continue
             sets.append(f"{k} = ?")
             args.append(json.dumps(_tags(v)) if k == "tags" else v)
         if sets:
@@ -357,6 +356,11 @@ class Registry:
                 continue
             out.append(rec)
         return out
+
+
+def _given(**fields: Any) -> dict[str, Any]:
+    """The fields that are not None: registering again leaves a field it was not given as it was."""
+    return {k: v for k, v in fields.items() if v is not None}
 
 
 def _tags(tags: list[str] | None) -> list[str]:

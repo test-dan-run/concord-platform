@@ -125,7 +125,7 @@ default only registered models are listed).
 | Call | Body | Does |
 |---|---|---|
 | `POST /api/models/{id}/register` | `{"display_name"?, "tags"?: [], "parent_id"?}` | Registers a platform service (idempotent). Queues verification if the current build has none. 201 with the record. |
-| `PATCH /api/models/{id}` | same fields | Edits registration fields. |
+| `PATCH /api/models/{id}` | same fields | Edits the fields given; `null` clears one (`"parent_id": null` removes "Derived from"). Registering again leaves out a field that is missing or `null`. |
 | `DELETE /api/models/{id}/register` | | Unregisters (records and index entries are kept). |
 | `POST /api/models/{id}/verify` | | Queues verification on demand. 202 with `capabilities` (`pending`). |
 
