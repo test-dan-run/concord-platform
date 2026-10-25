@@ -264,6 +264,7 @@ class Scheduler:
                 self.runs[name].build = b
             self._expire(now)
             self._drop_unknown(p, now)
+            self._drop_stale_pins()
             self._spin_down(now)
             self._schedule(p, now)
             self._promote(p, now)
@@ -315,6 +316,14 @@ class Scheduler:
                 self.runs.setdefault(m, Run()).released_at = now
         self._save(r)
         self.changed.notify_all()
+
+    def _drop_stale_pins(self) -> None:
+        """A start request pins its models when it is made. If it ends before they run (it expired in the queue,
+        or failed), the pin goes with it: a later lease would otherwise bring the model up for good."""
+        wanted = {m for r in self._live() for m in r.models}
+        for name, run in self.runs.items():
+            if run.pinned and not run.running and not run.starting and name not in wanted:
+                run.pinned = False
 
     def _spin_down(self, now: float) -> None:
         """Stop unpinned models no live or queued request needs: after the linger once their lease ended, or after

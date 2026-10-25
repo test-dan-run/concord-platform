@@ -146,3 +146,23 @@ def test_a_model_being_stopped_must_find_its_memory_free_to_start_again(cat, run
     drain(cat)
     step(cat)
     assert s.get(r.id).state == "active"
+
+
+def test_a_pin_from_a_start_that_never_ran_is_dropped(cat, runtime):
+    s = cat.scheduler
+    cat.settings.release_linger_s = 0.0
+    blocker = s.request("label:job-3", ["qwen3-32b-awq"])
+    step(cat)
+    start = s.request("manual", ["whisper-large-v3"], kind="start")  # `just up whisper-large-v3` while blocked
+    step(cat)
+    assert s.get(start.id).state == "queued" and s.runs["whisper-large-v3"].pinned
+    s.requests[start.id].heartbeat_at -= 3600  # `just up` gave up
+    s.tick()
+    assert s.get(start.id).state == "expired" and not s.runs["whisper-large-v3"].pinned
+    s.release(blocker.id)
+    r = s.request("bench:job-1", ["whisper-large-v3"])
+    step(cat)
+    assert s.get(r.id).state == "active"
+    s.release(r.id)
+    step(cat)
+    assert "whisper-large-v3" in runtime.stopped and "whisper-large-v3" not in runtime.running
