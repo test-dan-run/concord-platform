@@ -40,6 +40,8 @@ def build_app(model: ReDimNet2Embedder | None = None):
         sr = int(inputs["SAMPLE_RATE"].reshape(-1)[0])
         if sr < 8000:
             raise ValueError(f"SAMPLE_RATE must be at least 8000, got {sr}")
+        if audio.shape[0] == 0:
+            raise ValueError("AUDIO has no rows")
         if audio.shape[0] != len(lengths):
             raise ValueError(f"AUDIO has {audio.shape[0]} rows but LENGTHS has {len(lengths)} entries")
         if np.any(lengths <= 0) or np.any(lengths > audio.shape[1]):
