@@ -7,6 +7,7 @@ dependencies = [
     "pydantic>=2.14,<3",
     "pyyaml>=6.0.3",
     "jinja2>=3.1.6",
+    "markupsafe>=3.0.4",  # imported by tools/render.py (jinja2 depends on it too)
     "httpx>=0.28.1",
     # The model catalog service (catalog/): API, gateway and UI.
     "fastapi>=0.115",

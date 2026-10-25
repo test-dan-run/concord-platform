@@ -24,12 +24,12 @@ DIGEST_LABEL = "aiplatform.base-digest"
 
 
 def image_exists(ref: str) -> bool:
-    return subprocess.run(["docker", "image", "inspect", ref], capture_output=True).returncode == 0
+    return subprocess.run(["docker", "image", "inspect", ref], capture_output=True, check=False).returncode == 0
 
 
 def image_label(ref: str, label: str) -> str | None:
     r = subprocess.run(["docker", "image", "inspect", "--format", "{{json .Config.Labels}}", ref],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     return (json.loads(r.stdout or "null") or {}).get(label) if r.returncode == 0 else None
 
 

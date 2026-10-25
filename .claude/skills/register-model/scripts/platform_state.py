@@ -15,7 +15,7 @@ from pathlib import Path
 PLATFORM = Path(__file__).resolve().parents[4]  # the skill lives in <platform>/.claude/skills/register-model/scripts
 sys.path.insert(0, str(PLATFORM))
 
-from tools.schema import PORT_BANDS, PlatformError, load_platform, port_band  # noqa: E402
+from tools.schema import PORT_BANDS, PlatformError, load_platform, port_band
 
 
 def next_free(band: int, used: set[int]) -> int:

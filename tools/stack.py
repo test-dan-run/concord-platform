@@ -52,7 +52,7 @@ from tools.leases import DEFAULT_TTL, Leases
 from tools.schema import PLATFORM_DIR, Manifest, Platform, PlatformError, load_platform
 from tools.vram_check import UTIL_VAR, budget, format_budget, measure_gpu, start_env
 
-DEFAULT_TIMEOUT = int(os.environ.get("AI_STACK_TIMEOUT", 15 * 60))
+DEFAULT_TIMEOUT = int(os.environ.get("AI_STACK_TIMEOUT", str(15 * 60)))
 GPU_FREE_WAIT_S = 30  # how long a GPU start waits for stopped services to give their memory back
 LEASES_DIR = PLATFORM_DIR / "run" / "leases"
 CATALOG_MAX_TTL = 3600  # the longest lease TTL the catalog takes (catalog/app.py LeaseIn.ttl_s)
@@ -88,7 +88,7 @@ def compose(p: Platform, *args: str, capture: bool = False, check: bool = True,
 def require_docker() -> None:
     if shutil.which("docker") is None:
         raise StackError("docker is not installed or not on PATH")
-    r = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture_output=True, text=True)
+    r = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture_output=True, text=True, check=False)
     if r.returncode != 0:
         raise StackError(f"docker daemon not reachable: {r.stderr.strip()}")
 
@@ -113,7 +113,7 @@ def resolve(p: Platform, names: list[str]) -> list[Manifest]:
 
 
 def ensure_network(name: str) -> None:
-    if subprocess.run(["docker", "network", "inspect", name], capture_output=True).returncode != 0:
+    if subprocess.run(["docker", "network", "inspect", name], capture_output=True, check=False).returncode != 0:
         print(f"creating docker network {name}")
         subprocess.run(["docker", "network", "create", name], check=True, capture_output=True)
 

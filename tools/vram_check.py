@@ -89,7 +89,7 @@ def measure_gpu() -> tuple[float, float] | None:
     """(total, free) GiB of GPU 0 from nvidia-smi, device-wide (other processes count); None: cannot measure."""
     try:
         r = subprocess.run(["nvidia-smi", "--query-gpu=memory.total,memory.free", "--format=csv,noheader,nounits",
-                            "--id=0"], capture_output=True, text=True, timeout=10)
+                            "--id=0"], capture_output=True, text=True, timeout=10, check=False)
         total, free = (float(v) / 1024 for v in r.stdout.strip().split(","))
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None

@@ -186,7 +186,7 @@ def save_images(refs: list[str], dest: Path) -> None:
 def image_facts(ref: str) -> dict[str, Any] | None:
     """{id, bytes} of a local image, or None when it is not present."""
     r = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}} {{.Size}}", ref],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     if r.returncode != 0:
         return None
     image_id, size = r.stdout.split()
