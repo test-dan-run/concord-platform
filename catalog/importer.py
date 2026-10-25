@@ -4,14 +4,16 @@
    back to the manifest's image ref.
 2. Manifests: each `models/<id>/service.yaml` is written into platform/services (an existing manifest that
    differs is left alone unless --force). The platform must still load afterwards, or nothing is kept.
-3. Weights: `models/<id>/weights/` is copied to where the manifest mounts weights from (under $AI_ASSETS).
+3. Weights: `models/<id>/weights/` is copied to where the manifest mounts weights from, which must be
+   under $AI_ASSETS.
 4. Registration: display name, tags and "derived from" are registered through the running catalog
    (AICORE_CATALOG, else http://127.0.0.1:8700), which queues verification; a model it refuses is
    reported with its reason and left unregistered. Only when no catalog answers at all are they written
    to its database, and verified on its next start.
 
-The target re-verifies every build. A build key that matches one the target already knows (same image
-id, config and weights) keeps the outputs indexed under it.
+A bundle's model ids must be kebab case, as in a manifest, because they name files here. The target
+re-verifies every build. A build key that matches one the target already knows (same image id, config
+and weights) keeps the outputs indexed under it.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from typing import Any
 import httpx
 
 from tools import identity
-from tools.schema import PLATFORM_DIR, PlatformError, load_platform
+from tools.schema import _KEBAB, PLATFORM_DIR, PlatformError, load_platform
 
 Run = Callable[..., subprocess.CompletedProcess]
 
@@ -134,6 +136,8 @@ def load_dotenv(platform_dir: Path) -> None:
 
 def copy_weights(root: Path, manifest: dict[str, Any], platform_dir: Path, ids: list[str]) -> None:
     p = load_platform(platform_dir)
+    assets = Path(os.path.abspath(p.config.assets_path()))
+    copies = []
     for m in manifest["models"]:
         src = root / "models" / m["id"] / "weights"
         if m["id"] not in ids or not src.is_dir():
@@ -146,6 +150,11 @@ def copy_weights(root: Path, manifest: dict[str, Any], platform_dir: Path, ids: 
         if dst is None:
             _say(f"{m['id']}: the manifest mounts no weights; skipped {src}")
             continue
+        if not Path(os.path.abspath(dst)).is_relative_to(assets):  # by name: a symlinked folder in it is still fine
+            raise BundleError(f"{m['id']}: the manifest mounts its weights from {dst}, outside AI_ASSETS ({assets}); "
+                              "no weights were copied")
+        copies.append((m, src, dst))
+    for m, src, dst in copies:  # every destination is checked before anything is copied
         n = 0
         files = identity.weight_files(src)
         # SOURCE.txt is the model card's provenance: copied, but never part of the weights hash
@@ -228,6 +237,11 @@ def import_bundle(path: Path, platform_dir: Path = PLATFORM_DIR, catalog: str | 
     manifest = json.loads(mf.read_text())
     if manifest.get("format") != 1:
         raise BundleError(f"bundle format {manifest.get('format')!r} is not supported (this catalog reads format 1)")
+    if not isinstance(manifest.get("models"), list) or not all(isinstance(m, dict) for m in manifest["models"]):
+        raise BundleError(f"{mf} has no list of models")
+    bad = [m.get("id") for m in manifest["models"] if not isinstance(m.get("id"), str) or not _KEBAB.match(m["id"])]
+    if bad:  # ids name files and folders here: services/<id>.yaml, models/<id>/
+        raise BundleError(f"model ids must be kebab-case ([a-z0-9-]), got {', '.join(repr(x) for x in bad)}")
     _say(f"importing {len(manifest['models'])} model(s) from {root.name} (exported {manifest.get('created_at')})")
     if any((root / "models" / m["id"] / "weights").is_dir() for m in manifest["models"]):
         try:
@@ -261,6 +275,15 @@ def main(argv: list[str] | None = None) -> int:
         import_bundle(args.bundle, args.platform_dir, args.catalog.rstrip("/") or None, force=args.force,
                       images=not args.no_images)
     except BundleError as exc:
+        print(f"import failed: {exc}", file=sys.stderr)
+        return 1
+    except (tarfile.TarError, json.JSONDecodeError) as exc:
+        print(f"import failed: {args.bundle} is not a readable catalog export: {exc}", file=sys.stderr)
+        return 1
+    except KeyError as exc:
+        print(f"import failed: the bundle is incomplete: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
         print(f"import failed: {exc}", file=sys.stderr)
         return 1
     return 0
