@@ -217,9 +217,11 @@ export class Uploader {
       }
       let first = this.shas.get(sha);
       if (!first) {
-        first = this.store(id, sha, signal);
-        this.shas.set(sha, first);
-        first.catch(() => this.shas.delete(sha)); // a later Retry starts again
+        const mine = this.store(id, sha, signal);
+        this.shas.set(sha, mine);
+        // A later Retry starts again. After a clear, a newer upload may hold the sha, so only this one's entry goes.
+        mine.catch(() => this.shas.get(sha) === mine && this.shas.delete(sha));
+        first = mine;
       }
       const rec = await first;
       if (signal.aborted) return;
