@@ -45,7 +45,6 @@ OIPDatatype = Literal[
 BASE_PATHS: dict[str, str] = {"openai": "/v1", "openai-inspired": "/v1", "oip-v2": "/v2"}
 
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")  # names, aliases, tasks; bundle model ids (catalog/importer.py)
-_KEBAB = KEBAB  # the old private name, kept for code that still imports it
 
 
 class PlatformError(Exception):

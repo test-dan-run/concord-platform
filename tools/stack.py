@@ -27,7 +27,8 @@ When the Model Catalog is running (catalog/README.md), it owns the GPU: `up`, `d
 takes a --ttl of at most 3600 seconds, `lease` ignores --ttl (a catalog lease keeps the TTL it was
 taken with) and `status` shows the catalog's lease holders.
 Only a refused connection means there is no catalog: one that answers with an error or times out stops
-a command that changes state. `status` only reads, so it warns and shows LEASED BY as "?" instead.
+`up`, `down`, `lease`, `release` and `leases`. `status` warns and shows LEASED BY as "?" instead, so it
+still shows what runs.
 AI_STACK_DIRECT=1 skips the catalog.
 """
 
