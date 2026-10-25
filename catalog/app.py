@@ -238,59 +238,51 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
         the ones its next start gets at the full budget and `override` is what was set by hand. `running` is
         what the running service started with and reports now."""
         p = sched.platform()
-        try:
-            s = p.get(model_id)
-        except KeyError:
-            raise SchedulerError(404, f"unknown model {model_id!r}") from None
+        s = sched.manifest(model_id)
         with sched.lock:
-            run = sched.runs.get(model_id)
+            run = sched.runs.get(s.name)
             bk = run.build.build_key if run and run.build else None
         if bk is None:
             try:
-                bk = cat.builds.current(p, p.get(model_id), None).build_key
+                bk = cat.builds.current(p, s, None).build_key
             except Exception:  # noqa: BLE001
                 bk = None
         full = full_budget_gib(p, sched)
-        out = cat.profiler.view(model_id, bk, vram_gb=vram_gb, item_s=item_s, item_tokens=item_tokens, n=n,
+        out = cat.profiler.view(s.name, bk, vram_gb=vram_gb, item_s=item_s, item_tokens=item_tokens, n=n,
                                 full_gib=full)
         if s.gpu and s.engine == CUSTOM_ENGINE:
-            out["limits"] = cat.profiler.limits(model_id, bk, full)
-            out["override"] = cat.profiler.override(model_id)
+            out["limits"] = cat.profiler.limits(s.name, bk, full)
+            out["override"] = cat.profiler.override(s.name)
         out["running"] = cat.profiler.in_use(p, s)
         return out
 
-    def _custom_gpu(model_id: str) -> None:
-        try:
-            s = sched.platform().get(model_id)
-        except KeyError:
-            raise SchedulerError(404, f"unknown model {model_id!r}") from None
+    def _custom_gpu(model_id: str) -> str:
+        """The model's name, or 409 unless it is a custom GPU image."""
+        s = sched.manifest(model_id)
         if not s.gpu or s.engine != CUSTOM_ENGINE:
-            raise SchedulerError(409, f"{model_id} is not a custom GPU image: the catalog does not set its batch "
+            raise SchedulerError(409, f"{s.name} is not a custom GPU image: the catalog does not set its batch "
                                       "limits" + (" (vLLM sizes its own batches)" if s.engine == "vllm" else ""))
+        return s.name
 
     @app.put("/api/models/{model_id}/batch-override")
     def set_batch_override(model_id: str, body: BatchOverrideIn) -> dict[str, Any]:
         """Set the batch limits by hand for the model's next starts (a limit left out stays measured)."""
-        _custom_gpu(model_id)
+        name = _custom_gpu(model_id)
         try:
-            return cat.profiler.set_override(model_id, body.max_batch, body.max_len_s)
+            return cat.profiler.set_override(name, body.max_batch, body.max_len_s)
         except ValueError as exc:
             raise SchedulerError(422, str(exc)) from None
 
     @app.delete("/api/models/{model_id}/batch-override", status_code=204)
     def clear_batch_override(model_id: str) -> Response:
-        _custom_gpu(model_id)
-        cat.profiler.clear_override(model_id)
+        cat.profiler.clear_override(_custom_gpu(model_id))
         return Response(status_code=204)
 
     @app.post("/api/models/{model_id}/batch-profile", status_code=202)
     def batch_profile(model_id: str) -> dict[str, Any]:
         """Measure the model's batch profile now (it leases the model and waits its turn)."""
-        try:
-            sched.platform().get(model_id)
-        except KeyError:
-            raise SchedulerError(404, f"unknown model {model_id!r}") from None
-        return {"model": model_id, "measuring": cat.profiler.enqueue(model_id)}
+        name = sched.manifest(model_id).name
+        return {"model": name, "measuring": cat.profiler.enqueue(name)}
 
     @app.get("/api/models/{model_id}/card")
     def model_card(model_id: str) -> dict[str, Any]:
