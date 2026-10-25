@@ -465,19 +465,11 @@ def _port_band(s: Manifest) -> tuple[int, str]:
     return band, PORT_BANDS[band]
 
 
-def load_platform(root: Path | None = None, services_dir: Path | None = None) -> Platform:
-    """Load and validate everything. Raises PlatformError listing every problem."""
-    root = Path(root or PLATFORM_DIR)
-    services_dir = Path(services_dir or root / "services")
-    errors: list[str] = []
-
-    try:
-        config = Config.model_validate(load_yaml(root / "config.yaml"))
-    except ValidationError as exc:
-        raise PlatformError(_fmt_validation(root / "config.yaml", exc)) from None
-
+def _load_engines(root: Path) -> tuple[dict[str, Engine], set[str], list[str]]:
+    """engines.yaml: the valid engines, the names that failed validation, and the errors."""
     engines: dict[str, Engine] = {}
     invalid_engines: set[str] = set()
+    errors: list[str] = []
     for name, data in (load_yaml(root / "engines" / "engines.yaml") or {}).items():
         if name == CUSTOM_ENGINE:
             errors.append("engines.yaml: 'custom' is reserved and cannot be an engine name")
@@ -487,12 +479,14 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
         except ValidationError as exc:
             invalid_engines.add(name)
             errors.extend(f"engines.yaml: {e}" for e in _fmt_validation(Path(name), exc))  # "<name>: <field>: ..."
+    return engines, invalid_engines, errors
 
-    api_types = load_yaml(root / "contracts" / "api_types.yaml")
-    ctx = {"engines": engines, "invalid_engines": invalid_engines, "api_types": api_types}
 
+def _load_manifests(services_dir: Path, ctx: dict) -> tuple[list[Manifest], dict[str, Path], list[str]]:
+    """Every manifest in services_dir that validates, its file by service name, and the errors."""
     services: list[Manifest] = []
     files: dict[str, Path] = {}
+    errors: list[str] = []
     paths = sorted(services_dir.glob("*.yaml")) + sorted(services_dir.glob("*.yml"))
     if not paths:
         errors.append(f"no manifests found in {services_dir}")
@@ -512,8 +506,13 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
             errors.append(f"{path.name}: file name must match name {m.name!r} ({m.name}.yaml)")
         services.append(m)
         files[m.name] = path
+    return services, files, errors
 
-    # Cross-manifest uniqueness: names, aliases (which share one namespace with names), ports.
+
+def _cross_manifest_errors(config: Config, services: list[Manifest], files: dict[str, Path]) -> list[str]:
+    """Names, aliases (which share one namespace with names) and ports are unique, and each service fits
+    util_limit on its own."""
+    errors: list[str] = []
     seen_ids: dict[str, Path] = {}
     seen_ports: dict[int, Path] = {}
     for s in services:
@@ -529,28 +528,61 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
         if s.vram_fraction(config.gpu_total_gb) > config.util_limit + 1e-9:
             errors.append(f"{path.name}: needs {s.vram_fraction(config.gpu_total_gb):.3f} of the GPU, "
                           f"over util_limit {config.util_limit} even when running alone")
+    return errors
 
-    bases = load_bases(root)
+
+def _build_context_errors(root: Path, s: Manifest, file: str, bases: dict[str, dict]) -> list[str]:
+    """A custom service's build: the context has a Dockerfile, the base and base_version exist, and a
+    context with weights.yaml comes with `weights`."""
+    assert s.build is not None
+    errors: list[str] = []
+    ctx_dir = root / s.build.context
+    if not (ctx_dir / "Dockerfile").is_file():
+        errors.append(f"{file}: build.context {s.build.context!r} has no Dockerfile")
+    if s.base != "none" and s.base not in bases:
+        errors.append(f"{file}: build.base {s.base!r} is not in custom/_bases/bases.yaml "
+                      f"(known: {', '.join(sorted(bases))}, or none)")
+    elif s.build.base_version is not None:
+        known = base_versions(bases[s.base]) if s.base != "none" else []
+        if s.build.base_version not in known:
+            errors.append(f"{file}: build.base_version {s.build.base_version!r} is not a version of "
+                          f"base {s.base!r} (known: {', '.join(known) or 'none'})")
+    if (ctx_dir / "weights.yaml").is_file() and s.weights is None:
+        errors.append(f"{file}: {s.build.context}/weights.yaml exists, so the manifest needs `weights` "
+                      "(where `just fetch-weights` puts them and the container mounts them from)")
+    return errors
+
+
+def _port_warnings(services: list[Manifest], files: dict[str, Path]) -> list[str]:
     warnings: list[str] = []
     for s in services:
         band, label = _port_band(s)
         if s.port // 100 != band:
             warnings.append(f"{files[s.name].name}: port {s.port} is outside {band}xx, the band for {label}")
+    return warnings
+
+
+def load_platform(root: Path | None = None, services_dir: Path | None = None) -> Platform:
+    """Load and validate everything. Raises PlatformError listing every problem."""
+    root = Path(root or PLATFORM_DIR)
+    services_dir = Path(services_dir or root / "services")
+
+    try:
+        config = Config.model_validate(load_yaml(root / "config.yaml"))
+    except ValidationError as exc:
+        raise PlatformError(_fmt_validation(root / "config.yaml", exc)) from None
+
+    engines, invalid_engines, errors = _load_engines(root)
+    api_types = load_yaml(root / "contracts" / "api_types.yaml")
+    ctx = {"engines": engines, "invalid_engines": invalid_engines, "api_types": api_types}
+    services, files, manifest_errors = _load_manifests(services_dir, ctx)
+    errors += manifest_errors
+    errors += _cross_manifest_errors(config, services, files)
+    bases = load_bases(root)
+    for s in services:
         if s.is_custom and s.build:
-            ctx_dir = root / s.build.context
-            if not (ctx_dir / "Dockerfile").is_file():
-                errors.append(f"{files[s.name].name}: build.context {s.build.context!r} has no Dockerfile")
-            if s.base != "none" and s.base not in bases:
-                errors.append(f"{files[s.name].name}: build.base {s.base!r} is not in custom/_bases/bases.yaml "
-                              f"(known: {', '.join(sorted(bases))}, or none)")
-            elif s.build.base_version is not None:
-                known = base_versions(bases[s.base]) if s.base != "none" else []
-                if s.build.base_version not in known:
-                    errors.append(f"{files[s.name].name}: build.base_version {s.build.base_version!r} is not a version of "
-                                  f"base {s.base!r} (known: {', '.join(known) or 'none'})")
-            if (ctx_dir / "weights.yaml").is_file() and s.weights is None:
-                errors.append(f"{files[s.name].name}: {s.build.context}/weights.yaml exists, so the manifest needs `weights` "
-                              "(where `just fetch-weights` puts them and the container mounts them from)")
+            errors += _build_context_errors(root, s, files[s.name].name, bases)
+    warnings = _port_warnings(services, files)
 
     if errors:
         raise PlatformError(errors)
