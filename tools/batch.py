@@ -15,6 +15,7 @@ import argparse
 import sys
 import time
 
+import httpx
 from aicore.catalog import Catalog, CatalogError
 
 
@@ -94,8 +95,9 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("name")
     m.add_argument("--wait", action="store_true", help="wait for the measurement and print the result")
     args = ap.parse_args(argv)
+    cat = Catalog(timeout=30.0)
     try:
-        with Catalog(timeout=30.0) as cat:
+        with cat:
             if args.cmd == "show":
                 item_s, item_tokens = args.item_s, args.item_tokens
                 if item_s is None and item_tokens is None:  # the catalog uses the one in the profile's unit
@@ -113,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
     except CatalogError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except httpx.HTTPError as exc:
+        print(f"error: catalog at {cat.url} is not answering ({str(exc) or type(exc).__name__})", file=sys.stderr)
         return 1
 
 
