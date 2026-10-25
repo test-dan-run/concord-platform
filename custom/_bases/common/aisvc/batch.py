@@ -126,6 +126,9 @@ def limits_stats() -> dict[str, dict[str, Any]]:
 def set_limits(max_items: int | None = None, max_len: int | None = None, *, restore: bool = False) -> dict[str, dict]:
     """Change every batcher's limits at run time (POST /platform/batch-limits): the catalog lifts them while it
     measures the image. `restore` goes back to the configured values; the backoff count starts again either way."""
+    for value in (max_items, max_len):  # a float or a bool would reach range() in the images' batch functions
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+            raise ValueError(f"batch limits must be whole numbers (max_items={max_items!r}, max_len={max_len!r})")
     if (max_items is not None and max_items < 1) or (max_len is not None and max_len < 1):
         raise ValueError("batch limits must be at least 1")
     for lim in _LIMITS.values():
