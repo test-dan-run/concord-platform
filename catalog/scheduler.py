@@ -140,6 +140,7 @@ class Scheduler:
         self._threads: list[threading.Thread] = []
         self._platform: Platform | None = None
         self._platform_sig: tuple = ()
+        self._reload_lock = threading.Lock()  # one thread reloads changed manifests; taken before self.lock, never inside it
         self.platform_error: str | None = None
         self._last_published: dict[str, Any] = {}
         self._cold_cache: dict[str, list[float]] = {}
@@ -162,21 +163,26 @@ class Scheduler:
         with self.lock:
             if self._platform is not None and sig == self._platform_sig:
                 return self._platform
-        try:
-            p = load_platform(self.settings.platform_dir)
-        except PlatformError as exc:
+        with self._reload_lock:
+            sig = self._manifest_sig()  # another thread may have reloaded while this one waited
             with self.lock:
-                self.platform_error = "; ".join(exc.errors)
-                if self._platform is None:
-                    raise
-                return self._platform
-        if self.settings.docker:
-            render.write_outputs(p)  # compose.yml must match the manifests the catalog starts from
-        with self.lock:
-            self._platform, self._platform_sig, self.platform_error = p, sig, None
-            for s in p.services:
-                self.runs.setdefault(s.name, Run())
-        return p
+                if self._platform is not None and sig == self._platform_sig:
+                    return self._platform
+            try:
+                p = load_platform(self.settings.platform_dir)
+            except PlatformError as exc:
+                with self.lock:
+                    self.platform_error = "; ".join(exc.errors)
+                    if self._platform is None:
+                        raise
+                    return self._platform
+            if self.settings.docker:
+                render.write_outputs(p)  # compose.yml must match the manifests the catalog starts from
+            with self.lock:
+                self._platform, self._platform_sig, self.platform_error = p, sig, None
+                for s in p.services:
+                    self.runs.setdefault(s.name, Run())
+            return p
 
     def manifest(self, name: str) -> Manifest:
         try:

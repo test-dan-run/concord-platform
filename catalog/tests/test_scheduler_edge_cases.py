@@ -3,6 +3,7 @@ finishing while a tick runs."""
 
 import sqlite3
 import subprocess
+import threading
 import time
 
 import pytest
@@ -236,3 +237,35 @@ def test_a_model_is_not_granted_memory_its_start_would_refuse(cat, runtime):
     runtime.gpu_other_gib = 31.84 - (need + 0.05)
     step(cat)
     assert s.get(r.id).state == "active" and runtime.started == ["whisper-large-v3"]
+
+
+def test_one_thread_reloads_changed_manifests_and_the_others_reuse_it(cat, monkeypatch):
+    import catalog.scheduler as scheduler_module
+
+    s = cat.scheduler
+    s.platform()
+    real = scheduler_module.load_platform
+    loads, sigs = [], []
+    go = threading.Event()
+
+    def load_platform(root):
+        loads.append(root)
+        go.wait(10)  # the reload is slow: the other threads ask meanwhile
+        return real(root)
+
+    def manifest_sig():
+        sigs.append(1)
+        return ("changed",)  # a manifest changed
+
+    monkeypatch.setattr(scheduler_module, "load_platform", load_platform)
+    monkeypatch.setattr(s, "_manifest_sig", manifest_sig)
+    got = []
+    threads = [threading.Thread(target=lambda: got.append(s.platform())) for _ in range(6)]
+    for t in threads:
+        t.start()
+    until(lambda: len(sigs) >= 6)  # every thread has seen the change
+    go.set()
+    for t in threads:
+        t.join(10)
+    assert len(got) == 6 and len({id(p) for p in got}) == 1
+    assert len(loads) == 1
