@@ -42,6 +42,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import render
+from tools.identity import PARTIAL
 from tools.schema import ASSETS_VAR, BASE_PATHS, MODELS_MOUNT, Manifest, Platform, PlatformError, load_platform
 from tools.vram_check import budget
 
@@ -52,7 +53,6 @@ TREE = ("tools", "engines", "contracts", "clients/aicore", "custom/_bases", "ui"
         "config.yaml", "pyproject.toml", "uv.lock", "Justfile", ".env.example", ".gitignore")
 TREE_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".venv", "*.egg-info", ".env", "node_modules",
                                      "catalog.html", "endpoints.generated.yaml")
-PARTIAL = (".lock", ".incomplete", ".part")  # download leftovers, never copied
 
 
 class BundleError(Exception):
