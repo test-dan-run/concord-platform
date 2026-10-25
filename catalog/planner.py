@@ -49,6 +49,17 @@ def plan(scheduler: Scheduler, index: OutputIndex, body: dict[str, Any]) -> dict
             info[m] = {"name": name, "running": view["state"] == "running", "cold": cold, "measured": measured,
                        "build_key": build.build_key if build else None, "frac": scheduler.frac(p, name)}
 
+    stages = [{**st, "models": _distinct(st, info)} for st in stages]
+    up = {i["name"] for i in info.values() if i["running"]}  # running at plan time, until a GPU model loads
+
+    def loaded(m: str) -> bool:
+        return info[m]["name"] in up
+
+    def evict_for(m: str) -> None:
+        """One GPU model runs at a time: loading m stops the GPU model that ran."""
+        if info[m]["frac"] > 0:
+            up.difference_update({i["name"] for i in info.values() if i["frac"] > 0} - {info[m]["name"]})
+
     def counts(st: dict[str, Any], m: str) -> tuple[int | None, int | None, int | None]:
         keys = (st.get("keys") or {}).get(m)
         if keys is None:
@@ -61,28 +72,35 @@ def plan(scheduler: Scheduler, index: OutputIndex, body: dict[str, Any]) -> dict
     if pipeline == "staged" or len(stages) == 1:
         for st in stages:
             # Running models first (no load), then the quickest loads.
-            for m in sorted(st["models"], key=lambda m: (not info[m]["running"], info[m]["cold"], m)):
+            for m in sorted(st["models"], key=lambda m: (not loaded(m), info[m]["cold"], m)):
                 items, hits, missing = counts(st, m)
                 skip = missing == 0
-                steps.append(_step(st["name"], m, info[m], items, hits, missing, skip, load=not skip and not info[m]["running"]))
+                load = not skip and not loaded(m)
+                steps.append(_step(st["name"], m, info[m], items, hits, missing, skip, load=load))
+                if load:
+                    evict_for(m)
     else:
         # Co-resident: two stages at once. The stage with the slowest load is the outer loop and stays up.
         if len(stages) != 2:
             raise PlanError("a co-resident plan takes exactly two stages")
         outer, inner = sorted(stages, key=lambda st: -max(info[m]["cold"] for m in st["models"]))
         loaded_inner: set[str] = set()
-        for o in sorted(outer["models"], key=lambda m: (not info[m]["running"], info[m]["cold"], m)):
+        for o in sorted(outer["models"], key=lambda m: (not loaded(m), info[m]["cold"], m)):
             items, hits, missing = counts(outer, o)
-            steps.append(_step(outer["name"], o, info[o], items, hits, missing, missing == 0,
-                               load=missing != 0 and not info[o]["running"]))
+            load = missing != 0 and not loaded(o)
+            steps.append(_step(outer["name"], o, info[o], items, hits, missing, missing == 0, load=load))
+            if load:
+                evict_for(o)
             all_fit = sum(info[m]["frac"] > 0 for m in [o, *inner["models"]]) <= 1  # one GPU model at a time
             for i in sorted(inner["models"], key=lambda m: (info[m]["cold"], m)):
                 items, hits, missing = counts(inner, i)
                 stays = all_fit and i in loaded_inner
-                load = missing != 0 and not info[i]["running"] and not stays
+                load = missing != 0 and not loaded(i) and not stays
                 steps.append(_step(inner["name"], i, info[i], items, hits, missing, missing == 0, load=load,
                                    alongside=info[o]["name"]))
-                if load or info[i]["running"]:
+                if load:
+                    evict_for(i)
+                if load or loaded(i):
                     loaded_inner.add(i)
 
     loads = sum(1 for s in steps if s["load"])
@@ -104,6 +122,17 @@ def _check_stage(st: dict[str, Any]) -> None:
     if not isinstance(keys, dict) or not all(v is None or (isinstance(v, list) and all(isinstance(k, dict) for k in v))
                                              for v in keys.values()):
         raise PlanError(f"stage {st['name']!r}: keys must map a model to a list of index keys")
+
+
+def _distinct(st: dict[str, Any], info: dict[str, dict[str, Any]]) -> list[str]:
+    """The stage's model ids, one per model (an alias and its id name the same model); an id given keys is kept."""
+    keys = st.get("keys") or {}
+    ids: dict[str, str] = {}
+    for m in st["models"]:
+        name = info[m]["name"]
+        if name not in ids or (keys.get(ids[name]) is None and keys.get(m) is not None):
+            ids[name] = m
+    return list(ids.values())
 
 
 def _step(stage: str, model: str, i: dict[str, Any], items, hits, missing, skip: bool, load: bool,

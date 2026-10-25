@@ -424,7 +424,7 @@ Response:
 
 ```json
 {"pipeline": "staged",
- "steps": [{"stage": "seg", "model": "pyannote-diarization", "load": true, "cold_start_s": 21.0,
+ "steps": [{"stage": "seg", "model": "pyannote-diarization", "load": false, "cold_start_s": 21.0,
             "items": 120, "hits": 120, "missing": 0, "skip": true}, …],
  "loads": 3, "est_load_s": 410.0, "hits": 120, "fits_together": false}
 ```
@@ -434,6 +434,9 @@ Response:
 - `co-resident`: both stages at once (streaming, or audio added mid-run). The slowest-loading stage is
   the outer loop and stays up; the other stage's models are re-spun inside it unless at most one model of the two stages uses the GPU
   beside it, in which case nothing is re-spun.
+- In both, a running GPU model counts as loaded only until an earlier step loads another GPU model
+  (one GPU model runs at a time), and a stage that names one model twice (its alias and its id) gives
+  it one step.
 - `keys` per model are optional. With keys, the catalog checks the index for the current build, and
   a model with nothing missing is skipped (`skip: true`). Keys for a later stage are usually unknown
   until the earlier stage has run (segments decide the cuts); plan again after it.
