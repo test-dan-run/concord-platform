@@ -153,7 +153,10 @@ class DockerRuntime:
 
     def stop(self, p: Platform, names: list[str]) -> None:
         if names:
-            stack.compose(p, "stop", *names, capture=True, check=False)
+            r = stack.compose(p, "stop", *names, capture=True, check=False)
+            if r.returncode != 0:
+                raise RuntimeError(f"docker compose stop {' '.join(names)} exited {r.returncode}: "
+                                   f"{(r.stderr or '').strip()[-400:]}")
 
     def healthy(self, p: Platform, s: Manifest, url: str) -> bool:
         try:

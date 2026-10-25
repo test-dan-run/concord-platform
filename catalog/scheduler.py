@@ -574,14 +574,17 @@ class Scheduler:
             self.wake()
 
     def _do_stop(self, name: str) -> None:
-        p = self.platform()
         try:
-            self.runtime.stop(p, [name])
-        finally:
+            self.runtime.stop(self.platform(), [name])
+        except Exception as exc:  # noqa: BLE001 - still up as far as we know: a later tick tries again
+            log.warning("stop of %s failed: %s", name, exc)
             with self.lock:
-                run = self.runs[name]
-                run.stopping, run.running, run.ready_at = False, False, None
-                run.pinned, run.released_at, run.given, run.batch = False, None, None, None
+                self.runs[name].stopping = False
+            return
+        with self.lock:
+            run = self.runs[name]
+            run.stopping, run.running, run.ready_at = False, False, None
+            run.pinned, run.released_at, run.given, run.batch = False, None, None, None
 
     def _do_start(self, name: str) -> None:
         try:

@@ -2,8 +2,10 @@
 finishing while a tick runs."""
 
 import sqlite3
+import subprocess
 import time
 
+import pytest
 from catalog_helpers import drain, step
 
 from catalog.builds import WeightsHasher
@@ -61,3 +63,36 @@ def test_the_weights_hasher_keeps_going_after_an_error(tmp_path, monkeypatch):
     until(lambda: h.get(b) is not None)  # the next folder is still hashed
     assert h._thread.is_alive()
     db.close()
+
+
+def test_a_failed_stop_leaves_the_model_unpinned_and_is_tried_again(cat, runtime):
+    s = cat.scheduler
+    cat.settings.release_linger_s = 0.0
+    real = runtime.stop
+
+    def stop(p, names):
+        raise RuntimeError("docker compose stop whisper-large-v3 exited 1: error during connect")
+
+    runtime.stop = stop
+    r = s.request("bench:job-1", ["whisper-large-v3"])
+    step(cat)
+    s.release(r.id)
+    s.tick()  # the spin-down queues a stop
+    drain(cat)  # which fails
+    run = s.runs["whisper-large-v3"]
+    assert run.running and not run.stopping and not run.pinned and run.released_at is not None
+    assert s.model_view("whisper-large-v3")["state"] == "running"
+    s.tick()  # the next tick tries again
+    assert run.stopping
+    runtime.stop = real
+    step(cat)
+    assert runtime.stopped == ["whisper-large-v3"] and runtime.running == {} and not run.running
+
+
+def test_docker_runtime_stop_raises_when_compose_fails(monkeypatch):
+    from catalog.runtime import DockerRuntime
+    from tools import stack
+
+    monkeypatch.setattr(stack, "compose", lambda p, *args, **kw: subprocess.CompletedProcess(args, 1, "", "no such service\n"))
+    with pytest.raises(RuntimeError, match="docker compose stop x exited 1: no such service"):
+        DockerRuntime().stop(None, ["x"])
