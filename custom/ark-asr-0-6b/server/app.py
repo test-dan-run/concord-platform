@@ -14,7 +14,7 @@ from itertools import islice
 
 import numpy as np
 from aisvc import DynamicBatcher, Limits, MicroBatcher, create_openai_app
-from aisvc.batch import audio_ms
+from aisvc.batch import audio_ms, free_cuda_cache
 
 from .ark import SR, ArkAsr, chunks, decode_audio, join
 
@@ -30,7 +30,7 @@ def build_app(model: ArkAsr | None = None):
         try:
             return join(pieces(f))
         except Exception as exc:  # this file's own error, raised in its own request below
-            return exc
+            return exc.with_traceback(None)
 
     def files(group: list[list[np.ndarray]]) -> list[str | Exception]:
         """Text of each file, or its error. A failed batch runs again file by file, so only the file that fails gets
@@ -39,7 +39,12 @@ def build_app(model: ArkAsr | None = None):
             texts = iter(pieces([c for f in group for c in f]))
             return [join(islice(texts, len(f))) for f in group]
         except Exception as exc:
-            return [exc] if len(group) == 1 else [one(f) for f in group]
+            failed = exc.with_traceback(None)
+        if len(group) == 1:
+            return [failed]
+        # Outside the except block, so the failed batch's tensors are freed before the files run again
+        free_cuda_cache()
+        return [one(f) for f in group]
 
     # Requests within AISVC_BATCH_WAIT_MS of each other share one call. The model takes no options, so every
     # request can share; the limits apply to the chunks above, not to the number of requests.
