@@ -177,7 +177,7 @@ class Exporter:
         if hosted:
             raise SchedulerError(422, f"hosted endpoints have no image or weights to export: {', '.join(hosted)}")
         try:
-            names = [p.get(m).name for m in models]
+            names = [s.name for s in p.resolve(models)]  # a name and its alias are one model
         except KeyError as exc:
             raise SchedulerError(404, exc.args[0]) from None
         dest = body.get("destination") or "bundle"
