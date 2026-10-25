@@ -78,11 +78,22 @@ def _segments(path: Path) -> list[tuple[str, dict[str, Any]]] | None:
     return None
 
 
-def refs_file(root: Path) -> Path | None:
-    """The one references file of a version folder, or None (an audio-only version)."""
+def side_files(version: Any) -> set[str]:
+    """Files under refs/ besides the references file. In format version 1, attributes.json is a references file."""
+    return {"uids.jsonl"} if version == 1 else {"uids.jsonl", "attributes.json"}
+
+
+def format_version(root: Path) -> Any:
+    m = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    return m.get("format_version") if isinstance(m, dict) else None
+
+
+def refs_file(root: Path, side: set[str] | None = None) -> Path | None:
+    """The one references file of a version folder, or None (an audio-only version). `side` are the other files
+    under refs/, by default the side files of the manifest's format version."""
     d = root / "refs"
-    files = sorted(p for p in d.glob("*") if p.is_file() and p.name not in ("uids.jsonl", "attributes.json")) \
-        if d.is_dir() else []
+    side = side_files(format_version(root)) if side is None else side
+    files = sorted(p for p in d.glob("*") if p.is_file() and p.name not in side) if d.is_dir() else []
     return files[0] if files else None
 
 
@@ -92,7 +103,8 @@ def parse(root: Path) -> dict[str, Any]:
     with open(root / "files.csv", newline="", encoding="utf-8") as fh:
         paths = [r["path"] for r in csv.DictReader(fh)]
     by_key = {p: p for p in paths} | {PurePosixPath(p).stem.lower(): p for p in paths}
-    rf = refs_file(root)
+    side = side_files(format_version(root))
+    rf = refs_file(root, side)
     segs: dict[str, list[dict[str, Any]]] | None = None
     if rf is not None:
         records = _segments(rf)
@@ -114,7 +126,8 @@ def parse(root: Path) -> dict[str, Any]:
                         s["uid"] = u["uid"]
                         break
     attrs_path = root / "refs" / "attributes.json"
-    attrs = json.loads(attrs_path.read_text(encoding="utf-8")) if attrs_path.is_file() else {}
+    attrs = json.loads(attrs_path.read_text(encoding="utf-8")) if "attributes.json" in side and attrs_path.is_file() \
+        else {}
     file_labels = {p: flatten(v) for p, v in (attrs.get("files") or {}).items()}
     speaker_labels = {p: {spk: flatten(v) for spk, v in spks.items()} for p, spks in (attrs.get("speakers") or {}).items()}
     names: set[str] = set()
