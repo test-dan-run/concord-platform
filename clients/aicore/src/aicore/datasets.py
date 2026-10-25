@@ -796,11 +796,14 @@ class FakeDatasetCatalog(_Mount):
     def add_use(self, dataset_id: str, n: int, ref: str) -> None:
         self._log("add_use", dataset_id, n, str(ref))
         self._row(dataset_id, n)
-        self._uses.setdefault((dataset_id, n), {}).setdefault((self.app, str(ref)), _now())
+        app, ref = self.app.strip(), str(ref).strip()  # stripped, as the catalog stores them
+        if not app or not ref:
+            raise _error(422, "app and ref are required", "invalid_request")
+        self._uses.setdefault((dataset_id, n), {}).setdefault((app, ref), _now())
 
     def remove_use(self, dataset_id: str, n: int, ref: str) -> None:
         self._log("remove_use", dataset_id, n, str(ref))
-        self._uses.get((dataset_id, n), {}).pop((self.app, str(ref)), None)
+        self._uses.get((dataset_id, n), {}).pop((self.app.strip(), str(ref).strip()), None)
 
     # -------------------------------------------------------------------------- audio store
 

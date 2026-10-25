@@ -669,9 +669,10 @@ class Versions:
                         (dataset_id, n, app.strip(), ref.strip(), now_iso()))
 
     def remove_use(self, dataset_id: str, n: int, app: str, ref: str) -> None:
-        """Idempotent, and it works after the version was deleted, when its uses went with it."""
+        """Idempotent, and it works after the version was deleted, when its uses went with it. app and ref are
+        stripped, as add_use stores them."""
         self.db.execute("DELETE FROM use WHERE dataset_id = ? AND n = ? AND app = ? AND ref = ?",
-                        (dataset_id, n, app, ref))
+                        (dataset_id, n, app.strip(), ref.strip()))
 
     # ------------------------------------------------------------------------- reading a version
 
