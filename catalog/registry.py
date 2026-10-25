@@ -141,12 +141,14 @@ class Registry:
 
     def test_hosted(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST /api/hosted/test: a connection test before saving. With `id` of an existing hosted model and no
-        key, the stored key is used (replacing a key tests the new one)."""
+        key, the stored key is used (replacing a key tests the new one), but only on the host it was stored for."""
         old = self.hosted.get(body.get("id") or "")
         h = self._spec(body.get("id") or "test", body, old)
         key = body.get("key")
         self._check_hosted(h, key)
-        if key is None and old is not None:
+        if key is None and old is not None and old.key_enc and h.auth_type != "none":
+            if not hosted_mod.same_host(h.base_url, old.base_url):  # the catalog has no API auth: never send it elsewhere
+                raise SchedulerError(422, "enter the key to test a different host")
             key = self.hosted.key(old)
         if h.auth_type != "none" and not key:
             raise SchedulerError(422, "the API key is required")

@@ -90,6 +90,19 @@ def normalise_base(url: str) -> str:
     return url.strip().rstrip("/")
 
 
+def same_host(a: str, b: str) -> bool:
+    """Whether two URLs have the same scheme, host and port (the scheme's default port when none is given)."""
+    def origin(url: str) -> tuple[str, str | None, int | None] | None:
+        u = urlsplit(url.strip())
+        try:
+            return u.scheme, u.hostname, u.port or {"https": 443, "http": 80}.get(u.scheme)
+        except ValueError:  # a port that is not a number
+            return None
+
+    first = origin(a)
+    return first is not None and first[1] is not None and first == origin(b)
+
+
 def provider_url(h: Hosted, path: str) -> str:
     """The provider URL for a path under the gateway's /m/{id}/ prefix.
 

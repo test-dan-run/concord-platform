@@ -223,7 +223,7 @@ and API key. Apps call it through the gateway like any platform model, and never
 
 | Call | Body | Does |
 |---|---|---|
-| `POST /api/hosted/test` | the fields below (`key` optional with `id` of an existing one) | Connection test before saving: TLS, key accepted, speaks the contract (`GET /models` lists the model, else one minimal request; OIP: ready + metadata). Stores nothing. |
+| `POST /api/hosted/test` | the fields below (`key` optional with `id` of an existing one) | Connection test before saving: TLS, key accepted, speaks the contract (`GET /models` lists the model, else one minimal request; OIP: ready + metadata). Stores nothing. Without `key`, the stored key is used only when the scheme, host and port are the stored ones; a `base_url` on another host gets 422 until the key is entered again. |
 | `POST /api/hosted` | `{"id", "contract", "api", "base_url", "model", "auth_type": "bearer"\|"header"\|"none", "header_name"?, "key"?, "timeout_s"?: 120, "max_concurrency"?: 4, "max_upload_mb"?: 25, "display_name"?, "tags"?, "parent_id"?, "data_leaves_network": true}` | Creates it and its registration, queues verification. 422 without `data_leaves_network`; 409 if `id` is a platform name or alias. OIP endpoints store the signature from the provider's metadata. |
 | `PATCH /api/hosted/{id}` | any of the same | Changes it. A new `key` is tested before it replaces the old one. |
 | `DELETE /api/hosted/{id}` | | Removes it, its encrypted key and its registration (`DELETE /api/models/{id}/register` does the same). |
