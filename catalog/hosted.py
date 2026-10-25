@@ -4,7 +4,8 @@ The gateway and the verifier both call a provider through this module, so URL bu
 one place. Keys are encrypted with Fernet under a master key kept outside PLATFORM_DIR
 (Settings.master_key_file); only the encrypted bytes and the last four characters are stored. A key is
 never returned by the API and never written to logs, errors, events or export bundles: provider text that
-quotes it is redacted first. Only the gateway's stream of a provider reply passes through unchanged.
+quotes it is redacted first. Only the gateway's stream of a successful provider reply passes through
+unchanged; an error reply is redacted too.
 """
 
 from __future__ import annotations

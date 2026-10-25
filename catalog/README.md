@@ -237,8 +237,10 @@ and API key. Apps call it through the gateway like any platform model, and never
   max_concurrency, max_upload_mb, resolved_url, data_ack_at, next_check_at, last_test}`. The key is
   never returned, logged or exported; `key_hint` is its last four characters. When a provider quotes
   the key back, connection tests, verification reports and the verifier's log show `••••` in its
-  place. The gateway streams provider replies as they are, so a provider that echoes the key shows it
-  to the calling app (a stream is not redacted).
+  place. The gateway reads a provider's error reply (status 400 and up) whole, shows `••••` in place of
+  the key in its body and drops a header that quotes the key; an error body over 1 MiB is not
+  forwarded (`upstream_error` with the provider's status). A successful reply streams as it is and is
+  not redacted.
 - Build key: sha256 of contract, api, base URL and model name. Changing any of them is a new build
   (verified again); limits and key replacement are not. Hosted models are also re-verified when their
   last verification is over 24 hours old. Verification takes no lease.
