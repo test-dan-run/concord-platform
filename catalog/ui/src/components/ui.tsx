@@ -156,10 +156,6 @@ export function Chip({ children, tone = "default", title }: { children: ReactNod
   );
 }
 
-export function Tag({ children }: { children: ReactNode }) {
-  return <span className="inline-flex items-center rounded bg-track px-1.5 py-px text-[11px] text-muted num">#{children}</span>;
-}
-
 export function StatusDot({ state }: { state: string }) {
   const color =
     {
