@@ -12,7 +12,7 @@ import unicodedata
 from pydantic import BaseModel, ConfigDict
 
 _WS = re.compile(r"\s+")
-_SENTENCE_START = re.compile(r"(^|[.!?…]\s+)([a-z])")
+_SENTENCE_START = re.compile(r"(^|[.!?…]\s+)([^\W\d_])")  # any letter, so "élan" and "ωmega" too
 _LAST_SENTENCE = re.compile(r"(?:^|[.!?…]\s+)([^.!?…]*)$")
 _TERMINAL = ("." , "!", "?", "…", '"', "'", ")", "]", "”", "’")
 _QUESTION_OPENERS = {
