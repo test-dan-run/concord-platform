@@ -232,9 +232,10 @@ def usage_snippet(s: Manifest) -> str:
                 f'svc.itn("meet at three thirty p m")                 # -> str\n'
                 f'svc.itn(["twenty one", "noon"], return_spans=True)  # -> list of {{output, spans}} items')
     if s.contract == "openai-inspired":
+        readme = f"{s.build.context}/README.md" if s.build else "the service's README"
         return (f'from aicore import client\n\nsvc = client("{key}")\n'
-                f'svc.transform("hello world how are you")          # -> str\n'
-                f'svc.transform(["a", "b"], terminal_punctuation=True)  # -> list[str]')
+                f'svc.transform("hello world how are you")  # -> str\n'
+                f'svc.transform(["a", "b"])                 # -> list[str]; options (keyword arguments): {readme}')
     assert s.signature is not None
     inputs = ",\n".join(f'    "{t.name}": {_py_value(t.shape, t.datatype, t.example)}' for t in s.signature.inputs)
     outs = "\n".join(f'out["{t.name}"]  # {t.datatype} {t.shape}' for t in s.signature.outputs)
