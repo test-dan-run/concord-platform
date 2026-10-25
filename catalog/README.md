@@ -355,7 +355,8 @@ Inference goes through the catalog, addressed by model id, with the platform con
 
 - `/m/{id}/...` forwards to the service root: `/m/whisper-large-v3/v1/audio/transcriptions`,
   `/m/silero-vad/v2/models/silero-vad/infer`.
-- `/v2/models/{id}/...` is also accepted for OIP calls.
+- `/v2/models/{id}/...` is also accepted for OIP calls, and `GET /v2/models/{id}` for the model's OIP
+  metadata.
 - With `AICORE_CATALOG` set, `aicore.client(name)` points at the gateway, so app code does not change.
   A name the local endpoint map does not list (a hosted model) is looked up at `/api/models/{name}`
   (cached 60 s); `model_name()` then returns its provider model name.

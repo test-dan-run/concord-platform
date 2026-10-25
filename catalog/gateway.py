@@ -1,6 +1,6 @@
 """Gateway: inference calls by model id, forwarded unchanged to the model service.
 
-`/m/{id}/<path>` -> `<service root>/<path>`; `/v2/models/{id}/<path>` -> the same service's OIP route.
+`/m/{id}/<path>` -> `<service root>/<path>`; `/v2/models/{id}[/<path>]` -> the same service's OIP route.
 A stopped model is started on demand and the call is held until it is healthy (2 x its measured cold
 start, or gateway_unmeasured_wait_s), then 503 `model_starting`. Calls in flight keep a model from
 being stopped.

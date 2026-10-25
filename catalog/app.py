@@ -468,6 +468,10 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     async def gateway_oip(model_id: str, path: str, request: Request) -> Response:
         return await cat.gateway.forward(request, model_id, f"v2/models/{model_id}/{path}")
 
+    @app.get("/v2/models/{model_id}", include_in_schema=False)
+    async def gateway_oip_metadata(model_id: str, request: Request) -> Response:  # OIP model metadata
+        return await cat.gateway.forward(request, model_id, f"v2/models/{model_id}")
+
     add_dataset_routes(app, cat)  # the Dataset Catalog (catalog/datasets): before the UI's catch-all route
 
     # ------------------------------------------------------------------------- UI
