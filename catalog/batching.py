@@ -635,10 +635,11 @@ class BatchProfiler:
         sched = self.scheduler
         deadline = time.monotonic() + 30 * 60
         while True:
-            r = sched.heartbeat(rid)
+            r = sched.get(rid)  # before the heartbeat, which refuses a lease that has ended
             if r.state == "failed":
                 self._fail(model, None, f"could not start: {r.error}")
                 return None
+            r = sched.heartbeat(rid)
             with sched.lock:
                 build = sched.runs[model].build
             if r.state == "active" and build and build.build_key:
