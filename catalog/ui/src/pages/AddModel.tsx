@@ -215,7 +215,13 @@ function HostedForm({ models, onAdded }: { models: Model[]; onAdded: (m: Model) 
   const [ack, setAck] = useState(false);
   const [tested, setTested] = useState<ConnectionTest | null>(null);
   const c = contractOf(ep.contract);
-  const test = useMutation({ mutationFn: () => api.post<ConnectionTest>("/hosted/test", body(ep, auth)), onSuccess: setTested });
+  const test = useMutation({
+    mutationFn: (sent: ReturnType<typeof body>) => api.post<ConnectionTest>("/hosted/test", sent),
+    // An edit while the test ran clears it, so keep the answer only if the inputs are still the ones it tested.
+    onSuccess: (r, sent) => {
+      if (JSON.stringify(sent) === JSON.stringify(body(ep, auth))) setTested(r);
+    },
+  });
   const add = useMutation({
     mutationFn: () => api.post<Model>("/hosted", { ...body(ep, auth), id: id.trim(), display_name: displayName.trim() || null, tags, parent_id: parent || null, data_leaves_network: ack }),
     onSuccess: onAdded,
@@ -280,7 +286,7 @@ function HostedForm({ models, onAdded }: { models: Model[]; onAdded: (m: Model) 
           {tested && <TestLines lines={tested.lines} />}
           {!tested && !test.isPending && <span className="text-[13px] text-muted">Not tested yet. A test sends one small request with the key; it does not run the check clip.</span>}
           <ErrorNote error={test.error} />
-          <Button disabled={!canTest || test.isPending} onClick={() => test.mutate()}>Test connection</Button>
+          <Button disabled={!canTest || test.isPending} onClick={() => test.mutate(body(ep, auth))}>Test connection</Button>
         </Panel>
         <Panel title="Verification" subtitle="Runs after adding, daily, and on demand">
           <span className="text-[13px] text-muted leading-relaxed">{c.verify}</span>
