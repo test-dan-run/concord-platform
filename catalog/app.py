@@ -319,17 +319,13 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
 
     @app.post("/api/models/{model_id}/start", status_code=202)
     def start_model(model_id: str, holder: str = "manual") -> dict[str, Any]:
-        if model_id in cat.hosted:
-            raise SchedulerError(409, f"{model_id} is a hosted endpoint: it is always up and cannot be started")
-        name = sched.manifest(model_id).name
+        name = reg.name(model_id)  # a hosted endpoint is refused by the scheduler (409)
         r = sched.ensure_started(name, holder)
         return {"model": reg.record(name), "request": r.public() if r else None}
 
     @app.post("/api/models/{model_id}/stop", status_code=202)
     def stop_model(model_id: str, force: bool = False) -> dict[str, Any]:
-        if model_id in cat.hosted:
-            raise SchedulerError(409, f"{model_id} is a hosted endpoint: it has no container to stop")
-        name = sched.manifest(model_id).name
+        name = reg.name(model_id)  # a hosted endpoint is refused by the scheduler (409)
         sched.stop_model(name, force)
         sched.wake()
         return reg.record(name)
