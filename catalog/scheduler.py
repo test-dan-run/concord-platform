@@ -773,8 +773,8 @@ class Scheduler:
         p = self.platform()
         hosted = self.hosted_ids()
         try:
-            local = iter(s.name for s in p.resolve([m for m in models if m not in hosted]))
-            names = [m if m in hosted else next(local) for m in models]
+            # Names and aliases in the order given, each model once (an alias and its id are the same model).
+            names = list(dict.fromkeys(m if m in hosted else p.get(m).name for m in models))
         except KeyError as exc:
             raise SchedulerError(404, exc.args[0]) from None
         gpu = [n for n in names if n not in hosted and p.get(n).gpu]

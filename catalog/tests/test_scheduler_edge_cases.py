@@ -269,3 +269,21 @@ def test_one_thread_reloads_changed_manifests_and_the_others_reuse_it(cat, monke
         t.join(10)
     assert len(got) == 6 and len({id(p) for p in got}) == 1
     assert len(loads) == 1
+
+
+@pytest.mark.parametrize("models, names", [
+    (["default-vad", "silero-vad"], ["silero-vad"]),  # alias and id
+    (["silero-vad", "silero-vad"], ["silero-vad"]),
+    (["whisper-large-v3", "default-asr", "silero-vad"], ["whisper-large-v3", "silero-vad"]),  # order kept
+])
+def test_a_lease_that_names_a_model_twice_names_it_once(cat, models, names):
+    from fastapi.testclient import TestClient
+
+    from catalog.app import create_app
+
+    with TestClient(create_app(cat, start=False), raise_server_exceptions=False) as api:
+        r = api.post("/api/leases", json={"holder": "bench:job-1", "models": models})
+        assert r.status_code == 201, r.text
+        assert r.json()["models"] == names
+        r = api.post("/api/leases", json={"holder": "bench:job-2", "models": ["silero-vad", "nope", "nope"]})
+        assert r.status_code == 404 and r.json()["error"]["message"].startswith("unknown service 'nope'")
