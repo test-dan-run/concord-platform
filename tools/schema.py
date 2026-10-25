@@ -252,57 +252,77 @@ class Manifest(_Strict):
 
     @model_validator(mode="after")
     def _rules(self, info: ValidationInfo) -> Manifest:
-        errors: list[str] = []
+        """The rules across fields. load_platform passes engines.yaml and api_types.yaml in the context;
+        without them the checks that need those files are skipped."""
         ctx = info.context or {}
-        engines: dict[str, Engine] | None = ctx.get("engines")
-        invalid_engines: set[str] = ctx.get("invalid_engines") or set()  # in engines.yaml, but failed validation
-        api_types: dict[str, dict] | None = ctx.get("api_types")
+        errors = self._contract_errors(ctx.get("api_types"))
+        if self.engine == CUSTOM_ENGINE:
+            errors += self._custom_errors()
+        else:
+            errors += self._engine_errors(ctx.get("engines"), ctx.get("invalid_engines") or set())
+        errors += self._kind_errors()
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
 
+    def _contract_errors(self, api_types: dict[str, dict] | None) -> list[str]:
+        errors = []
         if self.contract != "openai" and not self.contract_reason:
             errors.append(f"contract_reason is required when contract is {self.contract!r}")
         if self.contract == "oip-v2" and self.signature is None:
             errors.append("signature is required for contract 'oip-v2'")
         if self.contract != "oip-v2" and self.signature is not None:
             errors.append("signature is only allowed for contract 'oip-v2'")
-
         if api_types is not None:
             allowed = sorted(api_types.get(self.contract, {}))
             if self.api not in allowed:
                 errors.append(f"api {self.api!r} is not valid for contract {self.contract!r} (allowed: {', '.join(allowed)})")
+        return errors
 
-        if self.engine == CUSTOM_ENGINE:
-            if self.build is None:
-                errors.append("engine 'custom' requires build")
-            if self.gpu is not None and self.gpu.vram_gb is None:
-                errors.append("custom services declare GPU memory with gpu.vram_gb, not gpu.util")
-        else:
-            if self.kind != "model":
-                errors.append(f"engine {self.engine!r} requires kind 'model'")
-            if not self.model:
-                errors.append(f"engine {self.engine!r} requires model (a /models/... path)")
-            elif not self.model.startswith(MODELS_MOUNT + "/"):
-                # Two groups only: custom weights (weights.yaml) and local copies in ${AI_ASSETS}. No hub
-                # downloads at start, so the files a build runs are always the files on disk.
-                errors.append(f"model {self.model!r} must be a local copy, /models/<dir> in ${{AI_ASSETS}} "
-                              f"(`hf download {self.model} --revision <sha> --local-dir $AI_ASSETS/<dir>`)")
-            for key in ("build", "weights", "custom_reason"):
-                if getattr(self, key) is not None:
-                    errors.append(f"{key} is not allowed with engine {self.engine!r}")
-            if engines is not None:
-                engine = engines.get(self.engine)
-                if engine is None and self.engine in invalid_engines:
-                    errors.append(f"engine {self.engine!r} is invalid in engines.yaml")
-                elif engine is None:
-                    known = ", ".join(sorted([*engines, CUSTOM_ENGINE]))
-                    errors.append(f"engine {self.engine!r} is not defined in engines.yaml (known: {known})")
-                else:
-                    if self.contract != engine.contract:
-                        errors.append(f"contract {self.contract!r} does not match engine {self.engine!r} contract {engine.contract!r}")
-                    if engine.gpu and (self.gpu is None or self.gpu.util is None):
-                        errors.append(f"engine {self.engine!r} requires gpu.util")
-                    if not engine.gpu and self.gpu is not None:
-                        errors.append(f"engine {self.engine!r} runs on CPU; remove gpu")
+    def _custom_errors(self) -> list[str]:
+        errors = []
+        if self.build is None:
+            errors.append("engine 'custom' requires build")
+        if self.gpu is not None and self.gpu.vram_gb is None:
+            errors.append("custom services declare GPU memory with gpu.vram_gb, not gpu.util")
+        return errors
 
+    def _engine_errors(self, engines: dict[str, Engine] | None, invalid_engines: set[str]) -> list[str]:
+        """An engine service. A utility on an engine gets its error from _kind_errors."""
+        errors = []
+        if not self.model:
+            errors.append(f"engine {self.engine!r} requires model (a /models/... path)")
+        elif not self.model.startswith(MODELS_MOUNT + "/"):
+            # Two groups only: custom weights (weights.yaml) and local copies in ${AI_ASSETS}. No hub
+            # downloads at start, so the files a build runs are always the files on disk.
+            errors.append(f"model {self.model!r} must be a local copy, /models/<dir> in ${{AI_ASSETS}} "
+                          f"(`hf download {self.model} --revision <sha> --local-dir $AI_ASSETS/<dir>`)")
+        for key in ("build", "weights", "custom_reason"):
+            if getattr(self, key) is not None:
+                errors.append(f"{key} is not allowed with engine {self.engine!r}")
+        if engines is not None:
+            errors += self._engines_yaml_errors(engines, invalid_engines)
+        return errors
+
+    def _engines_yaml_errors(self, engines: dict[str, Engine], invalid_engines: set[str]) -> list[str]:
+        """The engine is in engines.yaml and fits it. invalid_engines are in engines.yaml but failed validation."""
+        engine = engines.get(self.engine)
+        if engine is None and self.engine in invalid_engines:
+            return [f"engine {self.engine!r} is invalid in engines.yaml"]
+        if engine is None:
+            known = ", ".join(sorted([*engines, CUSTOM_ENGINE]))
+            return [f"engine {self.engine!r} is not defined in engines.yaml (known: {known})"]
+        errors = []
+        if self.contract != engine.contract:
+            errors.append(f"contract {self.contract!r} does not match engine {self.engine!r} contract {engine.contract!r}")
+        if engine.gpu and (self.gpu is None or self.gpu.util is None):
+            errors.append(f"engine {self.engine!r} requires gpu.util")
+        if not engine.gpu and self.gpu is not None:
+            errors.append(f"engine {self.engine!r} runs on CPU; remove gpu")
+        return errors
+
+    def _kind_errors(self) -> list[str]:
+        errors = []
         if self.kind == "utility":
             if self.engine != CUSTOM_ENGINE:
                 errors.append("kind 'utility' requires engine 'custom'")
@@ -312,10 +332,7 @@ class Manifest(_Strict):
                 errors.append("model is not allowed for kind 'utility'")
         if self.kind == "model" and self.engine == CUSTOM_ENGINE and not self.custom_reason:
             errors.append("custom_reason is required for kind 'model' with engine 'custom' (why can no engine serve it?)")
-
-        if errors:
-            raise ValueError("; ".join(errors))
-        return self
+        return errors
 
     # ---- derived values used by render / vram / client
 
