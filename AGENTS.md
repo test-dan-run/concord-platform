@@ -34,7 +34,7 @@ uv sync                  # Python venv, including the editable aicore and aisvc 
 just validate            # schema, uniqueness and contract checks, plus the dataset version samples
 just render              # validate, then write the generated files
 just vram                # least GPU memory per service; `just vram A B` checks a set
-just test                # Python unit tests (about two minutes, no GPU, Docker or weights needed)
+just test                # Python unit tests (about a minute, no GPU, Docker or weights needed)
 just conform [NAME]      # contract checks against running services; a service that is down is skipped
 just catalog-ui          # npm ci and build the UI into catalog/ui/dist
 cd catalog/ui && npm run lint && npm test   # UI type check (tsc) and vitest
