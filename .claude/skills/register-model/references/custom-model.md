@@ -99,14 +99,14 @@ before writing anything.
       with running(app_mod.build_app(FakeModel())) as c:   # FakeModel: same interface, no weights
           yield c
 
-  @pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-  def test_conformance(client, check):
-      check(client, META)
+  def test_conformance(client):
+      for check in checks_for(META):
+          check(client, META)
   ```
 
-  For `oip-v2`, also assert that the server `SIGNATURE` equals the manifest signature (see
-  silero-vad). Add a real-model test marked `@pytest.mark.weights` that skips when the weights are
-  missing.
+  For `oip-v2`, the `oip_metadata_matches_signature` check already compares the server's
+  `SIGNATURE` with the manifest signature, so no separate test is needed. Add a real-model test
+  marked `@pytest.mark.weights` that skips when the weights are missing.
 
 ## Batching
 

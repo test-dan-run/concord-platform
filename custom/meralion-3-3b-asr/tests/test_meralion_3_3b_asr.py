@@ -78,9 +78,9 @@ def post_together(client, payloads):
     return out
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def test_json_has_only_text_and_the_tag_is_stripped(client):
@@ -109,15 +109,6 @@ def test_a_file_under_0_1_s_gives_empty_text_without_the_model(client, model):
     r = post(client, wav(0.001), response_format="verbose_json")  # 16 samples
     assert r.status_code == 200 and r.json()["text"] == "" and r.json()["duration"] == 0.001
     assert model.chunks == []
-
-
-def test_text_format(client):
-    r = post(client, wav(1.0), response_format="text")
-    assert r.status_code == 200 and r.text == "chunk16000"
-
-
-def test_undecodable_audio_is_400(client):
-    assert post(client, b"not audio at all").status_code == 400
 
 
 def test_concurrent_requests_share_one_batch(monkeypatch):

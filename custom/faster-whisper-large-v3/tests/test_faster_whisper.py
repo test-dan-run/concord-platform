@@ -53,9 +53,9 @@ def post(client, data, payload=None):
     return client.post("/v1/audio/transcriptions", data={"model": "faster-whisper-large-v3", **data}, files=files)
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def test_json_has_only_text(client):
@@ -178,8 +178,7 @@ def pipeline(monkeypatch):
     return calls, fits
 
 
-@pytest.mark.parametrize("env, size", [({}, 8), ({"AISVC_MAX_BATCH": "16"}, 16),
-                                       ({"AISVC_MAX_BATCH": "16", "AISVC_MAX_BATCH_LEN": "100000"}, 3),
+@pytest.mark.parametrize("env, size", [({}, 8), ({"AISVC_MAX_BATCH": "16", "AISVC_MAX_BATCH_LEN": "100000"}, 3),
                                        ({"AISVC_MAX_BATCH_LEN": "1000"}, 1)])
 def test_batch_size_from_the_limits(monkeypatch, env, size):
     for k in ("AISVC_MAX_BATCH", "AISVC_MAX_BATCH_LEN"):

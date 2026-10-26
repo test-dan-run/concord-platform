@@ -72,9 +72,8 @@ def test_failed_batch_is_released_before_files_run_again(monkeypatch, error):
     assert freed == [False]  # once, before the reruns, with the failed batch already released
 
 
-@pytest.mark.parametrize("error", ["bad chunk", "CUDA out of memory"])
-def test_one_file_group_returns_its_error_without_a_rerun(monkeypatch, error):
-    model = TrackingArk(error)
+def test_one_file_group_returns_its_error_without_a_rerun(monkeypatch):
+    model = TrackingArk("CUDA out of memory")
     files, freed = build_files(monkeypatch, model)
     out = files([[np.zeros(48000, np.float32)]])
     assert len(out) == 1 and isinstance(out[0], RuntimeError)

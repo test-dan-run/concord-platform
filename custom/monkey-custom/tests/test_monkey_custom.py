@@ -31,9 +31,9 @@ def client():
         yield c
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def transform(c, input, **options):

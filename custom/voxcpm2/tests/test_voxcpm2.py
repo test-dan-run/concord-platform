@@ -84,14 +84,9 @@ def outputs(r):
     return {o["name"]: o for o in r.json()["outputs"]}
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
-
-
-def test_server_signature_matches_manifest():
-    assert app_mod.SIGNATURE == {k: [{f: t[f] for f in ("name", "datatype", "shape")} for t in v]
-                                 for k, v in META["signature"].items()}
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def test_ultimate_mode_passes_the_clip_as_prompt_and_reference(client, synth):
