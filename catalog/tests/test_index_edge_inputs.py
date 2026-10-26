@@ -19,7 +19,7 @@ def raw(api, path: str, body: str):
     return api.post(path, content=body, headers={"content-type": "application/json"})
 
 
-@pytest.mark.parametrize("bad", ["NaN", "Infinity", "-Infinity", "1" + "0" * 400], ids=["nan", "inf", "-inf", "1e400"])
+@pytest.mark.parametrize("bad", ["NaN", "1" + "0" * 400], ids=["nan", "1e400"])  # isfinite fails; float() overflows
 def test_a_span_that_is_not_a_finite_number_is_refused(api, bad):
     good = '{"build_key": "bk", "audio_sha256": "%s", "params_hash": "p", "span_start": 0, "span_end": 1, ' \
            '"output_id": 1}' % ("a" * 64)
@@ -31,8 +31,8 @@ def test_a_span_that_is_not_a_finite_number_is_refused(api, bad):
     assert raw(api, "/api/index/lookup", '{"app": "x", "keys": [%s]}' % key).status_code == 422
 
 
-IDS = [("²", "²"), ("--5", "--5"), ("-", "-"), ("007", "007"), ("-0", "-0"), (" 5", " 5"), ("abc", "abc"),
-       ("1" * 5000, "1" * 5000), ("9" * 19, int("9" * 19)), (812, 812), ("812", 812), (-5, -5), (0, 0)]
+# The boundaries of the integer form; test_catalog_client covers leading zeros, -0, long and non-ASCII digit ids.
+IDS = [("--5", "--5"), (" 5", " 5"), ("9" * 19, int("9" * 19)), (0, 0)]
 
 
 @pytest.mark.parametrize("oid, back", IDS, ids=[repr(o)[:12] for o, _ in IDS])

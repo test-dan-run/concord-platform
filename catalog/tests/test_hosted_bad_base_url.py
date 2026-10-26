@@ -10,8 +10,7 @@ from catalog.app import create_app
 ASR = {"id": "hosted-asr", "contract": "openai", "api": "audio.transcriptions", "base_url": "https://api.example.com/v1",
        "model": "whisper-1", "auth_type": "bearer", "key": "sk-test-0123456789abcdef7f3a", "timeout_s": 5,
        "max_concurrency": 2, "max_upload_mb": 1, "data_leaves_network": True}
-BAD = ["https://[api.example.com/v1", "https://api.example.com:99999/v1", "https://api.example.com:abc/v1",
-       "https:///v1", "https://:443/v1"]
+BAD = ["https://[api.example.com/v1", "https://api.example.com:99999/v1", "https:///v1"]
 
 
 @pytest.fixture

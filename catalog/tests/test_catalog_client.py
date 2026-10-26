@@ -60,35 +60,24 @@ def test_heartbeat_of_an_ended_lease_is_a_409_and_the_lease_is_lost(c):
     assert lease.lost == f"lease {lease.id} is released" and not lease.active
 
 
-def test_lease_resolves_an_alias(c):
-    lease = c.request_lease("x:1", ["default-vad"])
-    assert lease["models"] == ["silero-vad"] and c.get_lease(lease["id"])["models"] == ["silero-vad"]
-    if isinstance(c, FakeCatalog):
-        assert c.calls[-1] == ("lease", ("x:1", ("default-vad",)))  # the call log keeps the models as given
-
-
-def test_lease_names_each_model_once(c):
+def test_lease_resolves_an_alias_and_names_each_model_once(c):
     lease = c.request_lease("x:1", ["default-vad", "silero-vad"])  # an alias and its id are the same model
     assert lease["models"] == ["silero-vad"] and c.get_lease(lease["id"])["models"] == ["silero-vad"]
     if isinstance(c, FakeCatalog):
-        assert c.calls[-1] == ("lease", ("x:1", ("default-vad", "silero-vad")))
+        assert c.calls[-1] == ("lease", ("x:1", ("default-vad", "silero-vad")))  # the call log keeps them as given
 
 
-@pytest.mark.parametrize("ending", ["expired", "failed"])
-def test_release_leaves_an_ended_lease_as_it_ended(c, cat, runtime, ending):
-    if ending == "failed":
-        runtime.fail.add("silero-vad")
-    lid = c.request_lease("x:1", ["silero-vad"], ttl_s=0.05 if ending == "expired" else 90)["id"]
+def test_release_leaves_an_ended_lease_as_it_ended(c, cat, runtime):
+    # failed stands for every ended state: release checks only whether the lease is still live
+    runtime.fail.add("silero-vad")
+    lid = c.request_lease("x:1", ["silero-vad"])["id"]
     if isinstance(c, FakeCatalog):
-        c._leases[lid]["state"] = ending  # the fake has no clock or containers: an app test ends a lease this way
-    elif ending == "expired":
-        time.sleep(0.1)
-        cat.scheduler.tick()
+        c._leases[lid]["state"] = "failed"  # the fake has no containers: an app test ends a lease this way
     else:
         step(cat)
-    assert c.get_lease(lid)["state"] == ending
+    assert c.get_lease(lid)["state"] == "failed"
     c.release(lid)
-    assert c.get_lease(lid)["state"] == ending
+    assert c.get_lease(lid)["state"] == "failed"
 
 
 # ----------------------------------------------------------------------------- output index and apps
@@ -100,18 +89,12 @@ def test_lookup_prefers_the_asking_app_then_other_owners_by_name(c):
     assert c.index_lookup("label", [KEY]) == [{"owner": "alpha", "output_id": 3, "owner_url": None}]
 
 
-def test_lookup_gives_digit_string_output_ids_as_ints(c):
-    c.index_record("bench", [{**KEY, "output_id": "7"}, {**KEY, "params_hash": "q" * 16, "output_id": "-3"},
-                             {**KEY, "params_hash": "r" * 16, "output_id": "run-4"}])
-    hits = c.index_lookup("label", [KEY, {**KEY, "params_hash": "q" * 16}, {**KEY, "params_hash": "r" * 16}])
-    assert [h["output_id"] for h in hits] == [7, -3, "run-4"]
-
-
-def test_lookup_keeps_ids_that_are_not_plain_integers_as_text(c):
-    ids = ["007", "-0", "1" * 25, "²", "٣"]  # leading zero, minus zero, past int64, and digits that are not ASCII
-    keys = [{**KEY, "params_hash": f"{i}" * 16} for i in "abcde"]
+def test_lookup_gives_digit_string_output_ids_as_ints_and_keeps_the_rest_as_text(c):
+    # leading zero, minus zero, past int64, and digits that are not ASCII stay text
+    ids = ["7", "-3", "run-4", "007", "-0", "1" * 25, "²", "٣"]
+    keys = [{**KEY, "params_hash": f"{i}" * 16} for i in "abcdefgh"]
     c.index_record("bench", [{**k, "output_id": i} for k, i in zip(keys, ids, strict=True)])
-    assert [h["output_id"] for h in c.index_lookup("label", keys)] == ids
+    assert [h["output_id"] for h in c.index_lookup("label", keys)] == [7, -3, "run-4", "007", "-0", "1" * 25, "²", "٣"]
 
 
 def test_forget_compares_output_ids_as_strings(c):

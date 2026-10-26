@@ -53,8 +53,9 @@ def test_bundle_writes_shared_layers_once_and_streams_one_tar(api, cat, images, 
     assert listed["silero-vad"]["image_size"] == 6000 and listed["pyannote-diarization"]["image_size"] == 7000
     assert listed["silero-vad"]["exportable"] and listed["pyannote-diarization"]["weights_size"] > 0
     api.post("/api/models/silero-vad/register", json={"tags": ["vad"], "display_name": "Silero"})
-    r = api.post("/api/exports", json={"models": PAIR})
+    r = api.post("/api/exports", json={"models": ["silero-vad", "default-vad", "pyannote-diarization"]})  # once each
     assert r.status_code == 202 and r.json()["state"] in ("queued", "running", "done")
+    assert r.json()["request"]["models"] == PAIR
     job = finish(cat, api, r.json()["id"])
     assert job["state"] == "done" and job["available"], job
     root = settings.export_dir / job["name"]

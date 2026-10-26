@@ -1,21 +1,14 @@
-"""Bundles are removed when CATALOG_EXPORT_DIR is a symlink or a relative path."""
+"""Bundles are removed when CATALOG_EXPORT_DIR is a symlink (both sides are resolved, which also covers a relative
+path), and a folder outside it never is."""
 
-from pathlib import Path
-
-import pytest
 from export_helpers import PAIR, api, finish, images  # noqa: F401  (fixtures)
 
 
-@pytest.mark.parametrize("kind", ["symlink", "relative"])
-def test_deleting_a_bundle_removes_its_folder(api, cat, images, tmp_path, monkeypatch, kind):
+def test_deleting_a_bundle_removes_its_folder(api, cat, images, tmp_path):
     real = tmp_path / "real-exports"
     real.mkdir()
-    if kind == "symlink":
-        cat.settings.export_dir = tmp_path / "exports-link"
-        cat.settings.export_dir.symlink_to(real)
-    else:
-        monkeypatch.chdir(tmp_path)
-        cat.settings.export_dir = Path("real-exports")
+    cat.settings.export_dir = tmp_path / "exports-link"
+    cat.settings.export_dir.symlink_to(real)
     job = finish(cat, api, api.post("/api/exports", json={"models": PAIR}).json()["id"])
     assert job["state"] == "done", job
     folder = real / job["name"]

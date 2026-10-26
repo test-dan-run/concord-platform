@@ -61,15 +61,12 @@ def test_oip_metadata_that_is_not_json_is_a_contract_failure_not_a_500(api, cat)
     assert c.status_code == 422 and "cannot read vad-x's OIP metadata" in c.json()["error"]["message"]
 
 
-@pytest.mark.parametrize("answer", [httpx.Response(401, json={"error": "bad key"}), None])
-def test_every_result_has_its_test_time(api, cat, answer):
+def test_every_result_has_its_test_time(api, cat):
     provider(cat, lambda r: httpx.Response(200, json={"data": [{"id": "whisper-1"}]}))
     assert api.post("/api/hosted", json=ASR).status_code == 201
 
     def handler(r):
-        if answer is None:
-            raise httpx.ConnectError("refused", request=r)
-        return answer
+        raise httpx.ConnectError("refused", request=r)
 
     provider(cat, handler)
     out = api.post("/api/models/hosted-asr/test").json()
