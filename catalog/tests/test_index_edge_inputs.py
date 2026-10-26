@@ -19,7 +19,8 @@ def raw(api, path: str, body: str):
     return api.post(path, content=body, headers={"content-type": "application/json"})
 
 
-@pytest.mark.parametrize("bad", ["NaN", "1" + "0" * 400], ids=["nan", "1e400"])  # isfinite fails; float() overflows
+@pytest.mark.parametrize("bad", ["NaN", "Infinity", "-Infinity", "1" + "0" * 400],
+                         ids=["nan", "inf", "-inf", "1e400"])  # isfinite fails; float() overflows
 def test_a_span_that_is_not_a_finite_number_is_refused(api, bad):
     good = '{"build_key": "bk", "audio_sha256": "%s", "params_hash": "p", "span_start": 0, "span_end": 1, ' \
            '"output_id": 1}' % ("a" * 64)

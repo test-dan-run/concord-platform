@@ -23,6 +23,8 @@ BAD = [
      times("segments.jsonl", "nan", "0.2")),
     ({"segments.jsonl": '{"file": "a.wav", "start": 0.1, "end": Infinity, "text": "hello"}\n' + GOOD}, ("asr",),
      times("segments.jsonl", "0.1", "inf")),
+    ({"segments.jsonl": '{"file": "a.wav", "start": -Infinity, "end": 0.2, "text": "hello"}\n' + GOOD}, ("asr",),
+     times("segments.jsonl", "-inf", "0.2")),
     ({"refs.rttm": "SPEAKER a 1 nan 0.5 <NA> <NA> s1 <NA> <NA>\n"}, ("diar",), times("refs.rttm", "nan", "nan")),
     ({"segments.jsonl": GOOD, "uids.jsonl": '{"file": "b.wav", "start": NaN, "end": 0.4, "uid": "u1"}\n'}, ("asr",),
      "refs/uids.jsonl line 1: needs file (a files.csv path), start, end, uid"),
@@ -33,7 +35,7 @@ BAD = [
     ({"segments.jsonl": GOOD, "uids.jsonl": '{"file": "b.wav", "start": true, "end": 0.4, "uid": "u1"}\n'}, ("asr",),
      "refs/uids.jsonl line 1: needs file (a files.csv path), start, end, uid"),
 ]
-IDS = ["jsonl-nan", "jsonl-inf", "rttm-nan", "uids-nan", "uids-inf", "uids-too-large", "uids-true"]
+IDS = ["jsonl-nan", "jsonl-inf", "jsonl-minus-inf", "rttm-nan", "uids-nan", "uids-inf", "uids-too-large", "uids-true"]
 
 
 @pytest.fixture
