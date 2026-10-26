@@ -1,4 +1,4 @@
-// Storage (DATASET_CATALOG_PLAN.md §4.3, §6): how big the audio store is, how much of its audio versions list, apps
+// Storage (catalog/README.md "Holds and clean-up"): how big the audio store is, how much of its audio versions list, apps
 // hold, or nothing needs, and each app's holds. Clean-up always shows a dry run first; it deletes only audio that
 // no version lists, no app holds, and that has been in the store for more than 24 hours.
 

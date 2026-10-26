@@ -1,4 +1,4 @@
-"""Clean-up of the audio store (DATASET_CATALOG_PLAN.md §4.3).
+"""Clean-up of the audio store (README "Holds and clean-up").
 
 An audio file is deleted only when no version lists it, no app holds it, and it has been in the store for more
 than 24 hours, so an upload that hasn't been published or held yet is safe. A partial upload counts from its last

@@ -1,5 +1,5 @@
 """aicore.datasets: every case runs against FakeDatasetCatalog and against DatasetCatalog talking to the catalog
-service in process, so the fake keeps to the server's rules (DATASET_CATALOG_PLAN.md §7.3, D2's exit)."""
+service in process, so the fake keeps to the server's rules."""
 
 import contextlib
 import json

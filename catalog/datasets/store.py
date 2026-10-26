@@ -1,4 +1,4 @@
-"""The audio store: original audio bytes keyed by the hex sha256 of those bytes (DATASET_CATALOG_PLAN.md §4.1).
+"""The audio store: original audio bytes keyed by the hex sha256 of those bytes (README "The store").
 
     audio/<sha256[0:2]>/<sha256>   no extension: two uploads of the same bytes can be .wav and .WAV
     tmp/<sha256>                   an upload in progress

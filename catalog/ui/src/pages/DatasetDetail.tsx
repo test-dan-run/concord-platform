@@ -1,4 +1,4 @@
-// One dataset (DATASET_CATALOG_PLAN.md §6): its version history with a short summary of each version's changes
+// One dataset (catalog/README.md "Pages"): its version history with a short summary of each version's changes
 // from its parent, and which app datasets were made from each version. A person edits the name, description and
 // tags here, downloads a version as a reference package, and deletes a version or the whole dataset (§5.3).
 

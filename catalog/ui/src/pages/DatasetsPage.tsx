@@ -1,4 +1,4 @@
-// The Dataset Catalog's home (DATASET_CATALOG_PLAN.md §6): every dataset with its latest version, searched and
+// The Dataset Catalog's home (catalog/README.md "Pages"): every dataset with its latest version, searched and
 // filtered by language, label type and app. The filters live in the URL, so a filtered list can be shared.
 
 import { useQuery } from "@tanstack/react-query";

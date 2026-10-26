@@ -4,7 +4,7 @@ A dataset version in the Dataset Catalog is a folder that holds a reference pack
 platform owns the format, and the catalog service stores each version under
 `${DATASET_STORE}/versions/<dataset_id>/<n>/`. Concord Bench and Concord Label read versions from that folder on
 the store's mount. Their CONTRACTS.md §2 defines a reference package zip as a dataset version plus `audio/`, with
-a link to this file. The design is in [../../DATASET_CATALOG_PLAN.md](../../DATASET_CATALOG_PLAN.md) §5.
+a link to this file.
 
 The format is `concord-reference-package`, format version 3. Readers also take versions 1 and 2. Version 1 has no
 labels, version 2 adds labels, and version 3 allows a version with audio only (§6). A reader refuses a format
