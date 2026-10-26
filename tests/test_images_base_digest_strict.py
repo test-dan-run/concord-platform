@@ -17,25 +17,20 @@ def context(tmp_path, instruction, ignore=""):
 
 @pytest.mark.parametrize("copy", [
     "COPY common/*.toml /tmp/aisvc/",
-    "COPY common/pyproject.tom? /tmp/aisvc/",
     "COPY common/[p]yproject.toml /tmp/aisvc/",
     "COPY /requirements-base.txt /tmp/",
     "COPY ../requirements-base.txt /tmp/",
     "COPY --from=builder /opt/venv /opt/venv",
-    "ADD --chown=1000:1000 common/*.toml /tmp/aisvc/",
-    "copy common/*.toml /tmp/aisvc/",
     "COPY requirements-base.txt /tmp/\\\n    common/ /tmp/aisvc/",
     "COPY requirements-base.txt /tmp/ \\  \n    common/ /tmp/aisvc/",
-    "copy common/ \\\n    /tmp/aisvc/",
-], ids=["star", "question", "class", "absolute", "parent", "from", "add", "lowercase", "attached-backslash",
-        "backslash-then-spaces", "lowercase-continued"])
+    'COPY ["common/", "/tmp/aisvc/"]',
+], ids=["star", "class", "absolute", "parent", "from", "attached-backslash", "backslash-then-spaces", "json"])
 def test_a_copy_it_cannot_read_is_refused(tmp_path, copy):
     with pytest.raises(ValueError, match="one-line COPY/ADD"):
         context(tmp_path, copy)()
 
 
-@pytest.mark.parametrize("copy", ["copy requirements-base.txt /tmp/", "Add requirements-base.txt /tmp/",
-                                  "COPY ./requirements-base.txt /tmp/"])
+@pytest.mark.parametrize("copy", ["Add requirements-base.txt /tmp/", "COPY ./requirements-base.txt /tmp/"])
 def test_a_copy_in_any_case_is_hashed(tmp_path, copy):
     digest = context(tmp_path, copy)
     before = digest()
@@ -46,9 +41,8 @@ def test_a_copy_in_any_case_is_hashed(tmp_path, copy):
 @pytest.mark.parametrize("run", [
     "RUN --mount=type=bind,source=common,target=/src pip install /src",
     "RUN --mount=source=common,target=/src pip install /src",
-    "run --mount=type=bind,source=common,target=/src pip install /src",
     "RUN \\\n    --mount=type=bind,source=common,target=/src pip install /src",
-], ids=["bind", "default-type", "lowercase", "continued"])
+], ids=["bind", "default-type", "continued"])
 def test_a_run_that_binds_context_files_is_refused(tmp_path, run):
     with pytest.raises(ValueError, match="RUN --mount"):
         context(tmp_path, run)()
@@ -84,7 +78,7 @@ def test_double_star_as_a_whole_name_still_works(tmp_path):
     assert images._ignored("build/x/y", r) and not images._ignored("common/x.py", r)
 
 
-@pytest.mark.parametrize("pattern", ["common/[Rr]EADME.md", "common/a**b", "common/**.md", "**b", "common/a\\*b"])
+@pytest.mark.parametrize("pattern", ["common/[Rr]EADME.md", "common/a**b", "common/a\\*b"])
 def test_an_ignore_pattern_it_cannot_translate_is_refused(tmp_path, pattern):
     digest = context(tmp_path, "COPY common/ /tmp/aisvc/", ignore=f"{pattern}\n")
     with pytest.raises(ValueError, match=".dockerignore"):

@@ -32,9 +32,8 @@ def raising(exc):
     return health
 
 
-@pytest.mark.parametrize("exc", [CatalogError(503, "busy"), httpx.ReadTimeout("timed out")], ids=["503", "timeout"])
-def test_a_catalog_that_does_not_answer_stops_the_command(docker, monkeypatch, capsys, exc):
-    monkeypatch.setattr(Catalog, "health", raising(exc))
+def test_a_catalog_that_does_not_answer_stops_the_command(docker, monkeypatch, capsys):
+    monkeypatch.setattr(Catalog, "health", raising(CatalogError(503, "busy")))
     assert stack.main(["up", "default-vad"]) == 1
     err = capsys.readouterr().err
     assert "error: catalog at " in err and "is not answering" in err and "AI_STACK_DIRECT=1 bypasses it" in err

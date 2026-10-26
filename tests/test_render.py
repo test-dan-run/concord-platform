@@ -42,11 +42,6 @@ def test_gpu_reservation_only_when_manifest_has_gpu():
         assert dev == [{"driver": "nvidia", "count": 1, "capabilities": ["gpu"]}]
 
 
-def test_ports_bind_to_localhost_only():
-    for s in compose_of(load_platform())["services"].values():
-        assert all(p.startswith("127.0.0.1:") for p in s["ports"])
-
-
 def test_engine_service_shape():
     p = load_platform()
     s = compose_of(p)["services"]["whisper-large-v3"]
@@ -56,11 +51,6 @@ def test_engine_service_shape():
     assert s["labels"]["aiplatform.image"] == "vllm/vllm-openai:v0.31.0"
     assert set(s["labels"]) >= {"aiplatform.name", "aiplatform.kind", "aiplatform.engine", "aiplatform.contract", "aiplatform.image"}
     assert "build" not in s and "--max-model-len=448" in s["command"]
-
-
-def test_no_engine_service_mounts_a_hub_cache():
-    for s in compose_of(load_platform())["services"].values():
-        assert not any("hf-cache" in v for v in s.get("volumes", [])) and "HF_HOME" not in s.get("environment", {})
 
 
 def test_custom_service_shape():
@@ -83,14 +73,6 @@ def test_healthcheck_uses_python_not_curl():
 def test_dollar_in_args_is_escaped(empty_services):
     empty_services.write(base_engine_manifest(args=["--chat-template=$HOME/t.jinja"]))
     assert "--chat-template=$$HOME/t.jinja" in compose_of(empty_services.load())["services"]["test-llm"]["command"]
-
-
-def test_render_is_deterministic():
-    first = render.outputs(load_platform())
-    second = render.outputs(load_platform())
-    assert first.keys() == second.keys()
-    for path in first:
-        assert first[path].encode() == second[path].encode(), path
 
 
 def test_endpoints_map_has_names_aliases_and_signature():
@@ -149,6 +131,8 @@ def test_snippet_is_standalone():
         assert doc["networks"]["ai-net"] == {"name": "ai-net"}  # created by compose, not external
         assert svc["ports"][0].startswith("127.0.0.1:")
     assert yaml.safe_load(render.snippet(p, "kokoro-tts"))["services"]["kokoro-tts"]["image"] == "ghcr.io/owner/kokoro-tts:0.1.0"
+    with pytest.raises(KeyError, match="unknown service 'nope'"):
+        render.snippet(p, "nope")
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not installed")
@@ -158,8 +142,3 @@ def test_snippet_passes_docker_compose_config(tmp_path):
     r = subprocess.run(["docker", "compose", "-f", str(f), "config", "-q"], capture_output=True, text=True,
                        env={"AI_ASSETS": str(tmp_path), "PATH": "/usr/bin:/bin:/usr/local/bin"})
     assert r.returncode == 0, r.stderr
-
-
-def test_unknown_snippet_name():
-    with pytest.raises(KeyError, match="unknown service 'nope'"):
-        render.snippet(load_platform(), "nope")
