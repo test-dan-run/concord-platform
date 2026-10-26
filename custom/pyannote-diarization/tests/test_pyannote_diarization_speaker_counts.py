@@ -9,9 +9,8 @@ SERVICE_DIR = Path(__file__).resolve().parents[1]
 diar_mod = load_server(SERVICE_DIR, "diarizer")
 
 
-@pytest.mark.parametrize("key", ["num_speakers", "min_speakers", "max_speakers"])
-@pytest.mark.parametrize("value", [True, False, 2.0, "2"])
-def test_a_speaker_count_that_is_not_an_int_is_refused(key, value):
+@pytest.mark.parametrize("value, key", [(True, "num_speakers"), (2.0, "min_speakers"), ("2", "max_speakers")])
+def test_a_speaker_count_that_is_not_an_int_is_refused(value, key):
     with pytest.raises(ValueError, match=f"{key} must be a positive integer"):
         diar_mod.DiarParams.from_parameters({key: value})
 

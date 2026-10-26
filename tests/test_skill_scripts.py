@@ -21,11 +21,7 @@ def test_platform_state_prints_the_next_free_port_for_an_api(capsys):
     used = {s.port for s in load_platform().services}
     free = next(port for port in range(8401, 8500) if port not in used)
     assert f"--api infer: contract oip-v2, band 84xx (other models), next free port {free}" in out
-
-
-def test_platform_state_uses_the_schema_port_bands(capsys):
-    platform_state = load_script("platform_state")
-    assert platform_state.main(["--api", "text.itn", "--kind", "utility"]) == 0
+    assert platform_state.main(["--api", "text.itn", "--kind", "utility"]) == 0  # the schema's port bands
     assert "band 85xx (utilities)" in capsys.readouterr().out
 
 

@@ -1,7 +1,6 @@
 """A probe that crashes, or an answer without the expected output, is one failed line: the rest of the report stays."""
 
 import httpx
-import pytest
 
 from catalog.verifier import probes
 
@@ -38,11 +37,9 @@ def test_a_segmenter_answer_without_segments_is_a_failed_line():
     assert names[-1] == "result" and any(n.startswith("contract") for n in names) and not rep.ok, rep.lines
 
 
-@pytest.mark.parametrize("detected", [False, True])
-def test_a_probe_that_crashes_keeps_the_conformance_lines(monkeypatch, detected):
+def test_a_probe_that_crashes_keeps_the_conformance_lines(monkeypatch):
     def crash(rep, http, meta):
-        if detected:
-            rep.tasks.append("vad")
+        rep.tasks.append("vad")  # it detected a task before it crashed: the crash clears it
         raise KeyError("SEGMENTS")
 
     monkeypatch.setattr(probes, "probe_segmenter", crash)

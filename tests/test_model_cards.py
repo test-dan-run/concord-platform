@@ -108,11 +108,8 @@ def test_rule_based_service_card_has_no_false_gaps(platform):
     card = cards.build(platform, platform.get("text-normalizer"))
     assert card["source"] is None and card["gaps"] == [] and [x["key"] for x in card["sections"]] == ["service"] and not card["model_weights"]
     assert "```" not in card["sections"][0]["markdown"] and "capitalise" in card["sections"][0]["markdown"]
-
-
-def test_custom_model_card_leaves_out_how_the_platform_serves_it(platform):
-    card = cards.build(platform, platform.get("silero-vad"))  # no fetched upstream card in the tmp assets
-    assert card["sections"] == []
+    # A custom model with weights gets no service section (and no fetched upstream card in the tmp assets).
+    assert cards.build(platform, platform.get("silero-vad"))["sections"] == []
 
 
 CARD = """\

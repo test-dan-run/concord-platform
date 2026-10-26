@@ -22,15 +22,15 @@ class FakeEmbedder(emb_mod.ReDimNet2Embedder):
         return [np.ones(4, np.float32) / 2 for _ in clips]
 
 
-@pytest.mark.parametrize("sr", [44100, 48000])
-def test_one_sample_is_repeated_to_the_minimum_length(sr):
+def test_one_sample_is_repeated_to_the_minimum_length():
+    sr = 44100  # 48 kHz takes the same path; the request test below uses it
     pytest.importorskip("soxr")
     x = emb_mod.prepare(np.ones(1, np.float32), sr)
     assert len(x) == int(emb_mod.MIN_S * emb_mod.SR) and np.all(x == 1.0)
 
 
-@pytest.mark.parametrize("sr", [44100, 48000])
-def test_one_sample_request_is_200(sr):
+def test_one_sample_request_is_200():
+    sr = 48000
     pytest.importorskip("soxr")
     body = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [1, 1], "data": [0.1]},
                        {"name": "LENGTHS", "datatype": "INT32", "shape": [1], "data": [1]},

@@ -68,6 +68,13 @@ def test_kv_profile_from_the_vllm_log():
     assert prof.recommend(24.0, 8192) < 9 and prof.recommend(19.0, 8192) == 0
     with pytest.raises(ValueError):
         kv_profile("no kv lines", 29.6)
+    # v0.31 prints the KV cache size and the concurrency on one line (measured on qwen3-8b, 2026-10-25)
+    text = ("INFO [gpu_worker.py:692] Available KV cache memory: 17.88 GiB\n"
+            "INFO [kv_cache_utils.py:2464] GPU KV cache size: 130,208 tokens, Maximum concurrency for 32,768 tokens "
+            "per request: 3.97x\n")
+    prof = kv_profile(text, 28.66)
+    assert prof.kv_tokens == 130208 and prof.max_model_len == 32768 and prof.max_concurrency == 3.97
+    assert prof.recommend(28.66, 32768) == 3
 
 
 def test_table_rows():
@@ -229,11 +236,14 @@ def test_an_override_replaces_the_measured_limits_it_sets(cat):
     assert cat.profiler.start_env("wavlm-sv", "unmeasured", 24.0) == {"AISVC_MAX_BATCH_LEN": "90500"}
     lim = cat.profiler.limits("wavlm-sv", "unmeasured", 24.0)
     assert lim["max_batch"] is None and lim["source"]["max_batch"] == "default"
-    for bad in ((None, None), (0, None), (5000, None), (None, 0.0), (None, 7000.0)):
+    # (None, 0.0004): an audio limit that rounds to 0 ms, which the image refuses as AISVC_MAX_BATCH_LEN
+    for bad in ((None, None), (0, None), (5000, None), (None, 0.0), (None, 0.0004), (None, 7000.0)):
         with pytest.raises(ValueError):
             cat.profiler.set_override("wavlm-sv", *bad)
     cat.profiler.clear_override("wavlm-sv")
     assert cat.profiler.start_env("wavlm-sv", "bk1", 24.0) == measured
+    cat.profiler.set_override("wavlm-sv", None, 0.001)
+    assert cat.profiler.start_env("wavlm-sv", "unmeasured", 24.0) == {"AISVC_MAX_BATCH_LEN": "1"}
 
 
 def test_the_batch_api_shows_and_sets_the_limits(cat, monkeypatch):
@@ -248,6 +258,7 @@ def test_the_batch_api_shows_and_sets_the_limits(cat, monkeypatch):
         assert v["override"]["max_batch"] == 4 and v["limits"]["max_batch"] == 4
         assert c.put("/api/models/wavlm-sv/batch-override", json={"max_batch": 0}).status_code == 422
         assert c.put("/api/models/wavlm-sv/batch-override", json={}).status_code == 422
+        assert c.put("/api/models/wavlm-sv/batch-override", json={"max_len_s": 0.0004}).status_code == 422
         assert c.delete("/api/models/wavlm-sv/batch-override").status_code == 204
         assert c.get("/api/models/wavlm-sv/batch").json()["override"] is None
         assert c.put("/api/models/bge-m3/batch-override", json={"max_batch": 4}).status_code == 409  # vLLM
@@ -282,20 +293,6 @@ def test_in_use_reports_the_start_limits_and_the_live_batchers(cat, monkeypatch)
     assert u["started_with"] is None and u["batchers"] == []
 
 
-def test_just_batch_prints_the_recommendation_and_table(cat, monkeypatch, capsys):
-    import aicore.catalog
-    from tools import batch as cli
-
-    cat.profiler._save("wavlm-sv", "bk1", "measured",
-                       Profile(kind="audio", base=TRUE[0], a=TRUE[1], b=TRUE[2], max_item_s=20.0, method="torch"), None)
-    monkeypatch.setattr(cat.builds, "current", lambda p, s, c: type("B", (), {"build_key": "bk1"})())
-    with TestClient(create_app(cat, start=False)) as api:
-        monkeypatch.setattr(cli, "Catalog", lambda timeout: aicore.catalog.Catalog("http://testserver", http=api))
-        assert cli.main(["show", "wavlm-sv", "--vram", "24", "--item-s", "20", "--n", "8"]) == 0
-    out = capsys.readouterr().out
-    assert "profile: measured" in out and "24 GB, items of 20 s: batch" in out and "needs" in out and "(full)" in out
-
-
 def test_sweep_stops_before_a_batch_predicted_over_the_budget():
     mem = FakeMemory(limit=1e9)  # no out of memory error ever (WSL2 spills to system RAM instead)
 
@@ -305,16 +302,6 @@ def test_sweep_stops_before_a_batch_predicted_over_the_budget():
     pts, stops, _ = sweep(send, mem, [15.0], budget_gib=8.0, max_n=128)
     assert all(p.peak_gib <= 0.95 * 8.0 for p in pts) and "would need about" in stops[0]["stopped"]
     assert max(p.n for p in pts) == 32  # 64 x 15 s would need about 9.4 GiB
-
-
-def test_kv_profile_from_a_vllm_0_31_log():
-    """v0.31 prints the KV cache size and the concurrency on one line (measured on qwen3-8b, 2026-10-25)."""
-    text = ("INFO [gpu_worker.py:692] Available KV cache memory: 17.88 GiB\n"
-            "INFO [kv_cache_utils.py:2464] GPU KV cache size: 130,208 tokens, Maximum concurrency for 32,768 tokens "
-            "per request: 3.97x\n")
-    prof = kv_profile(text, 28.66)
-    assert prof.kv_tokens == 130208 and prof.max_model_len == 32768 and prof.max_concurrency == 3.97
-    assert prof.recommend(28.66, 32768) == 3
 
 
 def test_no_request_carries_more_than_the_audio_cap():

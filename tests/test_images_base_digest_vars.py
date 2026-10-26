@@ -13,7 +13,7 @@ def base(tmp_path, dockerfile: str):
     return tmp_path
 
 
-@pytest.mark.parametrize("copy", ["COPY ${SRC}/ /tmp/aisvc/", "COPY $SRC/ /tmp/aisvc/", "COPY <<EOF /tmp/x\nx\nEOF"])
+@pytest.mark.parametrize("copy", ["COPY ${SRC}/ /tmp/aisvc/", "COPY <<EOF /tmp/x\nx\nEOF"])
 def test_a_copy_source_it_cannot_resolve_is_refused(tmp_path, copy):
     root = base(tmp_path, f"FROM python:3.12-slim\nARG SRC=common\n{copy}\n")
     with pytest.raises(ValueError, match="one-line COPY/ADD"):

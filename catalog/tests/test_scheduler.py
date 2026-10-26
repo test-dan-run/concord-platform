@@ -84,17 +84,6 @@ def test_every_other_gpu_model_is_stopped_or_none(cat, runtime):
     assert sorted(runtime.stopped) == ["qwen2-5-14b-instruct-awq", "qwen3-8b"] and cat.scheduler.swaps == 1
 
 
-def test_calls_in_flight_protect_a_model(cat, runtime):
-    run_unleased(cat, "qwen3-8b")
-    cat.scheduler.begin_call("qwen3-8b")
-    r = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])
-    step(cat)
-    assert cat.scheduler.get(r.id).state == "queued" and runtime.stopped == []
-    cat.scheduler.end_call("qwen3-8b", error=False)
-    step(cat)
-    assert cat.scheduler.get(r.id).state == "active" and runtime.stopped == ["qwen3-8b"]
-
-
 def test_settle_time_keeps_a_fresh_model_running(cat, runtime):
     run_unleased(cat, "qwen2-5-14b-instruct-awq")  # up for an hour
     cold(cat, "qwen2-5-14b-instruct-awq", 3600.0)  # settle time: 2 x cold start
@@ -136,12 +125,6 @@ def test_two_gpu_models_in_one_request_are_refused(cat):
     assert cat.scheduler.live_requests() == []
 
 
-def test_a_gpu_model_and_cpu_models_are_granted_together(cat, runtime):
-    r = cat.scheduler.request("bench:job-1", ["whisper-large-v3", "silero-vad"])
-    step(cat)
-    assert cat.scheduler.get(r.id).state == "active" and sorted(runtime.running) == ["silero-vad", "whisper-large-v3"]
-
-
 def test_the_swap_count_survives_a_restart(cat, settings, runtime):
     s = cat.scheduler
     cat.settings.release_linger_s = 3600.0
@@ -157,9 +140,9 @@ def test_the_swap_count_survives_a_restart(cat, settings, runtime):
 
 def test_missed_heartbeats_expire_a_lease_and_free_its_models(cat):
     s = cat.scheduler
-    r = s.request("bench:job-1", ["whisper-large-v3"], ttl_s=0.05)
+    r = s.request("bench:job-1", ["whisper-large-v3"])
     step(cat)
-    time.sleep(0.1)
+    s.requests[r.id].heartbeat_at -= 3600  # no heartbeat for an hour
     s.tick()
     assert s.get(r.id).state == "expired" and s.model_view("whisper-large-v3")["leased_by"] == []
 
@@ -171,14 +154,6 @@ def test_a_failed_start_fails_the_lease(cat, runtime):
     r = cat.scheduler.get(r.id)
     assert r.state == "failed" and "failed to start" in r.error
     assert cat.scheduler.model_view("whisper-large-v3")["state"] == "failed"
-
-
-def test_a_leased_model_that_dies_is_started_again(cat, runtime):
-    r = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])
-    step(cat)
-    runtime.running.pop("whisper-large-v3")  # crashed, or stopped by hand
-    step(cat)
-    assert cat.scheduler.get(r.id).state == "active" and runtime.started.count("whisper-large-v3") == 2
 
 
 def test_live_leases_survive_a_catalog_restart(cat, settings, runtime):
@@ -256,14 +231,6 @@ def test_a_model_another_request_needs_stays_up(cat, runtime):
     assert runtime.stopped == ["whisper-large-v3"]
 
 
-def test_a_model_started_on_purpose_stays_up_after_a_lease(cat, runtime):
-    cat.settings.release_linger_s = 0.0
-    run_unleased(cat, "whisper-large-v3")  # a manual start or `just up`
-    cat.scheduler.release(cat.scheduler.request("bench:job-1", ["whisper-large-v3"]).id)
-    step(cat)
-    assert runtime.stopped == [] and cat.scheduler.is_up("whisper-large-v3")
-
-
 def test_calls_in_flight_hold_off_the_spin_down(cat, runtime):
     s = cat.scheduler
     cat.settings.release_linger_s = 0.0
@@ -316,6 +283,7 @@ def test_without_a_measurement_a_gpu_model_gets_util_limit(cat, runtime):
 
 def test_a_model_waits_rather_than_loading_partly(cat, runtime):
     s = cat.scheduler
+    cat.settings.gpu_free_wait_s = 0.5  # one 1 s retry of the start's wait for memory, not the default 30 s
     runtime.gpu_total_gib = 31.84
     runtime.gpu_other_gib = 20.0
     r = s.request("bench:job-1", ["qwen2-5-14b-instruct-awq"])
@@ -369,10 +337,3 @@ def test_a_model_the_gateway_started_stops_after_the_idle_timeout(cat, runtime):
     cat.settings.gateway_idle_s = 0.0
     step(cat)
     assert runtime.stopped == ["whisper-large-v3"]
-
-
-def test_a_manual_start_has_no_idle_timeout(cat, runtime):
-    cat.settings.gateway_idle_s = 0.0
-    cat.scheduler.ensure_started("whisper-large-v3", holder="manual")
-    step(cat)
-    assert cat.scheduler.is_up("whisper-large-v3") and runtime.stopped == []

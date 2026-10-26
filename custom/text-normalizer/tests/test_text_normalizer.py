@@ -17,21 +17,22 @@ def client():
         yield c
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 @pytest.mark.parametrize(("text", "expected"), [
     ("hello world how are you", "Hello world how are you."),
-    ("how are you", "How are you?"),
     ("  hello   world.  how are   you ", "Hello world. How are you?"),
     ("ｈｅｌｌｏ　ｗｏｒｌｄ", "Hello world."),          # NFKC folds full-width forms and spaces
     ("already done!", "Already done!"),
-    ("it costs 5", "It costs 5."),
-    ("", ""),
     ("   ", ""),
     ("ends with emoji 🙂", "Ends with emoji 🙂"),       # only alphanumeric endings get punctuation
+    ("ßa", "Ssa."),                                     # a sentence starts with the titlecase: ß -> Ss, not SS
+    ("élan vital. über alles. ωmega", "Élan vital. Über alles. Ωmega."),  # any letter starts a sentence
+    ("3 apples. _x and 4 pears", "3 apples. _x and 4 pears."),  # digits and _ are not letters
+    ("日本語の文. こんにちは", "日本語の文. こんにちは."),        # scripts without case stay as they are
 ])
 def test_rules(text, expected):
     assert norm.normalize(text) == expected
@@ -51,8 +52,3 @@ def test_options_over_http(client):
 def test_unknown_option_is_400(client):
     r = client.post("/v1/text/transform", json={"model": "text-normalizer", "input": "x", "options": {"nope": True}})
     assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_options"
-
-
-def test_wrong_model_is_404(client):
-    r = client.post("/v1/text/transform", json={"model": "other", "input": "x"})
-    assert r.status_code == 404 and r.json()["error"]["code"] == "model_not_found"

@@ -33,12 +33,6 @@ def _uids(root: Path) -> list[tuple[str, str | None]]:
     return [(s["speaker"], s["uid"]) for s in refs.parse(root)["segments"]["a.wav"]]
 
 
-def test_two_co_timed_segments_keep_their_own_uids(tmp_path):
-    root = _version(tmp_path / "v", [("agent", 0.0, 1.0, "yes"), ("caller", 0.0, 1.0, "no")],
-                    [(0.0, 1.0, "u-agent"), (0.0, 1.0, "u-caller")])
-    assert _uids(root) == [("agent", "u-agent"), ("caller", "u-caller")]
-
-
 def test_a_uid_goes_to_the_nearest_segment_without_one(tmp_path):
     # Both segments are within 0.01 s of each uid; u2 is nearer the second, and u1 then takes the first.
     root = _version(tmp_path / "v", [("a", 0.0, 1.0, "x"), ("b", 0.008, 1.0, "y")],

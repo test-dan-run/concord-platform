@@ -36,10 +36,11 @@ def test_a_manual_start_for_a_model_a_lease_brings_back_keeps_its_pin(cat, runti
     s = cat.scheduler
     run = spun_down(cat)
     lease = s.request("bench:job-2", [M])  # starts it again after the stop
+    assert lease.state == "starting" and list(s._jobs.queue) == [("stop", M), ("start", M)]
     assert s.ensure_started(M, holder="manual").id == lease.id
     drain(cat)
     step(cat)
-    assert s.get(lease.id).state == "active" and run.pinned
+    assert s.get(lease.id).state == "active" and run.pinned and runtime.started == [M, M]
     s.release(lease.id)
     step(cat)
     assert s.is_up(M) and runtime.stopped == [M]

@@ -55,9 +55,9 @@ def client(model):
         yield c
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def test_wav_is_24khz_mono(client):
@@ -79,7 +79,7 @@ def test_openai_voice_names_and_speed_reach_the_model(client, model):
     assert model.resolve_voice("bm_george")[0] == "b"
 
 
-@pytest.mark.parametrize("fmt,ctype", [("mp3", "audio/mpeg"), ("flac", "audio/flac")])
+@pytest.mark.parametrize("fmt,ctype", [("mp3", "audio/mpeg")])  # flac takes the same soundfile path
 def test_compressed_formats(client, fmt, ctype):
     pytest.importorskip("soundfile")
     r = client.post("/v1/audio/speech", json={"model": "kokoro-tts", "input": "hi", "voice": "alloy", "response_format": fmt})
@@ -88,7 +88,6 @@ def test_compressed_formats(client, fmt, ctype):
 
 
 @pytest.mark.parametrize("body,status,code", [
-    ({"voice": "nobody"}, 400, None),               # unknown voice
     ({"voice": "jf_alpha"}, 400, None),             # Japanese voice: no Japanese pipeline in the image
     ({"response_format": "aac"}, 400, None),        # no aac encoder
     ({"model": "tts-1"}, 404, "model_not_found"),

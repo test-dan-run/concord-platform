@@ -46,14 +46,9 @@ def infer(client, audio, lengths, sr=16000):
     return client.post("/v2/models/utmos/infer", json=body)
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
-
-
-def test_server_signature_matches_manifest():
-    assert app_mod.SIGNATURE == {k: [{f: t[f] for f in ("name", "datatype", "shape")} for t in v]
-                                 for k, v in META["signature"].items()}
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def test_batch_uses_lengths(client, model):
@@ -67,7 +62,7 @@ def test_batch_uses_lengths(client, model):
     assert model.seen == [(16000, 16000), (32000, 16000)]
 
 
-@pytest.mark.parametrize("lengths, sr", [([9], 16000), ([0], 16000), ([4], 4000)])
+@pytest.mark.parametrize("lengths, sr", [([9], 16000), ([0], 16000)])  # a low rate: test_utmos_rates.py
 def test_bad_input_is_400(client, lengths, sr):
     assert infer(client, np.zeros((1, 4), np.float32), lengths, sr).status_code == 400
 

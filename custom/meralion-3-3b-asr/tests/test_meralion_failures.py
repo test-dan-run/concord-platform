@@ -55,9 +55,8 @@ def post_together(client, payloads):
     return out
 
 
-@pytest.mark.parametrize("error", [MemoryError("CUDA out of memory"), RuntimeError("bad chunk")],
-                         ids=["out_of_memory", "other_error"])
-def test_one_failing_file_fails_only_its_own_request(monkeypatch, error):
+def test_one_failing_file_fails_only_its_own_request(monkeypatch):
+    error = MemoryError("CUDA out of memory")  # a RuntimeError takes the same rerun path (see the rerun_memory tests)
     pytest.importorskip("soundfile")
     monkeypatch.setitem(sys.modules, "torch", None)  # is_oom then goes by the error alone
     monkeypatch.setenv("AISVC_BATCH_WAIT_MS", "500")

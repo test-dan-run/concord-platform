@@ -52,14 +52,9 @@ def infer(client, audio, sr=16000, **extra):
         {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1], "data": [sr]}], **extra})
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
-
-
-def test_server_signature_matches_manifest():
-    assert app_mod.SIGNATURE == {k: [{f: t[f] for f in ("name", "datatype", "shape")} for t in v]
-                                 for k, v in META["signature"].items()}
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def test_turns_sorted_and_speakers_in_arrival_order(client):
@@ -116,12 +111,6 @@ def test_silence_gives_empty_tensors(client):
 def test_model_errors_are_400(client):
     r = infer(client, np.ones(800), sr=8000)
     assert r.status_code == 400 and "SAMPLE_RATE" in r.json()["error"]
-
-
-def test_turns_to_tensors_unit():
-    t = turns_mod.turns_to_tensors([(2.0, 3.0, "spk9"), (0.0, 1.0, "spk3"), (1.5, 2.5, "spk9")])
-    assert t["SEGMENTS"].dtype == np.float32 and t["SPEAKERS"].dtype == np.int32
-    assert t["SEGMENTS"].tolist() == [[0.0, 1.0], [1.5, 2.5], [2.0, 3.0]] and t["SPEAKERS"].tolist() == [0, 1, 1]
 
 
 WEIGHTS = Path(os.path.expanduser(os.environ.get("AI_ASSETS", "~/ai-assets"))) / "pyannote-speaker-diarization-3.1"

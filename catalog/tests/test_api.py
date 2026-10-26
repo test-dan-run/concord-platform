@@ -40,6 +40,7 @@ def test_lease_lifecycle_over_http(api, cat):
     r = api.post("/api/leases", json={"holder": "bench:job-1", "models": ["default-asr"]})
     assert r.status_code == 201 and r.json()["state"] == "starting"
     lid = r.json()["id"]
+    wait_builds(cat, ["whisper-large-v3"])  # a lease waits for its build key, which a background thread hashes
     step(cat)
     assert api.get(f"/api/leases/{lid}").json()["state"] == "active"
     assert [x["id"] for x in api.get("/api/leases").json()] == [lid]
@@ -55,6 +56,7 @@ def test_one_gpu_model_per_lease_and_the_swap_count(api, cat):
     assert two.status_code == 422 and "lease one GPU model per stage" in two.json()["error"]["message"]
     assert api.get("/api/platform").json()["swaps"] == 0
     cat.settings.release_linger_s = 3600.0
+    wait_builds(cat, ["whisper-large-v3", "bge-m3"])
     for model in ["whisper-large-v3", "bge-m3"]:
         lid = api.post("/api/leases", json={"holder": "x", "models": [model]}).json()["id"]
         step(cat)
@@ -119,6 +121,7 @@ def test_gateway_forwards_unchanged_and_counts_calls(api, cat, monkeypatch):
         return httpx.Response(200, json={"text": "hi"}, headers={"x-model": "whisper"})
 
     cat.gateway.client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+    wait_builds(cat, ["whisper-large-v3"])
     r0 = cat.scheduler.request("bench:job-1", ["whisper-large-v3"])
     step(cat)
     assert cat.scheduler.get(r0.id).state == "active"

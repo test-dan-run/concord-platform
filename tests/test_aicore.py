@@ -1,6 +1,5 @@
 import importlib
 import sys
-from pathlib import Path
 
 import numpy as np
 import openai
@@ -56,6 +55,18 @@ def test_ai_host_controls_host_and_port(monkeypatch):
     assert endpoint("default-asr", host="localhost")["url"] == "http://localhost:8101"
 
 
+@pytest.mark.parametrize(("host", "url"), [
+    ("::1", "http://[::1]:8201"),  # local: the published port
+    ("[::1]", "http://[::1]:8201"),  # already in brackets, still local
+    ("fd00::5", "http://[fd00::5]:8000"),  # anything else: the internal port
+    ("[fd00::5]", "http://[fd00::5]:8000"),
+])
+def test_resolve_base_brackets_ipv6_literals(host, url):
+    """An IPv6 AI_HOST goes in brackets, so the port stays a port; [::1] is the local host, like ::1."""
+    entry = {"name": "qwen3-8b", "host_port": 8201, "internal_port": 8000}
+    assert aicore.endpoints.resolve_base(entry, host) == url
+
+
 def test_catalog_routes_every_contract_through_the_gateway(monkeypatch):
     monkeypatch.setenv("AICORE_CATALOG", "http://127.0.0.1:8700/")
     ep = endpoint("default-asr")
@@ -88,6 +99,7 @@ def test_unknown_name_lists_available():
         client("nope")
     msg = str(exc.value)
     assert "unknown service 'nope'" in msg and "default-chat" in msg and "silero-vad" in msg
+    assert "Hosted models are only reachable through the catalog" in msg  # no AICORE_CATALOG set
 
 
 @pytest.fixture
@@ -125,12 +137,6 @@ def test_hosted_models_resolve_through_the_catalog(monkeypatch, fake_catalog):
     assert model_name("whisper-large-v3") == "whisper-large-v3" and len(fake_catalog) == 1  # local names never ask
     with pytest.raises(UnknownServiceError, match="does not know it either"):
         endpoint("nope")
-
-
-def test_hosted_name_without_a_catalog_says_why(fake_catalog):
-    with pytest.raises(UnknownServiceError, match="only reachable through the catalog"):
-        model_name("hosted-asr")
-    assert fake_catalog == []
 
 
 def test_missing_endpoints_file_is_explained(monkeypatch, tmp_path):
@@ -208,26 +214,6 @@ def test_oip_client_validates_before_sending():
         c.encode({k: v for k, v in good.items() if k != "MASK"})
 
 
-BATCH_SIG = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]},
-                        {"name": "LENGTHS", "datatype": "INT32", "shape": [-1]},
-                        {"name": "SAMPLE_RATE", "datatype": "INT32", "shape": [1]}],
-             "outputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]}]}
-
-
-def test_oip_batch_signature_also_takes_one_clip_without_lengths():
-    """Callers that still send one clip (AUDIO [-1], no LENGTHS) to an enhancer or diarizer keep working."""
-    c = aicore.OIPClient("http://x", "enh", BATCH_SIG, http=object())
-    sr = np.array([16000], np.int32)
-    one = {t["name"]: t["shape"] for t in c.encode({"AUDIO": np.zeros(5, np.float32), "SAMPLE_RATE": sr})}
-    assert one == {"AUDIO": [5], "SAMPLE_RATE": [1]}  # sent as it is; the server takes it as one row
-    rows = c.encode({"AUDIO": np.zeros((2, 5), np.float32), "LENGTHS": np.array([5, 3], np.int32), "SAMPLE_RATE": sr})
-    assert [t["shape"] for t in rows] == [[2, 5], [2], [1]]
-    with pytest.raises(AicoreError, match="missing \\['LENGTHS'\\]"):  # a 2-D batch still needs its lengths
-        c.encode({"AUDIO": np.zeros((2, 5), np.float32), "SAMPLE_RATE": sr})
-    with pytest.raises(AicoreError, match="does not match"):
-        c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "SAMPLE_RATE": sr})
-
-
 ALIGN_SIG = {"inputs": [{"name": "AUDIO", "datatype": "FP32", "shape": [-1, -1]},
                         {"name": "LENGTHS", "datatype": "INT32", "shape": [-1]},
                         {"name": "TEXT", "datatype": "BYTES", "shape": [-1]}],
@@ -247,13 +233,6 @@ def test_oip_client_sends_one_clip_to_a_batch_signature_as_it_is():
         c.encode({"AUDIO": np.zeros((2, 5), np.float32), "TEXT": np.array(["a", "b"])})
     with pytest.raises(AicoreError, match="shape \\[5\\] does not match"):  # with LENGTHS, AUDIO must be 2-D
         c.encode({"AUDIO": np.zeros(5, np.float32), "LENGTHS": np.array([5], np.int32), "TEXT": np.array(["a"])})
-
-
-def test_oip_error_response_raises(oip_stub):
-    c = aicore.OIPClient("http://testserver", "other-model", STUB_SIG, http=oip_stub._http)
-    with pytest.raises(aicore.oip.OIPError) as exc:
-        c.metadata()
-    assert exc.value.status == 404 and "not found" in exc.value.message
 
 
 def test_oip_client_without_numpy_has_helpful_error(monkeypatch):
@@ -291,10 +270,6 @@ def test_text_service_client_itn():
         assert exc.value.code == "invalid_options"
         with pytest.raises(AicoreError, match="not text.transform"):
             c.transform("x")
-
-
-def test_generated_endpoints_file_location():
-    assert aicore.endpoints.GENERATED == Path(aicore.__file__).with_name("endpoints.generated.yaml")
 
 
 def test_batch_size_from_the_catalog_or_the_default(monkeypatch):

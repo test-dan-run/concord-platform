@@ -1,4 +1,5 @@
-"""`just batch` (tools/batch.py) shows the limits a custom GPU image starts with, the override and the running ones."""
+"""`just batch` (tools/batch.py) shows the recommendation and table, the limits a custom GPU image starts with, the
+override and the running ones."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from catalog.batching import Profile
 TRUE = (1.2, 0.004, 0.0003)  # base GiB, a per item-second, b per item-second²
 
 
-def test_just_batch_prints_the_limits_and_the_override(cat, monkeypatch, capsys):
+def test_just_batch_prints_the_recommendation_the_limits_and_the_override(cat, monkeypatch, capsys):
     import aicore.catalog
     from tools import batch as cli
 
@@ -20,10 +21,16 @@ def test_just_batch_prints_the_limits_and_the_override(cat, monkeypatch, capsys)
     monkeypatch.setattr(cat.builds, "current", lambda p, s, c: type("B", (), {"build_key": "bk1"})())
     with TestClient(create_app(cat, start=False)) as api:
         monkeypatch.setattr(cli, "Catalog", lambda timeout: aicore.catalog.Catalog("http://testserver", http=api))
-        assert cli.main(["show", "wavlm-sv", "--item-s", "20"]) == 0
+        assert cli.main(["show", "wavlm-sv", "--vram", "24", "--item-s", "20", "--n", "8"]) == 0
     out = capsys.readouterr().out
+    assert "profile: measured" in out and "24 GB, items of 20 s: batch" in out and "needs" in out and "(full)" in out
     assert "  next start (" in out and "max batch 16 (override)" in out and "s (measured)" in out
     assert "  override: max batch 16, max length from the profile (set " in out
+    with TestClient(create_app(cat, start=False)) as api:
+        monkeypatch.setattr(cli, "Catalog", lambda timeout: aicore.catalog.Catalog("http://testserver", http=api))
+        assert cli.main(["show", "wavlm-sv", "--item-s", "20"]) == 0
+    out = capsys.readouterr().out
+    assert "items of 20 s: batch" in out and "needs" not in out  # no --n: a recommendation and no need line
 
 
 def test_batch_show_prints_what_the_running_service_started_with(capsys):

@@ -445,12 +445,14 @@ def test_errors_without_the_catalogs_shape_still_raise(server):
 
 
 def test_the_store_defaults_match_the_service(monkeypatch, tmp_path):
-    for env in ({"AI_DATA": str(tmp_path / "data")}, {"DATASET_STORE": str(tmp_path / "s"), "AI_DATA": "x"}, {}):
+    for env, expected in (({"AI_DATA": str(tmp_path / "data")}, tmp_path / "data" / "datasets"),
+                          ({"DATASET_STORE": str(tmp_path / "s"), "AI_DATA": "x"}, tmp_path / "s"),
+                          ({}, Path.home() / "ai-data" / "datasets")):
         monkeypatch.delenv("AI_DATA", raising=False)
         monkeypatch.delenv("DATASET_STORE", raising=False)
         for k, v in env.items():
             monkeypatch.setenv(k, v)
-        assert store_path() == Settings().dataset_store
+        assert store_path() == Settings().dataset_store == expected
         assert DatasetCatalog("http://x", app="a").store == store_path()
 
 

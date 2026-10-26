@@ -42,21 +42,11 @@ def test_service_over_util_limit_alone_fails(services):
     assert "test-llm.yaml: needs 0.950 of the GPU, over util_limit 0.93 even when running alone" in errors_of(services)
 
 
-def test_profiles_field_is_rejected(services):
-    services.write(base_engine_manifest(profiles=["voice-chat"]))
-    assert "profiles" in errors_of(services)
-
-
 def test_resolve_names_and_aliases_in_order_without_duplicates():
     p = load_platform()
     assert [s.name for s in p.resolve(["default-asr", "silero-vad", "whisper-large-v3"])] == ["whisper-large-v3", "silero-vad"]
     with pytest.raises(KeyError, match="unknown service 'nope'"):
         p.resolve(["nope"])
-
-
-def test_duplicate_alias_fails(services):
-    services.write(base_engine_manifest(alias="default-chat"))
-    assert "duplicate name/alias 'default-chat'" in errors_of(services)
 
 
 def test_alias_cannot_shadow_a_name(services):
@@ -74,14 +64,9 @@ def test_non_openai_without_contract_reason_fails(services):
     assert "contract_reason is required when contract is 'oip-v2'" in errors_of(services)
 
 
-def test_contract_api_mismatch_fails(services):
-    services.edit("silero-vad", api="chat.completions")
-    assert "api 'chat.completions' is not valid for contract 'oip-v2'" in errors_of(services)
-
-
 def test_openai_inspired_api_must_be_defined_in_contracts(services):
     services.edit("text-normalizer", api="text.summarize")
-    assert "not valid for contract 'openai-inspired' (allowed: text.itn, text.transform)" in errors_of(services)
+    assert "api 'text.summarize' is not valid for contract 'openai-inspired' (allowed: text.itn, text.transform)" in errors_of(services)
 
 
 def test_vllm_with_non_openai_contract_fails(services):

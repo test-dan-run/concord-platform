@@ -69,6 +69,7 @@ def test_a_stage_naming_a_model_by_alias_and_id_gives_it_one_step(api, pipeline)
     r = api.post("/api/jobs", json=body)
     assert r.status_code == 200, r.text
     steps = r.json()["steps"]
+    assert {s["model"] for s in steps} == {"silero-vad", "whisper-large-v3"}  # aliases in, names out
     per_stage = [(s["stage"], s["model"], s.get("alongside")) for s in steps]
     assert len(per_stage) == len(set(per_stage)), per_stage
     assert {s["items"] for s in steps if s["model"] == "silero-vad"} == {2}  # the keys given under the alias count

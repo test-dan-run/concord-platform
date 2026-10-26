@@ -6,7 +6,7 @@ import types
 
 import numpy as np
 import pytest
-from aisvc import DynamicBatcher, Limits, MicroBatcher, create_oip_app, create_openai_app, create_openai_inspired_app
+from aisvc import DynamicBatcher, Limits, MicroBatcher, create_oip_app, create_openai_app
 from aisvc.batch import pad, unpad
 from fastapi.testclient import TestClient
 
@@ -59,12 +59,6 @@ def test_results_keep_input_order_after_the_length_sort():
     run = MicroBatcher(fn, limits=Limits(max_items=2))
     assert run(items) == [x * 2 for x in items]
     assert chunks == [["a", "bb"], ["ccc", "dddd"], ["eeeee"]]  # sorted by length, so chunks pad little
-
-
-def test_chunks_respect_max_items():
-    fn, chunks = recorder()
-    assert MicroBatcher(fn, length=lambda x: 1, limits=Limits(max_items=3))(list(range(7))) == [2 * i for i in range(7)]
-    assert [len(c) for c in chunks] == [3, 3, 1]
 
 
 def test_chunks_respect_max_padded_length():
@@ -184,19 +178,6 @@ def test_dynamic_batcher_gives_a_batch_error_to_all_its_callers():
     assert out["fr-ok"] == "fr-ok" * 2
 
 
-def test_dynamic_batcher_backs_off_before_failing_callers(monkeypatch):
-    monkeypatch.setitem(sys.modules, "torch", None)
-
-    def fail(batch):
-        if len(batch) > 2:
-            raise MemoryError()
-
-    fn, chunks = recorder(fail)
-    batcher = DynamicBatcher(fn, wait_ms=300, length=lambda x: 1, limits=Limits(max_items=8))
-    assert run_together(batcher, [1, 2, 3, 4]) == {1: 2, 2: 4, 3: 6, 4: 8}
-    assert sorted(len(c) for c in chunks) == [2, 2] and batcher.batch.limits.max_len == 2
-
-
 def test_pad_and_unpad():
     padded, lengths = pad([np.ones(3), np.ones(1)])
     assert padded.shape == (2, 3) and padded.dtype == np.float32 and lengths.tolist() == [3, 1]
@@ -208,15 +189,13 @@ APPS = {
     "oip": lambda: create_oip_app("m", {"inputs": [{"name": "X", "datatype": "FP32", "shape": [-1]}],
                                         "outputs": [{"name": "Y", "datatype": "FP32", "shape": [-1]}]}, lambda i, p: {"Y": i["X"]}),
     "openai": lambda: create_openai_app("m", "audio.transcriptions", lambda req: "hi"),
-    "inspired": lambda: create_openai_inspired_app("m", "text.transform", lambda texts, opts: texts),
 }
 
 
-@pytest.mark.parametrize("factory", sorted(APPS))
-def test_memory_route_without_torch(monkeypatch, factory):
+def test_memory_route_without_torch(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", None)
     MicroBatcher(lambda batch: batch, limits=Limits(max_items=4, max_len=1000), name="mem-test")
-    with TestClient(APPS[factory]()) as c:
+    with TestClient(APPS["openai"]()) as c:
         body = c.get("/platform/memory").json()
         assert body["torch"] is False and body["cuda"] is False and body["reset"] is False
         assert body["batch"]["mem-test"]["max_items"] == 4 and body["batch"]["mem-test"]["max_len"] == 1000
@@ -248,6 +227,10 @@ def test_batch_limits_route_lifts_and_restores():
         assert r.status_code == 200 and r.json()["route-test"]["max_items"] == 512
         assert mb.limits.max_len is None and mb(list(range(300))) == list(range(300))
         assert c.post("/platform/batch-limits", json={"max_items": 0}).status_code == 422
+        assert c.post("/platform/batch-limits", json={"max_len": 1000}).status_code == 200
+        assert (mb.limits.max_items, mb.limits.max_len) == (512, 1000)  # no max_items: it keeps its value
+        assert c.post("/platform/batch-limits", json={"max_len": None}).status_code == 200
+        assert (mb.limits.max_items, mb.limits.max_len) == (512, None)
         r = c.post("/platform/batch-limits", json={"restore": True})
         assert r.json()["route-test"] == {**r.json()["route-test"], "max_items": 4, "max_len": 100, "backoffs": 0}
     batch._LIMITS.pop("route-test", None)

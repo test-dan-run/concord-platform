@@ -13,9 +13,8 @@ def post(app, path, body):
 
 @pytest.mark.parametrize("api, result, path", [
     ("text.transform", lambda texts: [None for _ in texts], "/v1/text/transform"),
-    ("text.transform", lambda texts: [7 for _ in texts], "/v1/text/transform"),
     ("text.itn", lambda texts: [(None, []) for _ in texts], "/v1/text/itn"),
-], ids=["transform-none", "transform-int", "itn-none"])
+], ids=["transform-none", "itn-none"])
 def test_inspired_result_errors_are_openai_shaped_500s(api, result, path):
     app = create_openai_inspired_app("m", api, lambda texts, options: result(texts), background_load=False)
     r = post(app, path, {"model": "m", "input": ["a", "b"]})

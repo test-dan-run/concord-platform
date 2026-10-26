@@ -1,5 +1,5 @@
-"""The connection test of an endpoint stored with a base_url the catalog now refuses answers 422, like a create
-would, instead of a 500."""
+"""An endpoint stored with a base_url the catalog now refuses (saved before base_url was checked): its connection test
+answers 422, like a create would, instead of a 500, and it still lists, its host falling back to the URL as stored."""
 
 import httpx
 import pytest
@@ -24,4 +24,6 @@ def api(cat):
 def test_the_connection_test_of_a_stored_bad_url_is_422(api):
     r = api.post("/api/models/hosted-asr/test")
     assert r.status_code == 422 and "base_url is not a valid URL" in r.text, r.text
-    assert api.get("/api/models").status_code == 200
+    listed = api.get("/api/models")
+    assert listed.status_code == 200
+    assert listed.json()[0]["hosted"]["host"] == "https://[api.example.com/v1"  # unparseable: the URL as stored

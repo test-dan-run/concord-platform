@@ -17,13 +17,10 @@ def oip_error(status: int, content: bytes) -> OIPError:
     return exc.value
 
 
-def test_gateway_error_object_gives_its_message():
+def test_error_messages_from_the_gateway_the_service_and_other_bodies():
     exc = oip_error(503, gateway_error(503, "silero-vad is starting", "unavailable").body)
     assert exc.status == 503 and exc.message == "silero-vad is starting"
     assert str(exc) == "503: silero-vad is starting"
-
-
-def test_service_error_string_and_other_bodies():
     assert oip_error(404, b'{"error": "model other not found"}').message == "model other not found"
     assert oip_error(500, b"[1, 2]").message == "[1, 2]"
     assert oip_error(500, b'{"error": {"type": "x"}}').message == '{"error": {"type": "x"}}'  # no message: the body

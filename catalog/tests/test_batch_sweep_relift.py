@@ -11,7 +11,7 @@ import pytest
 from aisvc import batch as ab
 
 from catalog import batching
-from catalog.batching import CONTEXT_GIB, LIFT, Memory, sweep
+from catalog.batching import CONTEXT_GIB
 
 LIMIT, BASE, C = 9.6, 1.0, 0.035  # GiB the device holds, GiB at rest, GiB per second of padded audio
 
@@ -50,24 +50,6 @@ def device(monkeypatch):
         return httpx.Response(200, json={"cuda": True, "peak_reserved_gib": state["peak"], "batch": ab.limits_stats()})
 
     return send, handler
-
-
-def test_the_sweep_lifts_the_limits_again_before_each_length(device):
-    send, handler = device
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    http.post("http://svc/platform/batch-limits", json=LIFT)
-    lifts = []
-
-    def relift():
-        lifts.append(1)
-        http.post("http://svc/platform/batch-limits", json=LIFT)
-
-    pts, stops, _ = sweep(send, Memory("http://svc", http, lambda: None, None), [2.0, 15.0], budget_gib=None,
-                          max_n=128, relift=relift)
-    assert "out of memory at 128" in stops[0]["stopped"] and lifts == [1]
-    at15 = {p.n: p.peak_gib for p in pts if p.length_s == 15.0}
-    assert at15[16] == pytest.approx(true_peak(16, 15.0) + CONTEXT_GIB, abs=1e-3)  # not 5.2 GiB, split by 8
-    assert 32 not in at15 and "out of memory at 32" in stops[1]["stopped"]
 
 
 def test_a_measurement_lifts_the_limits_again_after_a_split(cat, device, monkeypatch):

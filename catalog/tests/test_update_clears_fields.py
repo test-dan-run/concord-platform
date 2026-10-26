@@ -12,21 +12,17 @@ def api(cat):
         yield c
 
 
-def test_a_null_parent_clears_derived_from(api):
+def test_null_clears_a_field_and_a_field_left_out_stays(api):
     r = api.post("/api/models/qwen3-8b/register",
                  json={"display_name": "Q8", "tags": ["a"], "parent_id": "fast-chat"})
     assert r.status_code == 201 and r.json()["parent_id"] == "qwen3-4b-instruct-2507"
+    r = api.patch("/api/models/qwen3-8b", json={"tags": None})
+    assert r.json()["tags"] == [] and r.json()["display_name"] == "Q8"
+    assert r.json()["parent_id"] == "qwen3-4b-instruct-2507"
     # what the UI's model page sends when "Derived from" is emptied
     r = api.patch("/api/models/qwen3-8b", json={"display_name": "Q8", "tags": ["a"], "parent_id": None})
     assert r.status_code == 200 and r.json()["parent_id"] is None
     assert r.json()["display_name"] == "Q8" and r.json()["tags"] == ["a"]
-
-
-def test_null_tags_clear_the_tags_and_a_field_left_out_stays(api):
-    api.post("/api/models/qwen3-8b/register", json={"display_name": "Q8", "tags": ["a"], "parent_id": "fast-chat"})
-    r = api.patch("/api/models/qwen3-8b", json={"tags": None})
-    assert r.json()["tags"] == [] and r.json()["display_name"] == "Q8"
-    assert r.json()["parent_id"] == "qwen3-4b-instruct-2507"
 
 
 def test_register_again_without_fields_keeps_them(api):
