@@ -1,38 +1,18 @@
 """A use is stored with its app and ref stripped, so removing it with the same spaces around them must find it, on
 the catalog service and on FakeDatasetCatalog alike."""
 
-import contextlib
 import json
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from catalog_helpers import ASR, new_dataset, publish, sha, upload, version_zip, wav
 from fastapi.testclient import TestClient
 
-from aicore.datasets import DatasetCatalog, DatasetCatalogError, FakeDatasetCatalog
+from aicore.datasets import DatasetCatalogError, FakeDatasetCatalog
 
 from catalog.app import create_app
 
 A = wav(1)
-
-
-@contextlib.contextmanager
-def _app(cat) -> Iterator[TestClient]:
-    app = create_app(cat, start=False)
-    with TestClient(app) as http:
-        yield http
-    app.state.datasets.db.close()
-
-
-@pytest.fixture(params=["fake", "real"])
-def dc(request, tmp_path):
-    if request.param == "fake":
-        yield FakeDatasetCatalog(tmp_path / "fake-store", app="concord-label")
-    else:
-        cat = request.getfixturevalue("cat")
-        with _app(cat) as http:
-            yield DatasetCatalog("http://testserver", app="concord-label", store=cat.settings.dataset_store, http=http)
 
 
 def _version(dc, tmp_path: Path) -> str:
@@ -52,7 +32,8 @@ def _version(dc, tmp_path: Path) -> str:
     return did
 
 
-def test_a_use_with_spaces_around_its_ref_can_be_removed(dc, tmp_path):
+def test_a_use_with_spaces_around_its_ref_can_be_removed(tmp_path):
+    dc = FakeDatasetCatalog(tmp_path / "fake-store", app="concord-label")
     did = _version(dc, tmp_path)
     dc.add_use(did, 1, " 7 ")
     assert [u["ref"] for u in dc.version(did, 1)["uses"]] == ["7"]
@@ -64,7 +45,8 @@ def test_a_use_with_spaces_around_its_ref_can_be_removed(dc, tmp_path):
 
 
 def test_the_uses_route_strips_app_and_ref_on_delete_too(cat):
-    with _app(cat) as api:
+    app = create_app(cat, start=False)
+    with TestClient(app) as api:
         did = new_dataset(api)
         upload(api, A)
         assert publish(api, did, version_zip([("a.wav", A)], ASR)).status_code == 201
@@ -74,3 +56,5 @@ def test_the_uses_route_strips_app_and_ref_on_delete_too(cat):
             ("concord-bench", "7")]
         assert api.delete(uses, params={"app": " concord-bench ", "ref": " 7 "}).status_code == 204
         assert api.get(f"/api/datasets/{did}/versions/1").json()["uses"] == []
+        assert api.post(uses, json={"app": "a", "ref": " "}).status_code == 422
+    app.state.datasets.db.close()

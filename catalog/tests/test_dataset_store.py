@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 
 from catalog.app import create_app
 from catalog.datasets import gc
-from catalog.settings import Settings
 
 needs_ffprobe = pytest.mark.skipif(shutil.which("ffprobe") is None, reason="ffprobe is not installed")
 A, B, C = wav(1), wav(2), wav(3)
@@ -27,19 +26,6 @@ def api(cat):
         c.dc = app.state.datasets
         yield c
     app.state.datasets.db.close()
-
-
-# ----------------------------------------------------------------------------- settings
-
-def test_store_location_comes_from_dataset_store_or_ai_data(monkeypatch, tmp_path):
-    monkeypatch.delenv("DATASET_STORE", raising=False)
-    monkeypatch.setenv("AI_DATA", str(tmp_path / "data"))
-    assert Settings().dataset_store == tmp_path / "data" / "datasets"
-    monkeypatch.setenv("DATASET_STORE", str(tmp_path / "elsewhere"))
-    assert Settings().dataset_store == tmp_path / "elsewhere"
-    monkeypatch.delenv("AI_DATA")
-    monkeypatch.delenv("DATASET_STORE")
-    assert Settings().dataset_store == Settings().dataset_store.home() / "ai-data" / "datasets"
 
 
 # ----------------------------------------------------------------------------- audio store

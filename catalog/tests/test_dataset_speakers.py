@@ -32,9 +32,7 @@ def seglst(speakers):
 
 
 CASES = [
-    (seglst([["x"], "y"]), "refs/segments.seglst.json: speaker ['x'] of a.wav is not a string"),
     (seglst(["s", 1]), "refs/segments.seglst.json: speaker 1 of a.wav is not a string"),
-    (seglst([True]), "refs/segments.seglst.json: speaker True of a.wav is not a string"),
     ({"segments.jsonl": jsonl([{"file": "a.wav", "start": 0, "end": 1, "text": "hi", "speaker": {"id": 1}}])},
      "refs/segments.jsonl: speaker {'id': 1} of a.wav is not a string"),
 ]

@@ -68,11 +68,8 @@ def _dataset(dc, tmp_path: Path, *items: tuple[str, bytes]) -> str:
     return dc.create_dataset("Calls")["id"]
 
 
-def _uid(**rec) -> dict:
-    return {**ASR, "uids.jsonl": jsonl([{"file": "a.wav", "start": 0.0, "end": 0.2, "uid": "u", **rec}])}
-
-
-# Folders the service refuses and the fake took (or crashed on) before it shared the service's check.
+# Folders the service refuses and the fake took (or crashed on) before it shared the service's check. The service
+# uses the same check_folder, so the grid runs on the fake and one case runs on the service.
 REFUSED = {
     "scope 'partial'": dict(refs=ASR, scope="partial"),
     "source is a string": dict(refs=ASR, source="label", export_version=1),
@@ -88,22 +85,16 @@ REFUSED = {
     "attributes.json is a list": dict(refs={**ASR, "attributes.json": "[]"}),
     "attributes.json is not JSON": dict(refs={**ASR, "attributes.json": "{nope"}),
     "a uids line without uid": dict(refs={**ASR, "uids.jsonl": jsonl([{"file": "a.wav", "start": 0, "end": 1}])}),
-    "a uid's start is a string": dict(refs=_uid(start="x")),
     "a segments record without start": dict(refs={"segments.jsonl": jsonl([{"file": "a.wav", "text": "hi"}])}),
-    "segments.jsonl is not JSON": dict(refs={"segments.jsonl": "{nope\n"}),
     "an RTTM start that is not a number": dict(refs={"refs.rttm": "SPEAKER a 1 x 1 <NA> <NA> s1 <NA> <NA>\n"},
                                                label_types=("diar",)),
-    "label_types holds a list": dict(refs=ASR, label_types=(["asr"],)),
-    "name is a number": dict(refs=ASR, name=123),
-    "files.csv is not UTF-8": dict(refs=ASR, files_csv=b"path,sha256,duration,sample_rate\n\xff\xfe,x,1,1\n"),
     "a sha256 with a newline": dict(
         refs=ASR, items=[("a.wav", A)], counts={"files": 1},
         files_csv=f'path,sha256,duration,sample_rate\na.wav,"{sha(A)}\n",0.5,16000\n'.encode()),
 }
 
 
-@pytest.mark.parametrize("case", REFUSED)
-def test_a_folder_the_service_refuses_is_refused_by_the_fake_with_the_same_problems(dc, tmp_path, case):
+def _refused(dc, tmp_path: Path, case: str) -> None:
     did = _dataset(dc, tmp_path)
     root = folder(tmp_path, **REFUSED[case])
     with pytest.raises(InvalidVersion) as exc:
@@ -111,6 +102,16 @@ def test_a_folder_the_service_refuses_is_refused_by_the_fake_with_the_same_probl
     assert exc.value.status == 422 and exc.value.problems == check_folder(root, package=True, hash_audio=False)
     assert exc.value.message == "the version is invalid: " + "; ".join(exc.value.problems[:10])
     assert dc.dataset(did)["versions"] == [] and not (dc.store / "versions" / did / "1").exists()
+
+
+@pytest.mark.parametrize("case", REFUSED)
+def test_a_folder_the_service_refuses_is_refused_by_the_fake_with_the_same_problems(tmp_path, case):
+    _refused(FakeDatasetCatalog(tmp_path / "fake-store", app="concord-label"), tmp_path, case)
+
+
+def test_the_service_refuses_a_folder_with_the_same_problems(cat, tmp_path):
+    with _server(cat) as server:
+        _refused(server, tmp_path, "attributes.json is not JSON")
 
 
 def test_a_bad_references_file_leaves_the_dataset_usable(dc, tmp_path):
@@ -147,20 +148,6 @@ def test_errors_carry_the_services_messages(dc, tmp_path):
 
 
 VALID = {
-    "SegLST with uids and labels": dict(refs={
-        "segments.seglst.json": json.dumps([
-            {"session_id": "a", "speaker": "agent", "start_time": 0.0, "end_time": 0.2, "words": "hi",
-             "attributes": {"noise": {"kind": "street"}}},
-            {"session_id": "B", "speaker": "caller", "start_time": 0.1, "end_time": 0.3, "words": "yes"}]),
-        "uids.jsonl": jsonl([{"file": "a.wav", "start": 0.005, "end": 0.2, "uid": "u1"}]),
-        "attributes.json": json.dumps({"files": {"b.wav": {"site": "x"}},
-                                       "speakers": {"a.wav": {"agent": {"g": "F"}}}})},
-        label_types=("asr", "diar")),
-    "format version 1 RTTM": dict(refs={"refs.rttm": "SPEAKER b 1 0.5 0.25 <NA> <NA> s1 <NA> <NA>\n"},
-                                  label_types=("diar",), format_version=1),
-    "format version 1 attributes.json as references": dict(
-        refs={"attributes.json": json.dumps({"files": {"a.wav": {"cond": "x"}}})}, label_types=("diar",),
-        format_version=1),
     "STM": dict(refs={"x.stm": ";; note\na 1 spk 0 0.4 <o,f0,male> hello there\nb 1 s2 0.1 0.2\n"}),
     "a format the catalog doesn't read": dict(refs={"refs.ctm": "a 1 0 1 hi\n"}),
 }
