@@ -1,4 +1,4 @@
-// One version of a dataset (DATASET_CATALOG_PLAN.md §6): its files with their segments and labels, a player that
+// One version of a dataset (catalog/README.md "Pages"): its files with their segments and labels, a player that
 // reads the original audio from the store, the references of the file picked, and label statistics. A version
 // never changes, so its files and references are fetched once; the version record itself is refreshed, so the
 // page notices when the version is deleted.

@@ -1,4 +1,4 @@
-"""Datasets and their versions (DATASET_CATALOG_PLAN.md §5, contracts/datasets/version.md).
+"""Datasets and their versions (contracts/datasets/version.md).
 
 A version is a reference package stored as a folder, without audio/ and outputs/:
 

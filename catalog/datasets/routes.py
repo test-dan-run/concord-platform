@@ -1,4 +1,4 @@
-"""The Dataset Catalog's routes under /api (DATASET_CATALOG_PLAN.md §7.1 and §7.2), added to the catalog service's
+"""The Dataset Catalog's routes under /api (README "Dataset Catalog", "API"), added to the catalog service's
 app by `add_dataset_routes`. Errors use the catalog's shape, {"error": {"message", "type", "code", ...}}, with extra
 fields where a caller needs them: `size` on a 409 from an upload, `latest` on a stale parent, `missing` on missing
 audio and `problems` on an invalid version."""

@@ -1,4 +1,4 @@
-// Import package (DATASET_CATALOG_PLAN.md §6): a reference package zip, from a person or another tool, becomes a
+// Import package (catalog/README.md "Pages"): a reference package zip, from a person or another tool, becomes a
 // new dataset or the next version of an existing one. The catalog checks the zip first and shows a preview
 // (POST /datasets/import with preview, which stores nothing); the import sends it again and stores its audio/ and
 // its references. Audio the package leaves out must already be in the store.

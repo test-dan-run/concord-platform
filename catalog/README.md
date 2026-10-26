@@ -3,9 +3,8 @@
 The catalog is the platform's control plane: one service per compute host that registers, verifies,
 schedules and serves every model service. Apps (Concord Bench, Concord Label, Synthetics) never start
 a model, verify a model or call a model's port directly. They ask the catalog for models, take
-leases for their jobs, and send inference through the catalog's gateway. The design is in
-[../MODEL_CATALOG_REDESIGN.md](../MODEL_CATALOG_REDESIGN.md); this file is the contract apps build
-against.
+leases for their jobs, and send inference through the catalog's gateway. This file is the contract
+apps build against.
 
 The same service also runs the Dataset Catalog, which keeps versioned datasets and their audio for both
 Concord apps. It has its own section, [Dataset Catalog](#dataset-catalog), near the end of this file. In
@@ -521,10 +520,9 @@ cases on both.
 
 The Dataset Catalog keeps versioned datasets that Concord Bench and Concord Label both read. It runs in the
 same catalog service as the Model Catalog, on the same port, and its code is in `catalog/datasets/`. The
-design is in [../DATASET_CATALOG_PLAN.md](../DATASET_CATALOG_PLAN.md), and the version format is in
-[../contracts/datasets/version.md](../contracts/datasets/version.md). The code for the format (the check of a
-version folder, its digest and the reading of its references) is `aicore.dataset_format`, which the service and
-`FakeDatasetCatalog` both use.
+version format is in [../contracts/datasets/version.md](../contracts/datasets/version.md). The code for the
+format (the check of a version folder, its digest and the reading of its references) is `aicore.dataset_format`,
+which the service and `FakeDatasetCatalog` both use.
 
 - A **dataset** has a name, a language, a description, tags and numbered versions. Its id is a 32 character
   hex string.

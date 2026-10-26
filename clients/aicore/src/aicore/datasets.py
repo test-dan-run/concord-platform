@@ -1,4 +1,4 @@
-"""Client for the Dataset Catalog's API (platform/catalog/README.md, DATASET_CATALOG_PLAN.md §7): datasets, versions,
+"""Client for the Dataset Catalog's API (platform/catalog/README.md): datasets, versions,
 the audio store and holds.
 
     from aicore.datasets import DatasetCatalog, StaleParent
@@ -128,7 +128,7 @@ def _zip_folder(folder: Path, fh: IO[bytes]) -> None:
 
 
 class _Mount:
-    """Paths in the mounted store (DATASET_CATALOG_PLAN.md §4): the apps read audio and versions from here."""
+    """Paths in the mounted store (platform/catalog/README.md "The store"): the apps read audio and versions from here."""
 
     store: Path
 

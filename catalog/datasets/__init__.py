@@ -1,4 +1,4 @@
-"""The Dataset Catalog: versioned datasets and the audio store they share (DATASET_CATALOG_PLAN.md §4 to §7).
+"""The Dataset Catalog: versioned datasets and the audio store they share (README "Dataset Catalog").
 
 Everything lives in one folder, Settings.dataset_store (DATASET_STORE, default ${AI_DATA}/datasets):
 

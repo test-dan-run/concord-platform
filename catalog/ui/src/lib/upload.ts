@@ -1,4 +1,4 @@
-// Upload audio to the store (DATASET_CATALOG_PLAN.md §6.1). Each file goes through these steps:
+// Upload audio to the store (catalog/README.md "API"). Each file goes through these steps:
 //
 //   hashing -> checking -> uploading -> committing -> (unpacking, for a zip) -> done
 //

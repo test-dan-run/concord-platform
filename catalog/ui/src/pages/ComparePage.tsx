@@ -1,4 +1,4 @@
-// Two versions of a dataset side by side (DATASET_CATALOG_PLAN.md §6): files added and removed, files whose
+// Two versions of a dataset side by side (catalog/README.md "Pages"): files added and removed, files whose
 // references changed (segments added, removed and edited, with a word diff per edited segment), and label
 // changes. Versions never change, so a comparison is fetched once.
 

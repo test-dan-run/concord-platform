@@ -1,4 +1,4 @@
-// The Dataset Catalog's response shapes (catalog/datasets, DATASET_CATALOG_PLAN.md §7) and small helpers the pages
+// The Dataset Catalog's response shapes (catalog/datasets, catalog/README.md "API") and small helpers the pages
 // share. A dataset's versions never change, so their files, references and comparisons are cached for good; only
 // the dataset and version records are refreshed by the SSE `dataset` event (lib/events.ts).
 

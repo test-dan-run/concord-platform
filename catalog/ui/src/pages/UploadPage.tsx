@@ -1,4 +1,4 @@
-// Upload audio (DATASET_CATALOG_PLAN.md §6.1): files, a folder or zips of audio go to the store (lib/upload.ts:
+// Upload audio (catalog/README.md "Pages"): files, a folder or zips of audio go to the store (lib/upload.ts:
 // hashed in the browser, only missing files sent, in chunks that resume), then become a version with audio only:
 // version 1 of a new dataset, or the next version of a dataset whose latest version has audio only. A dataset with
 // references gets new audio through Concord Label instead, so a version never mixes labelled and unlabelled files.

@@ -23,7 +23,7 @@ export function UseList({ uses }: { uses: VersionUse[] }) {
   );
 }
 
-/** An inline confirmation for deleting a version or a whole dataset (DATASET_CATALOG_PLAN.md §5.3). */
+/** An inline confirmation for deleting a version or a whole dataset. */
 export function ConfirmDelete({
   title,
   children,
