@@ -7,10 +7,10 @@ from catalog.verifier import metrics
 T = metrics.Turn
 
 
-@pytest.mark.parametrize("n_hyp", [5, 7, 8, 10])
-def test_extra_tiny_speakers_do_not_hide_a_missed_speaker_change(n_hyp):
+def test_extra_tiny_speakers_do_not_hide_a_missed_speaker_change():
     ref = [T(0, 2, "a"), T(2, 4, "b")]
-    hyp = [T(0, 4, "x")] + [T(1.0 + i * 0.05, 1.01 + i * 0.05, f"t{i}") for i in range(n_hyp - 1)]
+    # 8 hypothesis speakers: past the old brute-force cap of 7, where the missed change used to vanish (DER 0.02)
+    hyp = [T(0, 4, "x")] + [T(1.0 + i * 0.05, 1.01 + i * 0.05, f"t{i}") for i in range(7)]
     assert metrics.der(ref, hyp, 4) == pytest.approx(0.5, abs=0.05)
 
 

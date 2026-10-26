@@ -44,7 +44,9 @@ def test_a_failing_stop_waits_longer_after_each_failure(cat, runtime, clock, cap
     run = s.runs[M]
     with caplog.at_level(logging.WARNING, logger="catalog.scheduler"):
         s.tick()
-        drain(cat)  # the first failure: tried again on the next tick
+        drain(cat)  # the first failure: the model stays up, unpinned and released, and is tried again on the next tick
+        assert run.running and not run.stopping and not run.pinned and run.released_at is not None
+        assert s.model_view(M)["state"] == "running"
         s.tick()
         assert run.stopping
         drain(cat)

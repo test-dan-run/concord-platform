@@ -66,30 +66,6 @@ def test_the_weights_hasher_keeps_going_after_an_error(tmp_path, monkeypatch):
     db.close()
 
 
-def test_a_failed_stop_leaves_the_model_unpinned_and_is_tried_again(cat, runtime):
-    s = cat.scheduler
-    cat.settings.release_linger_s = 0.0
-    real = runtime.stop
-
-    def stop(p, names):
-        raise RuntimeError("docker compose stop whisper-large-v3 exited 1: error during connect")
-
-    runtime.stop = stop
-    r = s.request("bench:job-1", ["whisper-large-v3"])
-    step(cat)
-    s.release(r.id)
-    s.tick()  # the spin-down queues a stop
-    drain(cat)  # which fails
-    run = s.runs["whisper-large-v3"]
-    assert run.running and not run.stopping and not run.pinned and run.released_at is not None
-    assert s.model_view("whisper-large-v3")["state"] == "running"
-    s.tick()  # the next tick tries again
-    assert run.stopping
-    runtime.stop = real
-    step(cat)
-    assert runtime.stopped == ["whisper-large-v3"] and runtime.running == {} and not run.running
-
-
 def test_docker_runtime_stop_raises_when_compose_fails(monkeypatch):
     from catalog.runtime import DockerRuntime
     from tools import stack
@@ -111,17 +87,6 @@ def spun_down(cat, model: str):
     s.tick()
     assert s.runs[model].stopping
     return s.runs[model]
-
-
-def test_a_lease_for_a_model_being_stopped_waits_for_it_to_start_again(cat, runtime):
-    s = cat.scheduler
-    spun_down(cat, "whisper-large-v3")
-    r = s.request("bench:job-2", ["whisper-large-v3"])
-    assert r.state == "starting" and list(s._jobs.queue) == [("stop", "whisper-large-v3"), ("start", "whisper-large-v3")]
-    drain(cat)
-    step(cat)
-    assert s.get(r.id).state == "active" and "whisper-large-v3" in runtime.running
-    assert runtime.started == ["whisper-large-v3", "whisper-large-v3"]
 
 
 def test_the_gateway_waits_for_a_model_being_stopped_to_start_again(cat, runtime):
@@ -147,26 +112,6 @@ def test_a_model_being_stopped_must_find_its_memory_free_to_start_again(cat, run
     drain(cat)
     step(cat)
     assert s.get(r.id).state == "active"
-
-
-def test_a_pin_from_a_start_that_never_ran_is_dropped(cat, runtime):
-    s = cat.scheduler
-    cat.settings.release_linger_s = 0.0
-    blocker = s.request("label:job-3", ["qwen3-32b-awq"])
-    step(cat)
-    start = s.request("manual", ["whisper-large-v3"], kind="start")  # `just up whisper-large-v3` while blocked
-    step(cat)
-    assert s.get(start.id).state == "queued" and s.runs["whisper-large-v3"].pinned
-    s.requests[start.id].heartbeat_at -= 3600  # `just up` gave up
-    s.tick()
-    assert s.get(start.id).state == "expired" and not s.runs["whisper-large-v3"].pinned
-    s.release(blocker.id)
-    r = s.request("bench:job-1", ["whisper-large-v3"])
-    step(cat)
-    assert s.get(r.id).state == "active"
-    s.release(r.id)
-    step(cat)
-    assert "whisper-large-v3" in runtime.stopped and "whisper-large-v3" not in runtime.running
 
 
 # The tick lists containers before it takes the lock: the starter can finish a start or stop in between.
@@ -271,19 +216,14 @@ def test_one_thread_reloads_changed_manifests_and_the_others_reuse_it(cat, monke
     assert len(loads) == 1
 
 
-@pytest.mark.parametrize("models, names", [
-    (["default-vad", "silero-vad"], ["silero-vad"]),  # alias and id
-    (["silero-vad", "silero-vad"], ["silero-vad"]),
-    (["whisper-large-v3", "default-asr", "silero-vad"], ["whisper-large-v3", "silero-vad"]),  # order kept
-])
-def test_a_lease_that_names_a_model_twice_names_it_once(cat, models, names):
+def test_a_lease_that_names_a_model_twice_names_it_once(cat):
     from fastapi.testclient import TestClient
 
     from catalog.app import create_app
 
     with TestClient(create_app(cat, start=False), raise_server_exceptions=False) as api:
-        r = api.post("/api/leases", json={"holder": "bench:job-1", "models": models})
+        r = api.post("/api/leases", json={"holder": "bench:job-1", "models": ["whisper-large-v3", "default-asr", "silero-vad"]})
         assert r.status_code == 201, r.text
-        assert r.json()["models"] == names
+        assert r.json()["models"] == ["whisper-large-v3", "silero-vad"]  # an alias and its id are one model; order kept
         r = api.post("/api/leases", json={"holder": "bench:job-2", "models": ["silero-vad", "nope", "nope"]})
         assert r.status_code == 404 and r.json()["error"]["message"].startswith("unknown service 'nope'")

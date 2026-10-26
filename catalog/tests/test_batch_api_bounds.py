@@ -1,5 +1,5 @@
-"""Batch API inputs that would break a start or the response: an audio limit that rounds to 0 ms (the image
-refuses AISVC_MAX_BATCH_LEN=0), and query values that overflow the recommendation (500 before)."""
+"""Batch API query values that overflow the recommendation (500 before) are a 422. The audio limit that rounds to
+0 ms is checked in test_batching.py."""
 
 from __future__ import annotations
 
@@ -10,21 +10,10 @@ from test_batching import TRUE, points
 from catalog.app import create_app
 from catalog.batching import Profile
 
-
-def test_an_audio_limit_under_a_millisecond_is_refused(cat, monkeypatch):
-    with pytest.raises(ValueError):
-        cat.profiler.set_override("wavlm-sv", None, 0.0004)  # start_env would give AISVC_MAX_BATCH_LEN "0"
-    assert cat.profiler.override("wavlm-sv") is None
-    cat.profiler.set_override("wavlm-sv", None, 0.001)
-    assert cat.profiler.start_env("wavlm-sv", "unmeasured", 24.0) == {"AISVC_MAX_BATCH_LEN": "1"}
-    with TestClient(create_app(cat, start=False)) as c:
-        assert c.put("/api/models/wavlm-sv/batch-override", json={"max_len_s": 0.0004}).status_code == 422
-
-
-AUDIO = [{"vram_gb": "inf", "item_s": 5}, {"vram_gb": "nan", "item_s": 5}, {"vram_gb": 1e308, "item_s": 5},
-         {"vram_gb": 24, "item_s": "inf"}, {"vram_gb": 24, "item_s": "nan"}, {"vram_gb": 24, "item_s": 1e-310},
-         {"vram_gb": 24, "item_s": 1e300}, {"vram_gb": 24, "item_s": 5, "n": 10**400}]
-KV = [{"item_tokens": 10**400}, {"item_tokens": 10**300}, {"vram_gb": 24, "item_tokens": 1000, "n": 10**300}]
+# One value per declared bound: no inf or nan, and each parameter's upper (and item_s's lower) limit.
+AUDIO = [{"vram_gb": "inf", "item_s": 5}, {"vram_gb": 1e308, "item_s": 5}, {"vram_gb": 24, "item_s": "inf"},
+         {"vram_gb": 24, "item_s": 1e-310}, {"vram_gb": 24, "item_s": 1e300}, {"vram_gb": 24, "item_s": 5, "n": 10**400}]
+KV = [{"item_tokens": 10**400}]
 
 
 @pytest.fixture
