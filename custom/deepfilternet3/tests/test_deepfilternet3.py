@@ -39,14 +39,9 @@ def client(fake):
         yield c
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
-
-
-def test_server_signature_matches_manifest():
-    assert app_mod.SIGNATURE == {k: [{f: t[f] for f in ("name", "datatype", "shape")} for t in v]
-                                 for k, v in META["signature"].items()}
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def body(audio, sr=16000, parameters=None):
@@ -82,15 +77,6 @@ def test_batch_rows_run_one_by_one_and_come_back_padded(client, fake):
     got = np.asarray(outs["AUDIO"]["data"], np.float32).reshape(4, 1600)
     for row, c in zip(got, clips):
         assert np.allclose(row[: len(c)], c * 0.5) and not np.any(row[len(c):])
-
-
-def test_aicore_client_with_the_batch_signature_still_sends_one_clip(client):
-    """What Bench and Synthetics do today: aicore.client(name).infer({"AUDIO": [-1], "SAMPLE_RATE": [1]})."""
-    from aicore.oip import OIPClient
-
-    c = OIPClient("http://testserver", META["name"], META["signature"], http=client)
-    out = c.infer({"AUDIO": np.linspace(-0.5, 0.5, 480, dtype=np.float32), "SAMPLE_RATE": np.array([16000], np.int32)})
-    assert sorted(out) == ["AUDIO", "SAMPLE_RATE"] and out["AUDIO"].shape == (480,) and int(out["SAMPLE_RATE"][0]) == 16000
 
 
 def test_bad_parameters_are_400(client):

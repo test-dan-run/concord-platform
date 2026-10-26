@@ -38,19 +38,15 @@ def refuse(r):
     raise httpx.ConnectError("refused")
 
 
-def test_catalog_closes_its_client_when_no_catalog_listens(clients):
+def test_catalog_closes_its_client_when_the_health_check_fails(clients):
     made, handler = clients
-    handler[0] = refuse
+    handler[0] = refuse  # no catalog listens
     assert stack.catalog() is None
     assert len(made) == 1 and made[0].is_closed
-
-
-def test_catalog_closes_its_client_when_the_catalog_fails(clients):
-    made, handler = clients
-    handler[0] = lambda r: httpx.Response(503, json={"detail": "busy"})
+    handler[0] = lambda r: httpx.Response(503, json={"detail": "busy"})  # the catalog fails
     with pytest.raises(stack.StackError, match="is not answering"):
         stack.catalog()
-    assert len(made) == 1 and made[0].is_closed
+    assert len(made) == 2 and made[1].is_closed
 
 
 def test_a_catalog_command_closes_the_client(clients, capsys):

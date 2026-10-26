@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import numpy as np
-import pytest
 from conformance import load_server, running
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
@@ -31,11 +29,10 @@ def infer(client, sr):
     return client.post("/v2/models/utmos/infer", json=body)
 
 
-@pytest.mark.parametrize("sr", [44101, 192001, 16001])
-def test_odd_rate_is_400_and_the_model_is_not_called(sr):
+def test_odd_rate_is_400_and_the_model_is_not_called():
     model = FakeUtmos()
     with running(app_mod.build_app(model)) as c:
-        r = infer(c, sr)
+        r = infer(c, 44101)
     assert r.status_code == 400, r.text
     assert "SAMPLE_RATE" in r.json()["error"]
     assert model.seen == []

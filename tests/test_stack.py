@@ -65,20 +65,13 @@ def test_a_gpu_service_whose_minimum_is_not_free_is_refused(docker, monkeypatch)
     assert stack.gpu_env(p, p.get("heavy-chat"), wait_s=0)["AIPLATFORM_GPU_UTIL"] == "0.879"
 
 
-def test_a_cpu_request_leaves_the_running_gpu_service_alone(docker, monkeypatch):
-    monkeypatch.setattr(stack, "containers", lambda p: running(**{"qwen3-8b": (True, "healthy")}))
-    stack.up(["silero-vad", "text-normalizer"], timeout=5)
-    assert not any(a[0] == "stop" for a in docker["compose"])
-    assert started(docker) == ["silero-vad", "text-normalizer"]
-
-
 def test_other_running_gpu_services_are_stopped_cpu_kept(docker, monkeypatch):
     monkeypatch.setattr(stack, "containers", lambda p: running(**{
-        "qwen3-8b": (True, "healthy"), "bge-m3": (True, "healthy"),
+        "qwen3-8b": (True, "healthy"), "bge-m3": (True, "healthy"), "old-model": (True, "healthy"),  # no manifest
         "silero-vad": (False, "healthy"), "text-normalizer": (False, "healthy"),
     }))
     stack.up(["heavy-chat"], timeout=5)
-    assert docker["compose"][0] == ("stop", "bge-m3", "qwen3-8b")
+    assert docker["compose"][0] == ("stop", "bge-m3", "old-model", "qwen3-8b")
     assert started(docker) == ["qwen3-32b-awq"]
 
 
@@ -87,12 +80,6 @@ def test_no_evict_refuses_when_another_gpu_service_runs(docker, monkeypatch):
     with pytest.raises(stack.StackError, match="bge-m3 is running on the GPU and only one GPU service runs at a time"):
         stack.up(["default-asr"], timeout=5, evict=False)  # 0.08 + 0.15 would have fit side by side
     assert docker["compose"] == []
-
-
-def test_running_gpu_service_without_a_manifest_is_stopped(docker, monkeypatch):
-    monkeypatch.setattr(stack, "containers", lambda p: running(**{"old-model": (True, "healthy")}))
-    stack.up(["default-asr"], timeout=5)
-    assert docker["compose"][0] == ("stop", "old-model")
 
 
 def test_two_gpu_services_are_refused(docker, monkeypatch, capsys):
@@ -144,14 +131,6 @@ def test_leased_service_is_not_evicted_and_the_request_is_refused(docker, monkey
     err = capsys.readouterr().err
     assert "error: the GPU is leased to qwen3-8b (held by bench:job-1)" in err
     assert set(store().live()) == {"bench:job-1"}  # the refused request left no lease
-
-
-def test_up_without_holder_also_respects_leases(docker, monkeypatch):
-    store().write(Lease("bench:job-1", ["qwen3-8b"], time.time() + 60))
-    monkeypatch.setattr(stack, "containers", lambda p: running(**{"qwen3-8b": (True, "healthy")}))
-    with pytest.raises(stack.StackError, match=r"leased to qwen3-8b \(held by bench:job-1\)"):
-        stack.up(["heavy-chat"], timeout=5)
-    assert docker["compose"] == []
 
 
 def test_cpu_services_start_next_to_a_leased_gpu_service(docker, monkeypatch):

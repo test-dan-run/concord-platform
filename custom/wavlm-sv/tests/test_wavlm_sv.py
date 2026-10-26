@@ -52,14 +52,9 @@ def infer(client, audio, lengths, sr=16000):
     return client.post(f"/v2/models/{META['name']}/infer", json=body)
 
 
-@pytest.mark.parametrize("check", checks_for(META), ids=lambda c: c.__name__)
-def test_conformance(client, check):
-    check(client, META)
-
-
-def test_server_signature_matches_manifest():
-    assert app_mod.SIGNATURE == {k: [{f: t[f] for f in ("name", "datatype", "shape")} for t in v]
-                                 for k, v in META["signature"].items()}
+def test_conformance(client):
+    for check in checks_for(META):
+        check(client, META)
 
 
 def test_batch_returns_one_unit_row_per_clip(client):

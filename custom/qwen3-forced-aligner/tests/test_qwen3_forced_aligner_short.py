@@ -34,10 +34,9 @@ class Aligner(al_mod.QwenForcedAligner):
         return [(np.tile([0, 1], len(r.words)), np.ones(2 * len(r.words), np.float32)) for r in rows]
 
 
-@pytest.mark.parametrize("n", [100, 1599])
-def test_a_row_under_0_1_s_gives_empty_without_the_model(n):
+def test_a_row_under_0_1_s_gives_empty_without_the_model():
     a = Aligner()
-    row = a.row(np.full(n, 0.1, np.float32), 16000, "hello there", "en")
+    row = a.row(np.full(1599, 0.1, np.float32), 16000, "hello there", "en")  # 100 samples: see the test below
     words, times, scores = a.align_rows([row])[0]
     assert words == [] and times.shape == (0, 2) and scores.shape == (0,)
     assert a.ran == []

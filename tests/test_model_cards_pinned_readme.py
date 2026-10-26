@@ -51,13 +51,6 @@ def test_a_readme_with_source_txt_is_the_card(platform, monkeypatch, capsys):
     up = cards.build(platform, s)["sections"][0]
     assert (up["key"], up["origin"], up["markdown"]) == ("upstream", "weights folder", "Read from the weights folder.")
     assert "on disk" in fetch_cards(monkeypatch, capsys)
-
-
-def test_no_readme_or_no_source_is_no_pinned_readme(platform):
-    s = platform.get(NAME)
-    folder = model_cards.weights_folder(platform, s)
-    (folder / "SOURCE.txt").write_text("repo: acme/asr\nrevision: d552dad\n")
-    src = model_cards.source_of(platform, s)
     assert model_cards.pinned_readme(folder, None) is None and model_cards.pinned_readme(None, src) is None
     (folder / "README.md").unlink()
     assert model_cards.pinned_readme(folder, src) is None

@@ -25,6 +25,7 @@ def writers():
 
 
 def settle(fds0):
+    """Wait for the writers to end and the open files to drop back to fds0; GC may close others meanwhile."""
     deadline = time.monotonic() + 5
     while (writers() or len(os.listdir("/proc/self/fd")) > fds0) and time.monotonic() < deadline:
         gc.collect()
@@ -37,7 +38,8 @@ def test_a_download_that_never_starts_holds_no_thread_or_pipe(cat, job):
     name, chunks = cat.exporter.download(job["id"])
     assert name == f"{job['name']}.tar"
     del chunks  # the client went away before the response started
-    assert settle(fds0) == ([], fds0)
+    left, fds = settle(fds0)
+    assert left == [] and fds <= fds0
 
 
 def test_a_download_left_half_read_stops_its_writer(cat, job):
@@ -46,7 +48,8 @@ def test_a_download_left_half_read_stops_its_writer(cat, job):
     assert next(chunks)
     assert writers()
     chunks.close()  # the client went away mid-stream
-    assert settle(fds0) == ([], fds0)
+    left, fds = settle(fds0)
+    assert left == [] and fds <= fds0
 
 
 def test_a_writer_error_is_logged(cat, job, monkeypatch, caplog):

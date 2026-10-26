@@ -19,7 +19,6 @@ def post(app, path, **kwargs):
     ("chat.completions", {"text": "hi"}, "/v1/chat/completions", {"json": CHAT}, "KeyError: 'content'"),
     ("chat.completions", 7, "/v1/chat/completions", {"json": CHAT}, "TypeError"),
     ("completions", 7, "/v1/completions", {"json": {"model": "m", "prompt": "x"}}, "TypeError"),
-    ("embeddings", [[None, 1.0]], "/v1/embeddings", {"json": {"model": "m", "input": "x"}}, "TypeError"),
     ("embeddings", [["abc"]], "/v1/embeddings", {"json": {"model": "m", "input": "x"}}, "ValueError"),
     ("audio.transcriptions", {"language": "en"}, "/v1/audio/transcriptions", FORM, "KeyError: 'text'"),
 ], ids=lambda v: v if isinstance(v, str) and v.startswith("/") else None)

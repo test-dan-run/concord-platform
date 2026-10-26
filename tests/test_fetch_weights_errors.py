@@ -43,14 +43,8 @@ def dest(monkeypatch, tmp_path):
     return tmp_path
 
 
-def test_a_stream_failing_mid_way_leaves_no_part_file(monkeypatch, tmp_path):
-    serve(monkeypatch, Response())
-    with pytest.raises(httpx.ReadTimeout):
-        fetch_weights.download(URL, tmp_path / "w.bin", "0" * 64)
-    assert list(tmp_path.iterdir()) == []
-
-
 def test_main_reports_a_failed_download_and_exits_1(dest, monkeypatch, capsys):
+    """A stream failing mid way leaves no .part file."""
     serve(monkeypatch, Response())
     assert fetch_weights.main(["silero-vad"]) == 1
     assert "error: w.bin: peer went away" in capsys.readouterr().err

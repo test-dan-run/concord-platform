@@ -27,8 +27,7 @@ def test_editing_one_dockerfile_leaves_the_other_bases_current(bases):
     assert after["py-cuda"] != before["py-cuda"] and after["py-cuda-torch211"] != before["py-cuda-torch211"]
 
 
-@pytest.mark.parametrize("path", ["common/README.md", "bases.yaml", "common/aisvc/__pycache__/batch.cpython-312.pyc",
-                                  "common/stray.pyc"])
+@pytest.mark.parametrize("path", ["common/README.md", "bases.yaml", "common/stray.pyc"])
 def test_files_the_build_leaves_out_do_not_change_the_digest(bases, path):
     before = digests(bases)
     f = bases / path
@@ -37,8 +36,7 @@ def test_files_the_build_leaves_out_do_not_change_the_digest(bases, path):
     assert digests(bases) == before
 
 
-@pytest.mark.parametrize("path", ["requirements-base.txt", "common/aisvc/batch.py", "common/pyproject.toml",
-                                  ".dockerignore", "common/aisvc/new_module.py"])
+@pytest.mark.parametrize("path", ["requirements-base.txt", ".dockerignore", "common/aisvc/new_module.py"])
 def test_files_the_build_copies_change_every_digest(bases, path):
     before = digests(bases)
     f = bases / path

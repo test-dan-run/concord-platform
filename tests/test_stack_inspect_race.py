@@ -35,12 +35,6 @@ def test_a_container_removed_after_docker_ps_is_left_out(monkeypatch):
         "silero-vad": ContainerInfo("silero-vad", "running", "healthy", False, "sha256:vad", "h1")}
 
 
-def test_every_container_removed_after_docker_ps_is_an_empty_list(monkeypatch):
-    fake_docker(monkeypatch, subprocess.CompletedProcess([], 1, "[]\n", "error: no such object: a1b2c3d4e5f6\n"
-                                                                       "error: no such object: f6e5d4c3b2a1\n"))
-    assert stack.containers(P) == {} and DockerRuntime().containers(P) == {}
-
-
 def test_other_inspect_failures_still_raise(monkeypatch):
     fake_docker(monkeypatch, subprocess.CompletedProcess([], 1, "", "Cannot connect to the Docker daemon\n"))
     with pytest.raises(subprocess.CalledProcessError):

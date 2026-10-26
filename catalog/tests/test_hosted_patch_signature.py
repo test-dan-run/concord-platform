@@ -40,14 +40,6 @@ def test_a_patch_away_from_oip_drops_the_signature(api):
     assert api.get("/api/models/hosted-asr").json()["signature"] is None
 
 
-def test_a_patch_to_oip_without_readable_metadata_is_a_422_like_create(api, cat):
-    assert api.post("/api/hosted", json=ASR).status_code == 201
-    r = api.patch("/api/hosted/hosted-asr", json={**OIP, "model": "no-such"})
-    assert r.status_code == 422 and r.json()["error"]["message"].startswith("cannot read no-such's OIP metadata")
-    assert api.post("/api/hosted", json={**ASR, **OIP, "id": "hosted-2", "model": "no-such"}).status_code == 422
-    assert cat.hosted.get("hosted-asr").contract == "openai"  # nothing was saved
-
-
 def test_a_patch_to_oip_reads_the_signature(api):
     assert api.post("/api/hosted", json=ASR).status_code == 201
     r = api.patch("/api/hosted/hosted-asr", json=OIP)

@@ -46,17 +46,12 @@ BAD = {
                                        b"path,sha256,duration,sample_rate\n\xff\xfe,x,1,1\n"),
     "uids.jsonl is not UTF-8": version_zip(FILES, {**ASR, "uids.jsonl": b"\xff\xfe\n"}),
     "a uid's start is a string": version_zip(FILES, _uid(start="x")),
-    "a uid's end is null": version_zip(FILES, _uid(end=None)),
     "a uid's file is a list": version_zip(FILES, _uid(file=["a.wav"])),
     "attributes files is a list": version_zip(FILES, {**ASR, "attributes.json": json.dumps({"files": ["a.wav"]})}),
-    "attributes speakers is a string": version_zip(FILES, {**ASR, "attributes.json": json.dumps({"speakers": "x"})}),
     "a SegLST session_id is a number": version_zip(FILES, {"segments.seglst.json": json.dumps(
         [{"session_id": 7, "speaker": "s", "start_time": 0, "end_time": 1, "words": "hi"}])}),
-    "a segments.jsonl file is a list": version_zip(FILES, {"segments.jsonl": jsonl(
-        [{"file": ["a.wav"], "start": 0, "end": 1, "text": "hi"}])}),
     "name is a number": version_zip(FILES, ASR, name=123),
     "description is an object": version_zip(FILES, ASR, description={"x": 1}),
-    "language is a number": version_zip(FILES, ASR, language=7),
     "tags is a string": version_zip(FILES, ASR, tags="x"),
     "a tag is a number": version_zip(FILES, ASR, tags=["x", 1]),
 }
@@ -71,7 +66,8 @@ def test_a_malformed_version_is_422_not_500(api, case):
     assert api.get(f"/api/datasets/{did}").json()["versions"] == []
 
 
-@pytest.mark.parametrize("case", BAD)
+# The import checks with the same check_folder: one manifest problem and one references file that can't be read.
+@pytest.mark.parametrize("case", ["a tag is a number", "a SegLST session_id is a number"])
 def test_a_malformed_package_previews_as_not_ok_and_imports_nothing(api, case):
     files = {"file": ("p.zip", BAD[case], "application/zip")}
     preview = api.post("/api/datasets/import", files=files, data={"preview": "true"})

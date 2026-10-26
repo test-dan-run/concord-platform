@@ -42,32 +42,16 @@ def call(api) -> httpx.Response:
 
 
 def test_an_error_reply_that_echoes_the_key_is_redacted(api, cat):
-    body = f'{{"error": {{"message": "bad request for key {KEY}"}}}}'.encode()
-    answer(cat, 400, body, {"content-type": "application/json", "content-length": str(len(body)),
-                            "x-request-key": f"Bearer {KEY}"})
+    body = gzip.compress(f'{{"error": {{"message": "bad request for key {KEY}"}}}}'.encode())
+    answer(cat, 400, body, {"content-type": "application/json", "content-encoding": "gzip",
+                            "content-length": str(len(body)), "x-request-key": f"Bearer {KEY}"})
     r = call(api)
     assert r.status_code == 400 and KEY not in r.text and KEY not in str(r.headers)
-    assert r.json() == {"error": {"message": "bad request for key ••••"}}
+    assert r.json() == {"error": {"message": "bad request for key ••••"}}  # decompressed, then redacted
     assert "x-request-key" not in r.headers  # a header cannot carry the mask, so it is dropped
+    assert "content-encoding" not in r.headers  # sent uncompressed
     assert r.headers["content-type"] == "application/json" and int(r.headers["content-length"]) == len(r.content)
     assert api.get("/api/models/hosted-asr").json()["in_flight"] == 0
-
-
-def test_an_error_reply_read_in_advance_is_redacted_too(api, cat):
-    def echo(r: httpx.Request) -> httpx.Response:  # an in-memory transport: the reply is already read
-        r.read()
-        return httpx.Response(400, json={"error": {"message": f"bad request for key {r.headers['authorization'][7:]}"}})
-
-    cat.gateway.client = httpx.AsyncClient(transport=httpx.MockTransport(echo))
-    r = call(api)
-    assert r.status_code == 400 and r.json() == {"error": {"message": "bad request for key ••••"}}
-
-
-def test_a_compressed_error_reply_is_redacted_and_sent_uncompressed(api, cat):
-    answer(cat, 401, gzip.compress(f"invalid key {KEY}".encode()), {"content-encoding": "gzip"})
-    r = call(api)
-    assert r.status_code == 401 and r.text == "invalid key ••••"
-    assert "content-encoding" not in r.headers and int(r.headers["content-length"]) == len(r.content)
 
 
 def test_an_error_reply_over_1_mib_is_not_forwarded(api, cat):

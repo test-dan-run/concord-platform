@@ -82,6 +82,7 @@ def test_create_stores_the_key_encrypted_and_never_returns_it(api, cat, provider
     rec = r.json()
     assert rec["state"] == "hosted" and rec["gpu"] is None and rec["image"] is None and rec["served_name"] == "whisper-1"
     assert rec["hosted"]["key_hint"] == "7f3a" and rec["hosted"]["resolved_url"] == "https://api.example.com/v1/audio/transcriptions"
+    assert rec["hosted"]["host"] == "api.example.com"
     assert rec["capabilities"]["status"] == "pending" and rec["tags"] == ["asr", "hosted"]
     assert KEY not in r.text and KEY not in api.get("/api/models").text and KEY not in api.get("/api/models/hosted-asr").text
     assert [m["id"] for m in api.get("/api/models", params={"tag": "hosted"}).json()] == ["hosted-asr"]
@@ -227,6 +228,9 @@ def test_oip_hosted_takes_its_signature_and_rewrites_the_model_in_the_path(api, 
     assert str(provider.seen[-1].url) == "https://inference.example.com/v2/models/vad-x/infer"
     assert api.post("/m/remote-vad/v2/models/vad-x/infer", json={"inputs": []}).status_code == 200  # aicore's form
     assert str(provider.seen[-1].url) == "https://inference.example.com/v2/models/vad-x/infer"
+    meta = api.get("/v2/models/remote-vad")  # OIP model metadata names the provider's model too
+    assert meta.status_code == 200 and meta.json()["name"] == "vad-x"
+    assert str(provider.seen[-1].url) == "https://inference.example.com/v2/models/vad-x"
     from catalog.verifier import _with_examples
 
     assert _with_examples(OIP_SIG)["inputs"][1]["example"] == [16000]  # metadata has none; conformance needs one

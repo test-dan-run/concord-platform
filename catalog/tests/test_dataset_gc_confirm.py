@@ -44,12 +44,10 @@ def test_a_real_run_that_finds_more_than_expected_deletes_nothing(api):
     upload(api, old)
     age(api, sha(old))
     assert api.post("/api/store/gc", json={"dry_run": False}).json()["files"] == 1
-
-
-def test_a_dry_run_ignores_expect_files_and_a_negative_count_is_refused(api):
-    old = wav(43)
-    upload(api, old)
-    age(api, sha(old))
+    # A dry run ignores expect_files, and a negative count is refused.
+    later = wav(43)
+    upload(api, later)
+    age(api, sha(later))
     assert api.post("/api/store/gc", json={"dry_run": True, "expect_files": 0}).json()["files"] == 1
     assert api.post("/api/store/gc", json={"dry_run": False, "expect_files": -1}).status_code == 422
-    assert api.post("/api/store/missing", json={"sha256": [sha(old)]}).json() == {"missing": []}
+    assert api.post("/api/store/missing", json={"sha256": [sha(later)]}).json() == {"missing": []}
