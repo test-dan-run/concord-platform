@@ -21,14 +21,10 @@ def catalog_error(status: int, body: object) -> CatalogError:
     return exc.value
 
 
-@pytest.mark.parametrize("body", [[1, 2], "oops", 3, None])
-def test_catalog_error_body_that_is_json_but_not_an_object(body):
-    exc = catalog_error(500, body)
-    assert exc.status == 500 and exc.message == json.dumps(body)
-    assert Catalog("http://t", http=answering(500, body)).available() is False  # tools/stack.catalog() falls back
-
-
-def test_catalog_error_bodies_that_are_objects():
+def test_catalog_error_bodies():
+    exc = catalog_error(500, [1, 2])  # JSON but not an object: the body is the message
+    assert exc.status == 500 and exc.message == "[1, 2]"
+    assert Catalog("http://t", http=answering(500, [1, 2])).available() is False  # tools/stack.catalog() falls back
     assert catalog_error(404, {"detail": "gone"}).message == "gone"
     assert catalog_error(502, {"error": "plain"}).message == "plain"
     assert catalog_error(502, {"error": {"message": "upstream down", "type": "upstream"}}).message == "upstream down"

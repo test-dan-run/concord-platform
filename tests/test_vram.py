@@ -12,6 +12,8 @@ def test_sample_sets():
     voice = vram_check.budget(p, p.resolve(VOICE_CHAT))
     assert voice.total_fraction == pytest.approx(0.804, abs=5e-4)  # the sum of minimums, still reported
     assert not voice.ok and voice.gpu == ["qwen3-8b", "whisper-large-v3", "kokoro-tts", "bge-m3"]  # largest first
+    kokoro = next(r for r in voice.rows if r.name == "kokoro-tts")  # a custom image's vram_gb, as a fraction
+    assert kokoro.fraction == pytest.approx(3 / 32) and kokoro.source == "vram_gb"
     assert vram_check.budget(p, p.resolve(["heavy-chat"])).ok
     assert vram_check.budget(p, p.resolve(["silero-vad", "text-normalizer"])).total_fraction == 0
     # one GPU service per stage: an ASR model with CPU diarisation and VAD is fine; two ASR models are not
@@ -50,13 +52,7 @@ def test_unknown_name(capsys):
     assert "unknown service 'nope'" in capsys.readouterr().err
 
 
-def test_custom_vram_gb_is_converted_to_fraction():
-    p = load_platform()
-    rows = {r.name: r for r in vram_check.budget(p, p.resolve(VOICE_CHAT)).rows}
-    assert rows["kokoro-tts"].fraction == pytest.approx(3 / 32) and rows["kokoro-tts"].source == "vram_gb"
-
-
-# Memory at start: min(util_limit, (free - 1 GiB) / total), measured right before the start.
+# Memory at start: min(util_limit, (free - 1 GiB) / total), measured right before the start; util_limit without one.
 
 def test_start_memory_takes_what_is_free_less_one_gib_up_to_util_limit():
     p = load_platform()
@@ -64,10 +60,6 @@ def test_start_memory_takes_what_is_free_less_one_gib_up_to_util_limit():
     assert vram_check.start_memory(p, (31.84, 31.84)).fraction == 0.93  # capped at util_limit
     assert vram_check.start_memory(p, (31.84, 0.5)).fraction == 0.0
     assert vram_check.start_memory(p, (31.84, 26.0)).env() == {"AIPLATFORM_GPU_UTIL": "0.785", "AIPLATFORM_VRAM_GB": "24.99"}
-
-
-def test_without_a_measurement_start_memory_is_util_limit_of_the_configured_gpu():
-    p = load_platform()
     assert vram_check.start_memory(p, None) == vram_check.StartMemory(0.93, 0.93 * 32, False)
     assert vram_check.start_env(p, p.get("heavy-chat"), None) == {"AIPLATFORM_GPU_UTIL": "0.930", "AIPLATFORM_VRAM_GB": "29.76"}
 

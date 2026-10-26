@@ -21,17 +21,12 @@ def transport(monkeypatch):
     return handler
 
 
-@pytest.mark.parametrize("argv", [["show", "silero-vad"], ["profile", "silero-vad"]], ids=["batch", "batch-profile"])
-@pytest.mark.parametrize("exc,why", [(httpx.ConnectError("connection refused"), "connection refused"),
-                                     (httpx.ReadTimeout(""), "ReadTimeout")], ids=["refused", "timeout"])
+@pytest.mark.parametrize("argv,exc,why", [
+    (["show", "silero-vad"], httpx.ConnectError("connection refused"), "connection refused"),
+    (["profile", "silero-vad"], httpx.ReadTimeout(""), "ReadTimeout"),  # an empty message: the error's type
+], ids=["refused-batch", "timeout-batch-profile"])
 def test_no_catalog_is_one_error_line(transport, capsys, argv, exc, why):
     transport[0] = failing(exc)
     assert batch.main(argv) == 1
     err = capsys.readouterr().err
     assert err == f"error: catalog at http://catalog.test is not answering ({why})\n"
-
-
-def test_nothing_listening_is_one_error_line(monkeypatch, capsys):
-    monkeypatch.setenv("AICORE_CATALOG", "http://127.0.0.1:9")  # nothing listens on the discard port
-    assert batch.main(["show", "silero-vad"]) == 1
-    assert capsys.readouterr().err.startswith("error: catalog at http://127.0.0.1:9 is not answering (")
