@@ -8,6 +8,7 @@ the default max_speech_duration_s=inf.
 
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,9 +32,18 @@ class VadParams:
         unknown = sorted(set(params) - set(cls.__dataclass_fields__))
         if unknown:
             raise ValueError(f"unknown parameters {unknown}; supported: {sorted(cls.__dataclass_fields__)}")
+        for k, v in known.items():
+            number = isinstance(v, (int, float)) and not isinstance(v, bool)
+            if not number and not (k == "neg_threshold" and v is None):  # a null neg_threshold is its default
+                raise ValueError(f"{k} must be a number")
         p = cls(**known)
         if not 0.0 < p.threshold < 1.0:
             raise ValueError("threshold must be in (0, 1)")
+        if p.neg_threshold is not None and not 0.0 < p.neg_threshold < 1.0:
+            raise ValueError("neg_threshold must be in (0, 1) or null")
+        for k in ("min_speech_duration_ms", "min_silence_duration_ms", "speech_pad_ms"):
+            if not 0 <= getattr(p, k) < math.inf:  # also false for NaN
+                raise ValueError(f"{k} must be a finite number of at least 0")
         return p
 
 

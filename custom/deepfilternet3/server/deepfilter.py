@@ -35,8 +35,12 @@ class DfParams:
         if unknown:
             raise ValueError(f"unknown parameters {unknown}; supported: {sorted(cls.__dataclass_fields__)}")
         p = cls(**{k: params[k] for k in cls.__dataclass_fields__ if k in params})
-        if not 0 <= float(p.atten_lim_db) <= 100:
+        if isinstance(p.atten_lim_db, bool) or not isinstance(p.atten_lim_db, (int, float)):
+            raise ValueError("atten_lim_db must be a number")
+        if not 0 <= p.atten_lim_db <= 100:
             raise ValueError("atten_lim_db must be in [0, 100]")
+        if not isinstance(p.post_filter, bool):  # a string such as "no" would turn the post filter on
+            raise ValueError("post_filter must be true or false")
         return p
 
 

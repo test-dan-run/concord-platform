@@ -9,7 +9,7 @@ is a folder under Settings.export_dir:
       models/<id>/
         service.yaml
         registration.json  display name, tags, derived from
-        weights/           when weights are included
+        weights/           when weights are included, with the folder's SOURCE.txt for the model card
         verification.json  when verification records are included
 
 The download route streams the folder as one .tar while it reads, so it is never stored twice. Hosted
@@ -70,6 +70,9 @@ class Exporter:
         self.events = events
         self._sizes: dict[str, tuple[int | None, Weights]] = {}  # build key -> (image bytes, weights)
         self._lock = threading.Lock()
+        # held from the 409 check until the job's thread runs; not _lock, which models() takes through _sized
+        self._start_lock = threading.Lock()
+        self._job: str | None = None  # the job the thread runs
         self._thread: threading.Thread | None = None
         self._cancel = threading.Event()
         self._last_publish = 0.0
@@ -160,6 +163,10 @@ class Exporter:
         return self.public(self._row(job_id))
 
     def start(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self._start_lock:  # two starts at once: the second one sees the first one's job and gets 409
+            return self._start(body)
+
+    def _start(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.db.one("SELECT 1 FROM export_job WHERE state IN ('queued', 'running')"):
             raise SchedulerError(409, "an export is already running; wait for it or cancel it")
         p = self.scheduler.platform()
@@ -170,7 +177,7 @@ class Exporter:
         if hosted:
             raise SchedulerError(422, f"hosted endpoints have no image or weights to export: {', '.join(hosted)}")
         try:
-            names = [p.get(m).name for m in models]
+            names = [s.name for s in p.resolve(models)]  # a name and its alias are one model
         except KeyError as exc:
             raise SchedulerError(404, exc.args[0]) from None
         dest = body.get("destination") or "bundle"
@@ -189,7 +196,7 @@ class Exporter:
         path = self._bundle_path()
         self.db.execute("INSERT INTO export_job (id, request, state, phase, path, created_at) VALUES (?, ?, 'queued', ?, ?, ?)",
                         (job_id, dumps(req), "queued", str(path), now_iso()))
-        self._cancel = threading.Event()
+        self._job, self._cancel = job_id, threading.Event()
         self._thread = threading.Thread(target=self._run, args=(job_id,), daemon=True, name=f"export-{job_id}")
         self._thread.start()
         return self.get(job_id)
@@ -203,8 +210,11 @@ class Exporter:
         return path
 
     def cancel_or_delete(self, job_id: str) -> None:
-        row = self._row(job_id)
-        if row["state"] in LIVE:
+        """A running job is cancelled; any other job (a live one included, when no thread runs it) is deleted."""
+        with self._start_lock:
+            row = self._row(job_id)
+            running = row["state"] in LIVE and job_id == self._job
+        if running:
             self._cancel.set()
             return
         self._remove(row["path"])
@@ -231,7 +241,8 @@ class Exporter:
         self.events.publish("export", self.public(row) if row else {"id": job_id, "state": "deleted"})
 
     def _remove(self, path: str | None) -> None:
-        if path and Path(path).exists() and Path(self.settings.export_dir) in Path(path).resolve().parents:
+        """Remove a bundle folder, only under the export dir (both resolved: it may be a symlink or relative)."""
+        if path and Path(path).exists() and Path(self.settings.export_dir).resolve() in Path(path).resolve().parents:
             shutil.rmtree(path, ignore_errors=True)
 
     def _run(self, job_id: str) -> None:
@@ -246,15 +257,7 @@ class Exporter:
             phases.append("copying weights")
         phases.append("writing records")
         phase = phases[0]
-        p = self.scheduler.platform()
-        services = [p.get(m) for m in req["models"]]
-        sized = {s.name: self._sized(p, s, self.registry.record(s.name, p)["build_key"]) for s in services}
-        images = list(dict.fromkeys(p.image(s) for s in services))
-        # "up to": images that share layers make images.tar smaller than the sum of their sizes
-        image_sum = sum(self.runtime.image_size(ref) or 0 for ref in images)
-        weights_sum = sum(sized[s.name][1].size for s in services) if req["weights"] else 0
-        expected = (image_sum if bundle and req["images"] else 0) + weights_sum
-        done = 0
+        expected = done = 0
 
         def enter(name: str, detail: str | None = None) -> None:
             nonlocal phase
@@ -267,9 +270,24 @@ class Exporter:
             self._set(job_id, bytes_done=n)
             self._publish(job_id)
 
+        created = False  # a folder this job did not make is never removed
+
+        def remove() -> None:
+            if created:
+                self._remove(str(out))
+
         try:
+            p = self.scheduler.platform()
+            services = [p.get(m) for m in req["models"]]
+            sized = {s.name: self._sized(p, s, self.registry.record(s.name, p)["build_key"]) for s in services}
+            images = list(dict.fromkeys(p.image(s) for s in services))
+            # "up to": images that share layers make images.tar smaller than the sum of their sizes
+            image_sum = sum(self.runtime.image_size(ref) or 0 for ref in images)
+            weights_sum = sum(sized[s.name][1].size for s in services) if req["weights"] else 0
+            expected = (image_sum if bundle and req["images"] else 0) + weights_sum
             enter("checking disk space")
             out.mkdir(parents=True, exist_ok=False)
+            created = True
             free = shutil.disk_usage(out).free
             if free < expected * DISK_MARGIN:
                 raise ExportError(f"not enough free space in {self.settings.export_dir}: {_gb(free)} free, "
@@ -310,21 +328,24 @@ class Exporter:
             self._set(job_id, state="done", phase="done", bytes_done=written, bytes_written=written, finished_at=now_iso())
             log.info("export %s done: %s (%s)", job_id, out, _gb(written))
         except Cancelled:
-            self._remove(str(out))
+            remove()
             self._set(job_id, state="cancelled", error="cancelled", failed_phase=phase, finished_at=now_iso())
         except (ExportError, ImageError, OSError) as exc:
             log.warning("export %s failed while %s: %s", job_id, phase, exc)
-            self._remove(str(out))
+            remove()
             msg = str(exc) if not isinstance(exc, OSError) else f"{exc.strerror or exc}"
             self._set(job_id, state="failed", error=msg, failed_phase=phase, finished_at=now_iso())
         except Exception as exc:  # noqa: BLE001 - a bug must still end the job
             log.exception("export %s crashed", job_id)
-            self._remove(str(out))
+            remove()
             self._set(job_id, state="failed", error=f"export crashed: {exc}", failed_phase=phase, finished_at=now_iso())
         self._publish(job_id, force=True)
 
     def _copy_weights(self, src: Path, dst: Path, done: int, progress) -> int:
-        for rel, f in identity.weight_files(src):
+        files = identity.weight_files(src)
+        # SOURCE.txt is the model card's provenance: copied, but never part of the weights hash or size
+        files += [(name, src / name) for name in sorted(identity.IGNORED_FILES) if (src / name).is_file()]
+        for rel, f in files:
             target = dst / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(f, "rb") as fin, open(target, "wb") as fout:
@@ -376,20 +397,21 @@ class Exporter:
         path = Path(row["path"] or "")
         if row["state"] != "done" or not path.is_dir():
             raise SchedulerError(409 if row["state"] in LIVE else 410, f"export {job_id} has no bundle to download")
-        r, w = os.pipe()
-
-        def writer() -> None:
-            with os.fdopen(w, "wb", buffering=1 << 20) as fh:
-                try:
-                    with tarfile.open(fileobj=fh, mode="w|", format=tarfile.PAX_FORMAT) as tar:
-                        tar.add(path, arcname=path.name)
-                except (BrokenPipeError, OSError):  # the client went away
-                    pass
-
-        threading.Thread(target=writer, daemon=True, name=f"download-{job_id}").start()
+        def writer(w: int) -> None:
+            try:
+                with os.fdopen(w, "wb", buffering=1 << 20) as fh, \
+                        tarfile.open(fileobj=fh, mode="w|", format=tarfile.PAX_FORMAT) as tar:
+                    tar.add(path, arcname=path.name)
+            except BrokenPipeError:  # the client went away
+                pass
+            except Exception as exc:  # noqa: BLE001 - e.g. the bundle was deleted while it streamed
+                log.warning("download of export %s stopped, so the client got a cut-off .tar: %s", job_id, exc)
 
         def chunks() -> Iterator[bytes]:
-            with os.fdopen(r, "rb") as fh:
+            # the pipe and the writer are made on the first read, so a response that never starts holds neither
+            r, w = os.pipe()
+            with os.fdopen(r, "rb") as fh:  # closed when the client goes away too, which stops the writer
+                threading.Thread(target=writer, args=(w,), daemon=True, name=f"download-{job_id}").start()
                 while block := fh.read(1 << 20):
                     yield block
 

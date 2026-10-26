@@ -12,7 +12,7 @@ import unicodedata
 from pydantic import BaseModel, ConfigDict
 
 _WS = re.compile(r"\s+")
-_SENTENCE_START = re.compile(r"(^|[.!?…]\s+)([a-z])")
+_SENTENCE_START = re.compile(r"(^|[.!?…]\s+)([^\W\d_])")  # any letter, so "élan" and "ωmega" too
 _LAST_SENTENCE = re.compile(r"(?:^|[.!?…]\s+)([^.!?…]*)$")
 _TERMINAL = ("." , "!", "?", "…", '"', "'", ")", "]", "”", "’")
 _QUESTION_OPENERS = {
@@ -36,7 +36,7 @@ def normalize(text: str, opts: Options | None = None) -> str:
     if not out:
         return out
     if opts.capitalize:
-        out = _SENTENCE_START.sub(lambda m: m.group(1) + m.group(2).upper(), out)
+        out = _SENTENCE_START.sub(lambda m: m.group(1) + m.group(2).title(), out)  # titlecase: ß -> Ss, not SS
     if opts.terminal_punctuation and not out.endswith(_TERMINAL) and out[-1].isalnum():
         last = _LAST_SENTENCE.search(out)
         first_word = (last.group(1) if last else out).split(" ", 1)[0].lower()

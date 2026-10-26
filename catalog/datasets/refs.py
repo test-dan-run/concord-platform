@@ -1,133 +1,24 @@
-"""Read a version's references for the UI: segments per file, uids and labels, and the comparison of two versions.
+"""A version's references for the UI: `read` caches the parsed references of a version, and `compare` is the
+comparison of two versions.
 
-The catalog reads the three references files Concord Label writes (segments.seglst.json, segments.jsonl and
-refs.rttm) and STM. A version may carry any other format the apps read (contracts/datasets/version.md); the catalog
-stores it unchanged and reports its segments as unknown (None).
+Reading a references file (`parse`, `file_summary`, `file_refs`) is part of the version format, so it is in
+aicore.dataset_format, which FakeDatasetCatalog shares.
 """
 
 from __future__ import annotations
 
-import csv
+import bisect
 import difflib
 import functools
-import json
-from pathlib import Path, PurePosixPath
+from collections import deque
+from pathlib import Path
 from typing import Any
 
-UID_TOLERANCE_S = 0.01
+# The reading itself, which callers also find here as refs.parse, refs.file_summary and so on.
+from aicore.dataset_format import (UID_TOLERANCE_S, file_refs, file_summary, flatten, parse,  # noqa: F401
+                                   refs_file, segments)
+
 EDIT_OVERLAP = 0.5  # unmatched segments that overlap this much (intersection over union) count as one edited segment
-
-
-def flatten(labels: Any, prefix: str = "") -> dict[str, Any]:
-    """Labels with nested objects read as dotted names: {"accent": {"region": "n"}} -> {"accent.region": "n"}."""
-    out: dict[str, Any] = {}
-    if not isinstance(labels, dict):
-        return out
-    for k, v in labels.items():
-        if isinstance(v, dict):
-            out.update(flatten(v, f"{prefix}{k}."))
-        else:
-            out[f"{prefix}{k}"] = v
-    return out
-
-
-def _seg(start: Any, end: Any, speaker: Any = None, text: Any = None, labels: Any = None) -> dict[str, Any]:
-    return {"start": round(float(start), 3), "end": round(float(end), 3), "speaker": speaker,
-            "text": text, "uid": None, "labels": flatten(labels)}
-
-
-def _segments(path: Path) -> list[tuple[str, dict[str, Any]]] | None:
-    """(file stem or path, segment) for every record of a references file; None for a format the catalog doesn't
-    read."""
-    name = path.name.lower()
-    text = path.read_text(encoding="utf-8")
-    out: list[tuple[str, dict[str, Any]]] = []
-    if name.endswith(".jsonl"):
-        for line in text.splitlines():
-            if line.strip():
-                r = json.loads(line)
-                out.append((r["file"], _seg(r["start"], r["end"], r.get("speaker"), r.get("text"), r.get("attributes"))))
-        return out
-    if name.endswith(".json"):
-        data = json.loads(text)
-        if not isinstance(data, list) or not all(isinstance(r, dict) and "session_id" in r for r in data):
-            return None
-        for r in data:
-            out.append((r["session_id"], _seg(r["start_time"], r["end_time"], r.get("speaker"), r.get("words"),
-                                              r.get("attributes"))))
-        return out
-    if name.endswith(".rttm"):
-        for line in text.splitlines():
-            f = line.split()
-            if len(f) >= 8 and f[0] == "SPEAKER":
-                start = float(f[3])
-                out.append((f[1], _seg(start, start + float(f[4]), f[7])))
-        return out
-    if name.endswith(".stm"):
-        for line in text.splitlines():
-            if not line.strip() or line.startswith(";;"):
-                continue
-            f = line.split(maxsplit=5)
-            if len(f) < 5:
-                continue
-            words = f[5] if len(f) > 5 else ""
-            if words.startswith("<") and ">" in words:  # the optional <label> field
-                words = words.split(">", 1)[1].strip()
-            out.append((f[0], _seg(f[3], f[4], f[2], words)))
-        return out
-    return None
-
-
-def refs_file(root: Path) -> Path | None:
-    """The one references file of a version folder, or None (an audio-only version)."""
-    d = root / "refs"
-    files = sorted(p for p in d.glob("*") if p.is_file() and p.name not in ("uids.jsonl", "attributes.json")) \
-        if d.is_dir() else []
-    return files[0] if files else None
-
-
-def parse(root: Path) -> dict[str, Any]:
-    """A version folder's references: segments per file path (None for a format the catalog doesn't read), file and
-    speaker labels, and the sorted names of every label."""
-    with open(root / "files.csv", newline="", encoding="utf-8") as fh:
-        paths = [r["path"] for r in csv.DictReader(fh)]
-    by_key = {p: p for p in paths} | {PurePosixPath(p).stem.lower(): p for p in paths}
-    rf = refs_file(root)
-    segs: dict[str, list[dict[str, Any]]] | None = None
-    if rf is not None:
-        records = _segments(rf)
-        if records is not None:
-            segs = {p: [] for p in paths}
-            for key, s in records:
-                p = by_key.get(key) or by_key.get(PurePosixPath(key).stem.lower())
-                if p is not None:
-                    segs[p].append(s)
-            for v in segs.values():
-                v.sort(key=lambda s: (s["start"], s["end"]))
-    uids = root / "refs" / "uids.jsonl"
-    if segs is not None and uids.is_file():
-        for line in uids.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                u = json.loads(line)
-                for s in segs.get(u["file"], []):
-                    if abs(s["start"] - u["start"]) <= UID_TOLERANCE_S and abs(s["end"] - u["end"]) <= UID_TOLERANCE_S:
-                        s["uid"] = u["uid"]
-                        break
-    attrs_path = root / "refs" / "attributes.json"
-    attrs = json.loads(attrs_path.read_text(encoding="utf-8")) if attrs_path.is_file() else {}
-    file_labels = {p: flatten(v) for p, v in (attrs.get("files") or {}).items()}
-    speaker_labels = {p: {spk: flatten(v) for spk, v in spks.items()} for p, spks in (attrs.get("speakers") or {}).items()}
-    names: set[str] = set()
-    for v in file_labels.values():
-        names |= v.keys()
-    for spks in speaker_labels.values():
-        for v in spks.values():
-            names |= {f"speaker.{k}" for k in v}
-    for v in (segs or {}).values():
-        for s in v:
-            names |= s["labels"].keys()
-    return {"format": rf.name if rf else None, "segments": segs, "file_labels": file_labels,
-            "speaker_labels": speaker_labels, "labels": sorted(names)}
 
 
 @functools.lru_cache(maxsize=16)
@@ -138,19 +29,6 @@ def _read(root: str, digest: str) -> dict[str, Any]:
 def read(root: Path, digest: str) -> dict[str, Any]:
     """`parse`, once per version: a version never changes, so its folder and digest are the cache key."""
     return _read(str(root), digest)
-
-
-def file_summary(parsed: dict[str, Any], path: str) -> dict[str, Any]:
-    segs = None if parsed["segments"] is None else parsed["segments"].get(path, [])
-    return {"segments": None if segs is None else len(segs),
-            "speakers": None if segs is None else sorted({s["speaker"] for s in segs if s["speaker"] is not None}),
-            "labels": parsed["file_labels"].get(path, {})}
-
-
-def file_refs(parsed: dict[str, Any], path: str) -> dict[str, Any]:
-    segs = None if parsed["segments"] is None else parsed["segments"].get(path, [])
-    return {"path": path, "format": parsed["format"], "segments": segs,
-            "labels": parsed["file_labels"].get(path, {}), "speakers": parsed["speaker_labels"].get(path, {})}
 
 
 # ----------------------------------------------------------------------------- compare
@@ -179,25 +57,66 @@ def _changed(x: dict[str, Any], y: dict[str, Any]) -> bool:
 def compare_segments(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> dict[str, list[Any]]:
     """Segments added, removed and edited between two lists of one file's segments. A segment is the same one in
     both when its uid matches, else when its times match within 0.01 s; left over segments that overlap by half or
-    more are one segment whose times were edited."""
-    left, right = list(a), list(b)
+    more are one segment whose times were edited. Each segment of `a` in turn takes the first segment of `b` still
+    free that matches, or for an overlap the first that overlaps most. `b` is looked up by uid and by start time,
+    so a file with thousands of segments takes milliseconds."""
+    right = list(b)
+    free = [True] * len(right)
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    for match in (lambda x, y: x["uid"] is not None and x["uid"] == y["uid"], _same_times):
-        for x in list(left):
-            y = next((y for y in right if match(x, y)), None)
-            if y is not None:
-                pairs.append((x, y))
-                left.remove(x)
-                right.remove(y)
-    for x in list(left):
-        best = max(right, key=lambda y: _overlap(x, y), default=None)
-        if best is not None and _overlap(x, best) >= EDIT_OVERLAP:
-            pairs.append((x, best))
-            left.remove(x)
-            right.remove(best)
+
+    def take(x: dict[str, Any], j: int) -> None:
+        free[j] = False
+        pairs.append((x, right[j]))
+
+    # The same uid. A uid that is a list or an object can't be a dict key, so those are compared one by one.
+    by_uid: dict[Any, deque[int]] = {}
+    odd: list[int] = []
+    for j, y in enumerate(right):
+        if y["uid"] is not None:
+            try:
+                by_uid.setdefault(y["uid"], deque()).append(j)
+            except TypeError:
+                odd.append(j)
+    left: list[dict[str, Any]] = []
+    for x in a:
+        u, j = x["uid"], None
+        if u is not None and u == u:  # NaN equals no uid, itself included
+            try:
+                q = by_uid.get(u)
+                j = q.popleft() if q else None
+            except TypeError:
+                j = next((k for k in odd if free[k] and right[k]["uid"] == u), None)
+        if j is None:
+            left.append(x)
+        else:
+            take(x, j)
+    # The same times. The windows on start times are a little wider than needed, so rounding never hides a match.
+    order = sorted(range(len(right)), key=lambda j: right[j]["start"])
+    starts = [right[j]["start"] for j in order]
+    rest, left = left, []
+    for x in rest:
+        lo = bisect.bisect_left(starts, x["start"] - 2 * UID_TOLERANCE_S)
+        hi = bisect.bisect_right(starts, x["start"] + 2 * UID_TOLERANCE_S)
+        j = min((k for k in order[lo:hi] if free[k] and _same_times(x, right[k])), default=None)
+        if j is None:
+            left.append(x)
+        else:
+            take(x, j)
+    # The most overlap, among the segments that start before x ends and may end after it starts (any other
+    # segment overlaps x by 0).
+    longest = max((y["end"] - y["start"] for y in right), default=0.0)
+    rest, left = left, []
+    for x in rest:
+        lo = bisect.bisect_left(starts, x["start"] - longest - UID_TOLERANCE_S)
+        hi = bisect.bisect_left(starts, x["end"])
+        best = max(((_overlap(x, right[k]), -k) for k in order[lo:hi] if free[k]), default=None)
+        if best is not None and best[0] >= EDIT_OVERLAP:
+            take(x, -best[1])
+        else:
+            left.append(x)
     edited = [{"a": x, "b": y, "diff": text_diff(x["text"], y["text"])} for x, y in pairs if _changed(x, y)]
     edited.sort(key=lambda e: e["b"]["start"])
-    return {"added": right, "removed": left, "edited": edited}
+    return {"added": [y for j, y in enumerate(right) if free[j]], "removed": left, "edited": edited}
 
 
 def compare(a_rows: dict[str, dict[str, Any]], b_rows: dict[str, dict[str, Any]],

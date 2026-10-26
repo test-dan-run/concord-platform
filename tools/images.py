@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
+import posixpath
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,22 +26,106 @@ DIGEST_LABEL = "aiplatform.base-digest"
 
 
 def image_exists(ref: str) -> bool:
-    return subprocess.run(["docker", "image", "inspect", ref], capture_output=True).returncode == 0
+    return subprocess.run(["docker", "image", "inspect", ref], capture_output=True, check=False).returncode == 0
 
 
 def image_label(ref: str, label: str) -> str | None:
     r = subprocess.run(["docker", "image", "inspect", "--format", "{{json .Config.Labels}}", ref],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     return (json.loads(r.stdout or "null") or {}).get(label) if r.returncode == 0 else None
 
 
+def _ignore_rules(context: Path) -> list[tuple[bool, re.Pattern]]:
+    """The context's .dockerignore as (re-include, regex) pairs: ** spans folders, * and ? stay in one.
+    Patterns are cleaned as Docker cleans them; one this cannot translate the way Docker does is refused."""
+    f = context / ".dockerignore"
+    rules = []
+    for line in f.read_text().splitlines() if f.is_file() else []:
+        pat = line.strip()
+        if pat and not pat.startswith("#"):
+            keep = pat.startswith("!")
+            pat = posixpath.normpath(pat.removeprefix("!").strip()).lstrip("/")
+            if "[" in pat or "\\" in pat or any("**" in name and name != "**" for name in pat.split("/")):
+                raise ValueError(f".dockerignore: base_digest cannot read {line.strip()!r} the way Docker does; "
+                                 "write it without [...], backslashes or ** inside a name, or extend base_digest")
+            parts = re.split(r"(\*\*/|\*\*|\*|\?)", pat)
+            rx = "".join({"**/": "(.*/)?", "**": ".*", "*": "[^/]*", "?": "[^/]"}.get(s, re.escape(s)) for s in parts)
+            rules.append((keep, re.compile(rx)))
+    return rules
+
+
+def _ignored(rel: str, rules: list[tuple[bool, re.Pattern]]) -> bool:
+    """Docker's rule: the last pattern that matches the path or one of its parent folders decides."""
+    paths = [rel.rsplit("/", n)[0] for n in range(rel.count("/") + 1)]
+    out = False
+    for keep, rx in rules:
+        if any(rx.fullmatch(p) for p in paths):
+            out = not keep
+    return out
+
+
+def _instructions(text: str) -> list[list[str]]:
+    """The Dockerfile's instructions, each as its stripped lines: as in Docker, a line that ends in a backslash
+    goes on in the next one, and blank and comment lines are left out."""
+    found, lines = [], []
+    for line in map(str.strip, text.splitlines()):
+        if line and not line.startswith("#"):
+            lines.append(line)
+            if not line.endswith("\\"):
+                found.append(lines)
+                lines = []
+    return found + [lines] if lines else found
+
+
+def _binds(flag: str) -> bool:
+    """True for a RUN --mount that can read the build context: type=bind, which is also the default type."""
+    if not flag.startswith("--mount="):
+        return False
+    kind = next((o for o in flag.removeprefix("--mount=").split(",") if o.startswith("type=")), "type=bind")
+    return kind == "type=bind"
+
+
+def _plain(src: str) -> bool:
+    """A COPY/ADD source that names files in the context the way it reads: no wildcards, no build variables, no
+    heredoc, not absolute, no .."""
+    return not (any(c in src for c in "*?[$") or src.startswith(("/", "<<")) or ".." in src.split("/"))
+
+
 def base_digest(bases_dir: Path, spec: dict) -> str:
-    """Hash of everything a base image is built from: its Dockerfile, build args and the context files."""
+    """Hash of what a base image is built from: its Dockerfile, build args, the .dockerignore and the
+    context files its COPY lines read, less what .dockerignore leaves out. Other bases' files do not count.
+    A COPY/ADD, RUN --mount or .dockerignore pattern it cannot read exactly is a ValueError: never guess."""
     h = hashlib.sha256(json.dumps({"dockerfile": spec["dockerfile"], "args": spec.get("args") or {}}, sort_keys=True).encode())
-    for f in sorted(bases_dir.rglob("*")):
-        if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc" and f.name != "bases.yaml":
-            h.update(str(f.relative_to(bases_dir)).encode())
-            h.update(f.read_bytes())
+    dockerfile = bases_dir / spec["dockerfile"]
+    for line in dockerfile.read_text().splitlines():  # parser directives come first, as comment lines
+        if not line.strip().startswith("#"):
+            break
+        if re.match(r"#\s*escape\s*=", line.strip(), re.IGNORECASE):  # a backslash would no longer continue a line
+            raise ValueError(f"{dockerfile.name}: base_digest reads Dockerfiles with the default escape character; "
+                             f"remove this directive or extend base_digest: {line.strip()}")
+    rules = _ignore_rules(bases_dir)
+    files = {dockerfile, bases_dir / ".dockerignore"}
+    for lines in _instructions(dockerfile.read_text()):
+        words = " ".join(ln.removesuffix("\\") for ln in lines).split()
+        op, text = words[0].upper(), " ".join(lines)  # Docker reads instructions in any case
+        flags = list(itertools.takewhile(lambda w: w.startswith("--"), words[1:]))
+        if op == "RUN" and any(_binds(f) for f in flags):
+            raise ValueError(f"{dockerfile.name}: base_digest does not read the files a RUN --mount of type bind uses; "
+                             f"COPY them instead or extend base_digest: {text}")
+        if op in ("COPY", "ADD"):
+            srcs = words[1 + len(flags):-1]
+            if (lines[0].endswith("\\") or any(f.startswith("--from=") for f in flags)
+                    or any(w.startswith("[") for w in words[1:]) or not all(map(_plain, srcs))):
+                raise ValueError(f"{dockerfile.name}: base_digest reads one-line COPY/ADD of plain paths in the "
+                                 f"context (no wildcards, build variables, heredocs, absolute paths, .., --from or "
+                                 f"JSON form); write this one "
+                                 f"that way or extend base_digest: {text}")  # it would miss files: never guess
+            for src in (bases_dir / w for w in srcs):
+                files |= {f for f in [src, *src.rglob("*")]
+                          if f.is_file() and not _ignored(f.relative_to(bases_dir).as_posix(), rules)}
+    for f in sorted(f for f in files if f.is_file()):
+        h.update(str(f.relative_to(bases_dir)).encode())
+        h.update(f.read_bytes())
     return h.hexdigest()[:16]
 
 

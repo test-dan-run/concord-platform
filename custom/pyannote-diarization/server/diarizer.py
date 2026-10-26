@@ -50,7 +50,7 @@ class DiarParams:
         p = cls(**params)
         for k in ("num_speakers", "min_speakers", "max_speakers"):
             v = getattr(p, k)
-            if v is not None and (not isinstance(v, int) or v < 1):
+            if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 1):  # JSON true is not 1
                 raise ValueError(f"{k} must be a positive integer")
         if not isinstance(p.exclusive, bool):
             raise ValueError("exclusive must be true or false")

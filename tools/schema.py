@@ -44,7 +44,7 @@ OIPDatatype = Literal[
 ]
 BASE_PATHS: dict[str, str] = {"openai": "/v1", "openai-inspired": "/v1", "oip-v2": "/v2"}
 
-_KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")  # names, aliases, tasks; bundle model ids (catalog/importer.py)
 
 
 class PlatformError(Exception):
@@ -60,7 +60,7 @@ class _Strict(BaseModel):
 
 
 def _kebab(value: str, what: str) -> str:
-    if not _KEBAB.match(value):
+    if not KEBAB.match(value):
         raise ValueError(f"{what} must be kebab-case ([a-z0-9-]), got {value!r}")
     return value
 
@@ -72,7 +72,7 @@ class Config(_Strict):
     gpu_total_gb: float = Field(gt=0)
     util_limit: float = Field(gt=0, le=1)
     assets_dir: str
-    ai_host: str = "localhost"
+    ai_host: str = "localhost"  # not read (aicore reads only AI_HOST); kept so config.yaml copies that set it load
     registry: str
     network: str = "ai-net"
     # Docker Compose project of the rendered stack. Change it to run a second copy of the platform
@@ -95,9 +95,6 @@ class Config(_Strict):
 
     def assets_path(self) -> Path:
         return Path(os.path.expanduser(os.environ.get("AI_ASSETS") or self.assets_dir))
-
-    def host(self) -> str:
-        return os.environ.get("AI_HOST") or self.ai_host
 
 
 # --------------------------------------------------------------------------- engines
@@ -123,11 +120,13 @@ class Engine(_Strict):
             raise ValueError(f"engine image {v!r} uses :latest; pin an exact tag")
         return v
 
-    def render_command(self, *, model: str, name: str, util: float | str | None) -> list[str]:
+    def render_command(self, *, model: str, name: str, util: str | None) -> list[str]:
+        """The command with its placeholders filled. render.py passes a marker as util and swaps it for the
+        compose variable afterwards; None (a CPU service) leaves {util} empty."""
         values = {
             "model": model,
             "name": name,
-            "util": "" if util is None else util if isinstance(util, str) else f"{util:g}",
+            "util": "" if util is None else util,
             "internal_port": str(self.internal_port),
         }
         return [part.format_map(values) for part in self.command]
@@ -252,54 +251,77 @@ class Manifest(_Strict):
 
     @model_validator(mode="after")
     def _rules(self, info: ValidationInfo) -> Manifest:
-        errors: list[str] = []
+        """The rules across fields. load_platform passes engines.yaml and api_types.yaml in the context;
+        without them the checks that need those files are skipped."""
         ctx = info.context or {}
-        engines: dict[str, Engine] | None = ctx.get("engines")
-        api_types: dict[str, dict] | None = ctx.get("api_types")
+        errors = self._contract_errors(ctx.get("api_types"))
+        if self.engine == CUSTOM_ENGINE:
+            errors += self._custom_errors()
+        else:
+            errors += self._engine_errors(ctx.get("engines"), ctx.get("invalid_engines") or set())
+        errors += self._kind_errors()
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
 
+    def _contract_errors(self, api_types: dict[str, dict] | None) -> list[str]:
+        errors = []
         if self.contract != "openai" and not self.contract_reason:
             errors.append(f"contract_reason is required when contract is {self.contract!r}")
         if self.contract == "oip-v2" and self.signature is None:
             errors.append("signature is required for contract 'oip-v2'")
         if self.contract != "oip-v2" and self.signature is not None:
             errors.append("signature is only allowed for contract 'oip-v2'")
-
         if api_types is not None:
             allowed = sorted(api_types.get(self.contract, {}))
             if self.api not in allowed:
                 errors.append(f"api {self.api!r} is not valid for contract {self.contract!r} (allowed: {', '.join(allowed)})")
+        return errors
 
-        if self.engine == CUSTOM_ENGINE:
-            if self.build is None:
-                errors.append("engine 'custom' requires build")
-            if self.gpu is not None and self.gpu.vram_gb is None:
-                errors.append("custom services declare GPU memory with gpu.vram_gb, not gpu.util")
-        else:
-            if self.kind != "model":
-                errors.append(f"engine {self.engine!r} requires kind 'model'")
-            if not self.model:
-                errors.append(f"engine {self.engine!r} requires model (a /models/... path)")
-            elif not self.model.startswith(MODELS_MOUNT + "/"):
-                # Two groups only: custom weights (weights.yaml) and local copies in ${AI_ASSETS}. No hub
-                # downloads at start, so the files a build runs are always the files on disk.
-                errors.append(f"model {self.model!r} must be a local copy, /models/<dir> in ${{AI_ASSETS}} "
-                              f"(`hf download {self.model} --revision <sha> --local-dir $AI_ASSETS/<dir>`)")
-            for key in ("build", "weights", "custom_reason"):
-                if getattr(self, key) is not None:
-                    errors.append(f"{key} is not allowed with engine {self.engine!r}")
-            if engines is not None:
-                engine = engines.get(self.engine)
-                if engine is None:
-                    known = ", ".join(sorted([*engines, CUSTOM_ENGINE]))
-                    errors.append(f"engine {self.engine!r} is not defined in engines.yaml (known: {known})")
-                else:
-                    if self.contract != engine.contract:
-                        errors.append(f"contract {self.contract!r} does not match engine {self.engine!r} contract {engine.contract!r}")
-                    if engine.gpu and (self.gpu is None or self.gpu.util is None):
-                        errors.append(f"engine {self.engine!r} requires gpu.util")
-                    if not engine.gpu and self.gpu is not None:
-                        errors.append(f"engine {self.engine!r} runs on CPU; remove gpu")
+    def _custom_errors(self) -> list[str]:
+        errors = []
+        if self.build is None:
+            errors.append("engine 'custom' requires build")
+        if self.gpu is not None and self.gpu.vram_gb is None:
+            errors.append("custom services declare GPU memory with gpu.vram_gb, not gpu.util")
+        return errors
 
+    def _engine_errors(self, engines: dict[str, Engine] | None, invalid_engines: set[str]) -> list[str]:
+        """An engine service. A utility on an engine gets its error from _kind_errors."""
+        errors = []
+        if not self.model:
+            errors.append(f"engine {self.engine!r} requires model (a /models/... path)")
+        elif not self.model.startswith(MODELS_MOUNT + "/"):
+            # Two groups only: custom weights (weights.yaml) and local copies in ${AI_ASSETS}. No hub
+            # downloads at start, so the files a build runs are always the files on disk.
+            errors.append(f"model {self.model!r} must be a local copy, /models/<dir> in ${{AI_ASSETS}} "
+                          f"(`hf download {self.model} --revision <sha> --local-dir $AI_ASSETS/<dir>`)")
+        for key in ("build", "weights", "custom_reason"):
+            if getattr(self, key) is not None:
+                errors.append(f"{key} is not allowed with engine {self.engine!r}")
+        if engines is not None:
+            errors += self._engines_yaml_errors(engines, invalid_engines)
+        return errors
+
+    def _engines_yaml_errors(self, engines: dict[str, Engine], invalid_engines: set[str]) -> list[str]:
+        """The engine is in engines.yaml and fits it. invalid_engines are in engines.yaml but failed validation."""
+        engine = engines.get(self.engine)
+        if engine is None and self.engine in invalid_engines:
+            return [f"engine {self.engine!r} is invalid in engines.yaml"]
+        if engine is None:
+            known = ", ".join(sorted([*engines, CUSTOM_ENGINE]))
+            return [f"engine {self.engine!r} is not defined in engines.yaml (known: {known})"]
+        errors = []
+        if self.contract != engine.contract:
+            errors.append(f"contract {self.contract!r} does not match engine {self.engine!r} contract {engine.contract!r}")
+        if engine.gpu and (self.gpu is None or self.gpu.util is None):
+            errors.append(f"engine {self.engine!r} requires gpu.util")
+        if not engine.gpu and self.gpu is not None:
+            errors.append(f"engine {self.engine!r} runs on CPU; remove gpu")
+        return errors
+
+    def _kind_errors(self) -> list[str]:
+        errors = []
         if self.kind == "utility":
             if self.engine != CUSTOM_ENGINE:
                 errors.append("kind 'utility' requires engine 'custom'")
@@ -309,10 +331,7 @@ class Manifest(_Strict):
                 errors.append("model is not allowed for kind 'utility'")
         if self.kind == "model" and self.engine == CUSTOM_ENGINE and not self.custom_reason:
             errors.append("custom_reason is required for kind 'model' with engine 'custom' (why can no engine serve it?)")
-
-        if errors:
-            raise ValueError("; ".join(errors))
-        return self
+        return errors
 
     # ---- derived values used by render / vram / client
 
@@ -390,6 +409,12 @@ class Platform:
             return None
         return Path(s.weights.path.replace(ASSETS_VAR, str(self.config.assets_path())))
 
+    def model_dir(self, s: Manifest) -> Path | None:
+        """Host directory of a local model (model: /models/<dir>, which is <dir> in ${AI_ASSETS})."""
+        if not s.model or not s.model.startswith(MODELS_MOUNT + "/"):
+            return None
+        return self.config.assets_path() / s.model.removeprefix(MODELS_MOUNT + "/").strip("/")
+
 
 def load_yaml(path: Path) -> Any:
     with open(path, encoding="utf-8") as fh:
@@ -415,30 +440,35 @@ def _fmt_validation(path: Path, exc: ValidationError) -> list[str]:
     return out
 
 
+# Port band (the hundreds of the port) -> what it holds. A port outside its band is a warning.
+PORT_BANDS: dict[int, str] = {
+    81: "audio models", 82: "chat/VLM models", 83: "embeddings/rerank models", 84: "other models", 85: "utilities",
+}
+
+
+def port_band(api: str, kind: str) -> int:
+    """The port band for a service with this api and kind (the register-model skill uses it too)."""
+    if kind == "utility":
+        return 85
+    if api.startswith("audio."):
+        return 81
+    if api in ("chat.completions", "completions"):
+        return 82
+    if api == "embeddings":
+        return 83
+    return 84
+
+
 def _port_band(s: Manifest) -> tuple[int, str]:
-    if s.kind == "utility":
-        return 85, "utilities"
-    if s.api.startswith("audio."):
-        return 81, "audio models"
-    if s.api in ("chat.completions", "completions"):
-        return 82, "chat/VLM models"
-    if s.api == "embeddings":
-        return 83, "embeddings/rerank models"
-    return 84, "other models"
+    band = port_band(s.api, s.kind)
+    return band, PORT_BANDS[band]
 
 
-def load_platform(root: Path | None = None, services_dir: Path | None = None) -> Platform:
-    """Load and validate everything. Raises PlatformError listing every problem."""
-    root = Path(root or PLATFORM_DIR)
-    services_dir = Path(services_dir or root / "services")
-    errors: list[str] = []
-
-    try:
-        config = Config.model_validate(load_yaml(root / "config.yaml"))
-    except ValidationError as exc:
-        raise PlatformError(_fmt_validation(root / "config.yaml", exc)) from None
-
+def _load_engines(root: Path) -> tuple[dict[str, Engine], set[str], list[str]]:
+    """engines.yaml: the valid engines, the names that failed validation, and the errors."""
     engines: dict[str, Engine] = {}
+    invalid_engines: set[str] = set()
+    errors: list[str] = []
     for name, data in (load_yaml(root / "engines" / "engines.yaml") or {}).items():
         if name == CUSTOM_ENGINE:
             errors.append("engines.yaml: 'custom' is reserved and cannot be an engine name")
@@ -446,13 +476,16 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
         try:
             engines[name] = Engine.model_validate(data)
         except ValidationError as exc:
-            errors.extend(f"engines.yaml: {name}: {e}" for e in _fmt_validation(Path(name), exc))
+            invalid_engines.add(name)
+            errors.extend(f"engines.yaml: {e}" for e in _fmt_validation(Path(name), exc))  # "<name>: <field>: ..."
+    return engines, invalid_engines, errors
 
-    api_types = load_yaml(root / "contracts" / "api_types.yaml")
-    ctx = {"engines": engines, "api_types": api_types}
 
+def _load_manifests(services_dir: Path, ctx: dict) -> tuple[list[Manifest], dict[str, Path], list[str]]:
+    """Every manifest in services_dir that validates, its file by service name, and the errors."""
     services: list[Manifest] = []
     files: dict[str, Path] = {}
+    errors: list[str] = []
     paths = sorted(services_dir.glob("*.yaml")) + sorted(services_dir.glob("*.yml"))
     if not paths:
         errors.append(f"no manifests found in {services_dir}")
@@ -472,8 +505,13 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
             errors.append(f"{path.name}: file name must match name {m.name!r} ({m.name}.yaml)")
         services.append(m)
         files[m.name] = path
+    return services, files, errors
 
-    # Cross-manifest uniqueness: names, aliases (which share one namespace with names), ports.
+
+def _cross_manifest_errors(config: Config, services: list[Manifest], files: dict[str, Path]) -> list[str]:
+    """Names, aliases (which share one namespace with names) and ports are unique, and each service fits
+    util_limit on its own."""
+    errors: list[str] = []
     seen_ids: dict[str, Path] = {}
     seen_ports: dict[int, Path] = {}
     for s in services:
@@ -489,28 +527,61 @@ def load_platform(root: Path | None = None, services_dir: Path | None = None) ->
         if s.vram_fraction(config.gpu_total_gb) > config.util_limit + 1e-9:
             errors.append(f"{path.name}: needs {s.vram_fraction(config.gpu_total_gb):.3f} of the GPU, "
                           f"over util_limit {config.util_limit} even when running alone")
+    return errors
 
-    bases = load_bases(root)
+
+def _build_context_errors(root: Path, s: Manifest, file: str, bases: dict[str, dict]) -> list[str]:
+    """A custom service's build: the context has a Dockerfile, the base and base_version exist, and a
+    context with weights.yaml comes with `weights`."""
+    assert s.build is not None
+    errors: list[str] = []
+    ctx_dir = root / s.build.context
+    if not (ctx_dir / "Dockerfile").is_file():
+        errors.append(f"{file}: build.context {s.build.context!r} has no Dockerfile")
+    if s.base != "none" and s.base not in bases:
+        errors.append(f"{file}: build.base {s.base!r} is not in custom/_bases/bases.yaml "
+                      f"(known: {', '.join(sorted(bases))}, or none)")
+    elif s.build.base_version is not None:
+        known = base_versions(bases[s.base]) if s.base != "none" else []
+        if s.build.base_version not in known:
+            errors.append(f"{file}: build.base_version {s.build.base_version!r} is not a version of "
+                          f"base {s.base!r} (known: {', '.join(known) or 'none'})")
+    if (ctx_dir / "weights.yaml").is_file() and s.weights is None:
+        errors.append(f"{file}: {s.build.context}/weights.yaml exists, so the manifest needs `weights` "
+                      "(where `just fetch-weights` puts them and the container mounts them from)")
+    return errors
+
+
+def _port_warnings(services: list[Manifest], files: dict[str, Path]) -> list[str]:
     warnings: list[str] = []
     for s in services:
         band, label = _port_band(s)
         if s.port // 100 != band:
             warnings.append(f"{files[s.name].name}: port {s.port} is outside {band}xx, the band for {label}")
+    return warnings
+
+
+def load_platform(root: Path | None = None, services_dir: Path | None = None) -> Platform:
+    """Load and validate everything. Raises PlatformError listing every problem."""
+    root = Path(root or PLATFORM_DIR)
+    services_dir = Path(services_dir or root / "services")
+
+    try:
+        config = Config.model_validate(load_yaml(root / "config.yaml"))
+    except ValidationError as exc:
+        raise PlatformError(_fmt_validation(root / "config.yaml", exc)) from None
+
+    engines, invalid_engines, errors = _load_engines(root)
+    api_types = load_yaml(root / "contracts" / "api_types.yaml")
+    ctx = {"engines": engines, "invalid_engines": invalid_engines, "api_types": api_types}
+    services, files, manifest_errors = _load_manifests(services_dir, ctx)
+    errors += manifest_errors
+    errors += _cross_manifest_errors(config, services, files)
+    bases = load_bases(root)
+    for s in services:
         if s.is_custom and s.build:
-            ctx_dir = root / s.build.context
-            if not (ctx_dir / "Dockerfile").is_file():
-                errors.append(f"{files[s.name].name}: build.context {s.build.context!r} has no Dockerfile")
-            if s.base != "none" and s.base not in bases:
-                errors.append(f"{files[s.name].name}: build.base {s.base!r} is not in custom/_bases/bases.yaml "
-                              f"(known: {', '.join(sorted(bases))}, or none)")
-            elif s.build.base_version is not None:
-                known = base_versions(bases[s.base]) if s.base != "none" else []
-                if s.build.base_version not in known:
-                    errors.append(f"{files[s.name].name}: build.base_version {s.build.base_version!r} is not a version of "
-                                  f"base {s.base!r} (known: {', '.join(known) or 'none'})")
-            if (ctx_dir / "weights.yaml").is_file() and s.weights is None:
-                errors.append(f"{files[s.name].name}: {s.build.context}/weights.yaml exists, so the manifest needs `weights` "
-                              "(where `just fetch-weights` puts them and the container mounts them from)")
+            errors += _build_context_errors(root, s, files[s.name].name, bases)
+    warnings = _port_warnings(services, files)
 
     if errors:
         raise PlatformError(errors)

@@ -8,7 +8,7 @@ import { api, type ExportJob, type ExportModel } from "../lib/api";
 import { ago, size } from "../lib/format";
 import * as I from "../components/icons";
 import { VerifyChip } from "../components/model";
-import { AnchorButton, Bar, Button, cx, Empty, ErrorNote, Fact, PageHeader, Panel, Spinner } from "../components/ui";
+import { AnchorButton, Bar, Button, cx, Empty, ErrorNote, Fact, inputClass, PageHeader, Panel, Spinner } from "../components/ui";
 
 type Options = { destination: "bundle" | "registry"; registry: string; images: boolean; weights: boolean; verification: boolean };
 
@@ -180,7 +180,7 @@ export function ExportPage() {
               </div>
             )}
             <span className="text-xs text-muted">
-              Image layers shared between models are written once, so the images file is smaller than the sum of the image sizes. On the target, <span className="num text-fg">python -m catalog import &lt;bundle&gt;</span> loads the bundle and re-verifies each build; a matching build key keeps its existing outputs. Hosted models are not exported: they have no image or weights.
+              Image layers shared between models are written once, so the images file is smaller than the sum of the image sizes. On the target, <span className="num text-fg">python -m catalog import &lt;bundle&gt;</span> loads the bundle and verifies each build it has no record of; a matching build key keeps its existing outputs. Hosted models are not exported: they have no image or weights.
             </span>
           </Panel>
           <Panel title="Destination">
@@ -189,7 +189,7 @@ export function ExportPage() {
               {(
                 [
                   ["bundle", "Bundle file", "One .tar to carry over, for air-gapped or offline targets"],
-                  ["registry", "Push to a registry", "Images are retagged and pushed; the bundle holds only the manifest"],
+                  ["registry", "Push to a registry", "Images are retagged and pushed; the bundle holds the rest: manifest, records and weights"],
                 ] as const
               ).map(([v, t, d]) => (
                 <label key={v} className={cx("flex items-start gap-2.5 rounded-md p-3 cursor-pointer border", o.destination === v ? "border-primary bg-primary/10" : "border-line")}>
@@ -205,7 +205,7 @@ export function ExportPage() {
               <>
                 <label className="flex flex-col gap-1.5 text-xs text-muted">
                   Target registry
-                  <input type="text" value={o.registry} onChange={(e) => set({ registry: e.target.value })} disabled={locked} placeholder="registry.example.internal/models" className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg num" />
+                  <input type="text" value={o.registry} onChange={(e) => set({ registry: e.target.value })} disabled={locked} placeholder="registry.example.internal/models" className={`${inputClass} num`} />
                 </label>
                 <span className="text-[11px] text-subtle">Pushing uses this host's Docker login for the registry (~/.docker/config.json, mounted read-only into the catalog).</span>
               </>

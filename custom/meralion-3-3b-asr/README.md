@@ -13,6 +13,7 @@ English-X code-switching. Synthetics uses it as the Singlish fallback ASR in sta
   each piece to 30 s. All pieces share the same prompt and the same input size, so no extra padding is needed,
   and greedy decoding gives each piece the same text as it would get alone. In rare cases a word can differ,
   because batched GPU kernels round bf16 numbers a little differently. A file that cannot be decoded fails only
-  its own request.
+  its own request. So does a file that fails in the model: when a batch fails, the server runs each of its files
+  again on its own.
 - Weights: `just fetch-weights meralion-3-3b-asr` (6.65 GB). Licence: MERaLiON-3 Public Licence. Using its
   outputs in a product needs a clear acknowledgement, and the Gemma terms apply.

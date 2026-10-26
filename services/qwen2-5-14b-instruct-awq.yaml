@@ -8,7 +8,7 @@ api: chat.completions
 model: /models/qwen2.5-14b-instruct-awq
 port: 8204
 gpu:
-  util: 0.45                       # 14.4 GB: 9.4 GB AWQ checkpoint leaves ~4 GB KV (~20k tokens at 192 KB/token)
+  util: 0.45                       # 14.4 GB: 9.98 GB (9.29 GiB) AWQ checkpoint + ~1.5 GB overhead leaves ~3.6 GB KV (~20k tokens at 192 KB/token)
 args:
   - --max-model-len=16384          # native 32k
 description: "Mid-size chat, Qwen2.5 14B Instruct AWQ 4-bit; between qwen3-8b and qwen3-32b-awq"

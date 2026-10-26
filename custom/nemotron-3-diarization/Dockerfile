@@ -1,6 +1,6 @@
 # nemotron-3-diarization: OIP v2 speaker diarization (NeMo Streaming Sortformer, <= 8 speakers) on CPU.
 # Weights (.nemo) mounted at /models.
-ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt constraints.txt /app/

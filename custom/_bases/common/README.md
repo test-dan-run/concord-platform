@@ -88,6 +88,12 @@ the peak, send a test load, and read the new peak. When torch or CUDA is missing
 
 `POST /platform/batch-limits` changes the limits of every batcher while the service runs. The body
 `{"max_items": 512, "max_len": null}` sets them, and `{"restore": true}` goes back to the values the
-service started with. Either way the count of lowered limits starts again from zero. The catalog uses
-it while it measures an image: it lifts the limits so each test batch runs whole, and it treats a
-lowered limit as an out of memory point.
+service started with. Either way the count of lowered limits starts again from zero. Each limit must
+be a whole number of at least 1 (or null); anything else, such as `2.5` or `true`, is a 422 and changes
+nothing. The catalog uses it while it measures an image: it lifts the limits so each test batch runs
+whole, and it treats a lowered limit as an out of memory point.
+
+The images still pinned to base 0.1.1 (text-normalizer, monkey-custom, silero-vad, kokoro-tts and
+voxcpm2) are the exception: an existing 0.1.1 base image is never rebuilt and ships `aisvc` 0.1.0, which
+has no `aisvc.batch`, no `/platform/*` routes, and gives a `ValueError` from an openai or
+openai-inspired handler a 400 with code `null` instead of `invalid_request`.

@@ -4,13 +4,17 @@
    back to the manifest's image ref.
 2. Manifests: each `models/<id>/service.yaml` is written into platform/services (an existing manifest that
    differs is left alone unless --force). The platform must still load afterwards, or nothing is kept.
-3. Weights: `models/<id>/weights/` is copied to where the manifest mounts weights from (under $AI_ASSETS).
+3. Weights: `models/<id>/weights/` is copied to where the manifest mounts weights from, which must be
+   under $AI_ASSETS.
 4. Registration: display name, tags and "derived from" are registered through the running catalog
-   (AICORE_CATALOG, else http://127.0.0.1:8700), which queues verification; without a running catalog
-   they are written to its database and verified on its next start.
+   (AICORE_CATALOG, else http://127.0.0.1:8700), which queues verification; a model it refuses is
+   reported with its reason and left unregistered. Only when no catalog answers at all are they written
+   to its database, and verified on its next start. A catalog that stops answering partway stops the
+   import: run it again.
 
-The target re-verifies every build. A build key that matches one the target already knows (same image
-id, config and weights) keeps the outputs indexed under it.
+A bundle's model ids must be kebab case, as in a manifest, because they name files here. The target
+re-verifies every build. A build key that matches one the target already knows (same image id, config
+and weights) keeps the outputs indexed under it.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from typing import Any
 import httpx
 
 from tools import identity
-from tools.schema import PLATFORM_DIR, PlatformError, load_platform
+from tools.schema import KEBAB, PLATFORM_DIR, PlatformError, load_platform
 
 Run = Callable[..., subprocess.CompletedProcess]
 
@@ -133,6 +137,8 @@ def load_dotenv(platform_dir: Path) -> None:
 
 def copy_weights(root: Path, manifest: dict[str, Any], platform_dir: Path, ids: list[str]) -> None:
     p = load_platform(platform_dir)
+    assets = Path(os.path.abspath(p.config.assets_path()))
+    copies = []
     for m in manifest["models"]:
         src = root / "models" / m["id"] / "weights"
         if m["id"] not in ids or not src.is_dir():
@@ -145,8 +151,16 @@ def copy_weights(root: Path, manifest: dict[str, Any], platform_dir: Path, ids: 
         if dst is None:
             _say(f"{m['id']}: the manifest mounts no weights; skipped {src}")
             continue
+        if not Path(os.path.abspath(dst)).is_relative_to(assets):  # by name: a symlinked folder in it is still fine
+            raise BundleError(f"{m['id']}: the manifest mounts its weights from {dst}, outside AI_ASSETS ({assets}); "
+                              "no weights were copied")
+        copies.append((m, src, dst))
+    for m, src, dst in copies:  # every destination is checked before anything is copied
         n = 0
-        for rel, f in identity.weight_files(src):
+        files = identity.weight_files(src)
+        # SOURCE.txt is the model card's provenance: copied, but never part of the weights hash
+        files += [(name, src / name) for name in sorted(identity.IGNORED_FILES) if (src / name).is_file()]
+        for rel, f in files:
             target = dst / rel
             if target.is_file() and target.stat().st_size == f.stat().st_size:
                 continue
@@ -169,16 +183,42 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
     if catalog:
         try:
             with httpx.Client(base_url=catalog, timeout=30) as c:
-                c.get("/api/health").raise_for_status()
-                for r in regs:  # parents first are not guaranteed: register, then set parents that exist
-                    c.post(f"/api/models/{r['id']}/register", json={"display_name": r["display_name"],
-                                                                    "tags": r["tags"]}).raise_for_status()
-                for r in regs:
-                    if r["parent_id"]:
-                        c.patch(f"/api/models/{r['id']}", json={"parent_id": r["parent_id"]})
-            _say(f"registered {len(regs)} model(s) with the catalog at {catalog}; it verifies each build now")
+                health = c.get("/api/health")
+                if not health.is_success:  # something answers: never write the database behind its back
+                    raise BundleError(f"the catalog at {catalog} answered {health.status_code} on /api/health: "
+                                      f"{_refusal(health)}; the models were imported but not registered, so import "
+                                      "again once it answers")
+                done = []
+                step = "registering"
+                try:
+                    for r in regs:  # parents first are not guaranteed: register, then set parents that exist
+                        resp = c.post(f"/api/models/{r['id']}/register", json={"display_name": r["display_name"],
+                                                                               "tags": r["tags"]})
+                        if resp.is_success:
+                            done.append(r)
+                        else:  # the catalog's rules (e.g. too big for this GPU) apply to an import too
+                            _say(f"{r['id']}: the catalog refused to register it ({resp.status_code}): "
+                                 f"{_refusal(resp)}")
+                    step = "setting derived from"
+                    for r in done:
+                        if r["parent_id"]:
+                            resp = c.patch(f"/api/models/{r['id']}", json={"parent_id": r["parent_id"]})
+                            if not resp.is_success:
+                                _say(f"{r['id']}: the catalog did not set derived from {r['parent_id']} "
+                                     f"({resp.status_code}): {_refusal(resp)}")
+                except httpx.TransportError as exc:  # it answered /api/health: never write its database behind its back
+                    _say(f"registered {len(done)} of {len(regs)} model(s) with the catalog at {catalog} before it "
+                         "stopped answering")
+                    if step == "registering":
+                        raise BundleError(f"the catalog at {catalog} stopped answering ({exc}); the models were "
+                                          "imported but not all registered, so import again once it answers") from None
+                    raise BundleError(f"the catalog at {catalog} stopped answering while setting derived from ({exc}); "
+                                      "every model it accepted was registered, so import again once it answers to set the "
+                                      "parents") from None
+            _say(f"registered {len(done)} of {len(regs)} model(s) with the catalog at {catalog}; it verifies each "
+                 "build now")
             return
-        except httpx.HTTPError as exc:
+        except httpx.TransportError as exc:
             _say(f"the catalog at {catalog} is not answering ({exc}); writing registrations to {db_path}")
     from .db import DB, now_iso
 
@@ -194,6 +234,14 @@ def register(root: Path, manifest: dict[str, Any], ids: list[str], catalog: str 
     _say(f"registered {len(regs)} model(s) in {db_path}; the catalog verifies them when it starts")
 
 
+def _refusal(r: httpx.Response) -> str:
+    """The catalog's error message, else the start of the body."""
+    try:
+        return str(r.json()["error"]["message"])
+    except (ValueError, KeyError, TypeError):
+        return r.text.strip()[:300] or r.reason_phrase
+
+
 def import_bundle(path: Path, platform_dir: Path = PLATFORM_DIR, catalog: str | None = None,
                   db_path: Path | None = None, force: bool = False, images: bool = True, run: Run = subprocess.run) -> list[str]:
     root = open_bundle(path)
@@ -203,6 +251,11 @@ def import_bundle(path: Path, platform_dir: Path = PLATFORM_DIR, catalog: str | 
     manifest = json.loads(mf.read_text())
     if manifest.get("format") != 1:
         raise BundleError(f"bundle format {manifest.get('format')!r} is not supported (this catalog reads format 1)")
+    if not isinstance(manifest.get("models"), list) or not all(isinstance(m, dict) for m in manifest["models"]):
+        raise BundleError(f"{mf} has no list of models")
+    bad = [m.get("id") for m in manifest["models"] if not isinstance(m.get("id"), str) or not KEBAB.match(m["id"])]
+    if bad:  # ids name files and folders here: services/<id>.yaml, models/<id>/
+        raise BundleError(f"model ids must be kebab-case ([a-z0-9-]), got {', '.join(repr(x) for x in bad)}")
     _say(f"importing {len(manifest['models'])} model(s) from {root.name} (exported {manifest.get('created_at')})")
     if any((root / "models" / m["id"] / "weights").is_dir() for m in manifest["models"]):
         try:
@@ -236,6 +289,15 @@ def main(argv: list[str] | None = None) -> int:
         import_bundle(args.bundle, args.platform_dir, args.catalog.rstrip("/") or None, force=args.force,
                       images=not args.no_images)
     except BundleError as exc:
+        print(f"import failed: {exc}", file=sys.stderr)
+        return 1
+    except (tarfile.TarError, json.JSONDecodeError) as exc:
+        print(f"import failed: {args.bundle} is not a readable catalog export: {exc}", file=sys.stderr)
+        return 1
+    except KeyError as exc:
+        print(f"import failed: the bundle is incomplete: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
         print(f"import failed: {exc}", file=sys.stderr)
         return 1
     return 0

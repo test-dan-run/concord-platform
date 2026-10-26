@@ -7,9 +7,11 @@ dependencies = [
     "pydantic>=2.14,<3",
     "pyyaml>=6.0.3",
     "jinja2>=3.1.6",
+    "markupsafe>=3.0.4",  # imported by tools/render.py (jinja2 depends on it too)
     "httpx>=0.28.1",
     # The model catalog service (catalog/): API, gateway and UI.
     "fastapi>=0.115",
+    "python-multipart>=0.0.32",  # the Dataset Catalog's upload routes take form data (catalog/datasets/routes.py)
     "uvicorn>=0.32",
     "cryptography>=46",  # Fernet: hosted endpoints' API keys are stored encrypted (catalog/hosted.py)
     # Editable local packages: the client apps use, and the shared server package custom images use.

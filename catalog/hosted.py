@@ -3,7 +3,9 @@
 The gateway and the verifier both call a provider through this module, so URL building and auth live in
 one place. Keys are encrypted with Fernet under a master key kept outside PLATFORM_DIR
 (Settings.master_key_file); only the encrypted bytes and the last four characters are stored. A key is
-never returned by the API and never written to logs, errors, events or export bundles.
+never returned by the API and never written to logs, errors, events or export bundles: provider text that
+quotes it is redacted first. Only the gateway's stream of a successful provider reply passes through
+unchanged; an error reply is redacted too.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import json
 import re
 import threading
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -69,7 +72,10 @@ class Hosted:
 
     @property
     def host(self) -> str:
-        return urlsplit(self.base_url).hostname or self.base_url
+        try:
+            return urlsplit(self.base_url).hostname or self.base_url
+        except ValueError:  # saved before base_url was checked: listing it must still work
+            return self.base_url
 
     def public(self) -> dict[str, Any]:
         """What records show: no key, only its last four characters."""
@@ -87,6 +93,19 @@ def build_key(contract: str, api: str, base_url: str, model: str) -> str:
 
 def normalise_base(url: str) -> str:
     return url.strip().rstrip("/")
+
+
+def same_host(a: str, b: str) -> bool:
+    """Whether two URLs have the same scheme, host and port (the scheme's default port when none is given)."""
+    def origin(url: str) -> tuple[str, str | None, int | None] | None:
+        u = urlsplit(url.strip())
+        try:
+            return u.scheme, u.hostname, u.port or {"https": 443, "http": 80}.get(u.scheme)
+        except ValueError:  # a port that is not a number
+            return None
+
+    first = origin(a)
+    return first is not None and first[1] is not None and first == origin(b)
 
 
 def provider_url(h: Hosted, path: str) -> str:
@@ -132,6 +151,17 @@ def strip_auth(headers: list[tuple[str, str]], h: Hosted) -> list[tuple[str, str
 
 def redact(text: str, key: str | None) -> str:
     return text.replace(key, "••••") if key and len(key) >= 4 else text
+
+
+def redact_all(value: Any, key: str | None) -> Any:
+    """value with the key redacted from every string in it: a verification report or record before it is stored."""
+    if isinstance(value, str):
+        return redact(value, key)
+    if isinstance(value, dict):
+        return {redact_all(k, key): redact_all(v, key) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [redact_all(v, key) for v in value]
+    return value
 
 
 class Keys:
@@ -298,6 +328,77 @@ def _short(text: str, key: str | None) -> str:
     return text if len(text) < 200 else text[:200] + "..."
 
 
+Add = Callable[[str, str, str], None]
+
+
+def _reached(add: Add, h: Hosted) -> None:
+    tls = urlsplit(h.base_url).scheme == "https"
+    add("tls", "pass" if tls else "warn", "Reached the host over TLS" if tls else "Reached the host without TLS (http)")
+
+
+def _key_line(add: Add, h: Hosted, r: httpx.Response, key: str | None) -> bool:
+    """The key line, from the provider's first answer. False when the provider refused the key."""
+    if r.status_code in (401, 403):
+        add("key", "fail", f"the provider refused the key ({r.status_code}): {_short(r.text, key)}")
+        return False
+    if h.auth_type == "none":
+        add("key", "pass", "No key needed")
+    elif r.is_success:
+        add("key", "pass", "Key accepted")
+    else:  # e.g. a provider without GET /models: the key is only checked by the next request
+        add("key", "warn", f"not checked: {r.request.url.path} answered {r.status_code}, so only the next request "
+            "shows whether the key works")
+    return True
+
+
+def _test_oip(c: httpx.Client, h: Hosted, key: str | None, add: Add) -> dict[str, Any] | None:
+    r = c.get(f"/v2/models/{h.model}/ready")
+    _reached(add, h)
+    if not _key_line(add, h, r, key):
+        return None
+    meta = c.get(f"/v2/models/{h.model}")
+    if r.status_code != 200 or meta.status_code != 200:
+        bad = r if r.status_code != 200 else meta
+        add("contract", "fail", f"{bad.request.url.path} answered {bad.status_code}: {_short(bad.text, key)}")
+        return None
+    try:
+        data = meta.json()
+        signature = {"inputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("inputs", [])],
+                     "outputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("outputs", [])]}
+    except (ValueError, AttributeError, TypeError):
+        add("contract", "fail", f"{meta.request.url.path} did not answer OIP metadata JSON: {_short(meta.text, key)}")
+        return None
+    add("contract", "pass", f"Speaks {h.contract} / {h.api}: {h.model} is ready")
+    return signature
+
+
+def _test_openai(c: httpx.Client, h: Hosted, key: str | None, add: Add) -> None:
+    r = c.get("/v1/models")
+    _reached(add, h)
+    if not _key_line(add, h, r, key):
+        return None
+    label = f"{h.contract} / {h.api}"
+    listed = None
+    if r.status_code == 200:
+        try:
+            listed = [m.get("id") for m in r.json().get("data", [])]
+        except (ValueError, AttributeError, TypeError):
+            listed = None
+    if listed is not None and h.model in listed and h.api != "text.itn":
+        add("contract", "pass", f"Speaks {label}: /models lists {h.model}")
+    elif listed is not None and h.model not in listed:
+        add("contract", "fail", f"/models lists {len(listed)} model(s) but not {h.model!r}")
+    else:
+        m = _minimal(c, h)
+        if m.status_code in (401, 403):
+            add("contract", "fail", f"the provider refused the key ({m.status_code}): {_short(m.text, key)}")
+        elif m.status_code >= 400:
+            add("contract", "fail", f"a minimal {h.api} request answered {m.status_code}: {_short(m.text, key)}")
+        else:
+            add("contract", "pass", f"Speaks {label}: a minimal request was accepted")
+    return None
+
+
 def connection_test(store: HostedStore, h: Hosted, key: str | None) -> dict[str, Any]:
     """TLS, key and contract with one or two small requests; stores nothing. OIP also returns the signature."""
     lines: list[dict[str, str]] = []
@@ -306,55 +407,13 @@ def connection_test(store: HostedStore, h: Hosted, key: str | None) -> dict[str,
     def add(name: str, status: str, reason: str) -> None:
         lines.append({"name": name, "status": status, "reason": reason})
 
-    def auth_ok(r: httpx.Response) -> bool:
-        if r.status_code in (401, 403):
-            add("key", "fail", f"the provider refused the key ({r.status_code}): {_short(r.text, key)}")
-            return False
-        add("key", "pass", "Key accepted" if h.auth_type != "none" else "No key needed")
-        return True
-
-    tls = urlsplit(h.base_url).scheme == "https"
-    label = f"{h.contract} / {h.api}"
     try:
         with store.client(h, key, timeout=min(h.timeout_s, TEST_TIMEOUT_S)) as c:
-            if h.contract == "oip-v2":
-                r = c.get(f"/v2/models/{h.model}/ready")
-                add("tls", "pass" if tls else "warn", "Reached the host over TLS" if tls else "Reached the host without TLS (http)")
-                if not auth_ok(r):
-                    return {"ok": False, "lines": lines, "signature": None}
-                meta = c.get(f"/v2/models/{h.model}")
-                if r.status_code != 200 or meta.status_code != 200:
-                    bad = r if r.status_code != 200 else meta
-                    add("contract", "fail", f"{bad.request.url.path} answered {bad.status_code}: {_short(bad.text, key)}")
-                else:
-                    data = meta.json()
-                    signature = {"inputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("inputs", [])],
-                                 "outputs": [{k: t[k] for k in ("name", "datatype", "shape") if k in t} for t in data.get("outputs", [])]}
-                    add("contract", "pass", f"Speaks {label}: {h.model} is ready")
-            else:
-                r = c.get("/v1/models")
-                add("tls", "pass" if tls else "warn", "Reached the host over TLS" if tls else "Reached the host without TLS (http)")
-                if not auth_ok(r):
-                    return {"ok": False, "lines": lines, "signature": None}
-                listed = None
-                if r.status_code == 200:
-                    try:
-                        listed = [m.get("id") for m in r.json().get("data", [])]
-                    except (ValueError, AttributeError, TypeError):
-                        listed = None
-                if listed is not None and h.model in listed and h.api != "text.itn":
-                    add("contract", "pass", f"Speaks {label}: /models lists {h.model}")
-                elif listed is not None and h.model not in listed:
-                    add("contract", "fail", f"/models lists {len(listed)} model(s) but not {h.model!r}")
-                else:
-                    m = _minimal(c, h)
-                    if m.status_code in (401, 403):
-                        add("contract", "fail", f"the provider refused the key ({m.status_code}): {_short(m.text, key)}")
-                    elif m.status_code >= 400:
-                        add("contract", "fail", f"a minimal {h.api} request answered {m.status_code}: {_short(m.text, key)}")
-                    else:
-                        add("contract", "pass", f"Speaks {label}: a minimal request was accepted")
+            signature = (_test_oip if h.contract == "oip-v2" else _test_openai)(c, h, key, add)
     except httpx.HTTPError as exc:
-        add("tls", "fail", f"could not reach {h.host}: {type(exc).__name__}: {_short(str(exc), key)}")
+        # named after the step that was running: the first answer gives the tls and key lines together
+        step = next((n for n in ("tls", "key", "contract") if n not in {x["name"] for x in lines}), "contract")
+        where = f"could not reach {h.host}" if step == "tls" else f"{h.host} answered, then a request failed"
+        add(step, "fail", f"{where}: {type(exc).__name__}: {_short(str(exc), key)}")
     ok = bool(lines) and all(x["status"] != "fail" for x in lines) and any(x["name"] == "contract" for x in lines)
     return {"ok": ok, "lines": lines, "signature": signature, "tested_at": now_iso()}

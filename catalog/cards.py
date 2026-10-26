@@ -3,8 +3,9 @@
 Sources, all read from disk at request time (nothing is fetched here; `just fetch-cards` does that):
 
 - provenance from `tools/model_cards.source_of` (SOURCE.txt, the manifest comment, or weights.yaml);
-- the upstream model card: README.md in the weights folder, else a copy fetched into
-  ${AI_ASSETS}/model-cards; its YAML header gives license, languages, base model and datasets;
+- the upstream model card: README.md in the weights folder when the provenance came from SOURCE.txt there
+  (`model_cards.pinned_readme`), else a copy fetched into ${AI_ASSETS}/model-cards; its YAML header gives
+  license, languages, base model and datasets;
 - facts from the checkpoint's config.json and safetensors headers (architecture, context
   length, precision, quantization, parameters) and the weights folder's size on disk;
 - for a rule-based custom service (no model weights), its README.md. A model's own service README and
@@ -20,6 +21,7 @@ and images are rewritten to the upstream repo at the same revision.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import struct
 from html.parser import HTMLParser
@@ -85,12 +87,16 @@ def split_front_matter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def rewrite_links(markdown: str, src: Source, revision: str, folder: str = "") -> str:
-    """Point relative links and images at the upstream repo, at the same revision."""
+    """Point relative links and images at the upstream repo, at the same revision. A link that climbs out of
+    the repo is left as it is."""
     def absolute(m: re.Match) -> str:
         bang, label, target, rest = m.groups()
         if re.match(r"^([a-z][a-z0-9+.-]*:|#|/)", target, re.I):
             return m.group(0)
-        path = "/".join(x for x in (folder, target.lstrip("./")) if x)
+        path = posixpath.normpath(posixpath.join(folder, target))  # as a browser resolves it: ".github" stays
+        if path == ".." or path.startswith("../"):
+            return m.group(0)
+        path = "" if path == "." else path
         if src.host == "huggingface":
             url = f"https://huggingface.co/{src.repo}/{'resolve' if bang else 'blob'}/{revision}/{path}"
         elif bang:
@@ -316,46 +322,54 @@ def _license(meta: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     return {"name": str(name) if name else None, "link": str(link) if link else None, "text": None, "file": None}
 
 
-def build(p: Platform, s: Manifest) -> dict[str, Any]:
-    """The card for a platform service."""
-    src = model_cards.source_of(p, s)
-    folder = model_cards.weights_folder(p, s)
-    ws = identity.weights_source(p, s)
-    spec = (yaml.safe_load(ws.path.read_text()) or {}) if ws.kind == "yaml" else {}
-    gaps: list[str] = []
-    sections: list[dict[str, Any]] = []
+def _upstream_copy(p: Platform, folder: Path | None,
+                   src: Source | None) -> tuple[Path | None, str | None, dict[str, Any] | None]:
+    """Where the upstream card is: the pinned copy in the weights folder, else one fetched by `just fetch-cards`.
+    Returns the folder that holds its README.md (None when there is none on this host, and always when no source
+    is recorded), the revision it is at, and the meta.json of a fetched copy (None for the pinned one)."""
+    revision = src.ref if src else None
+    if model_cards.pinned_readme(folder, src) is not None:
+        return folder, revision, None
+    if src is not None and (found := model_cards.cache_dirs(p, src)):
+        fetched = json.loads((found[0] / "meta.json").read_text())
+        return found[0], fetched.get("revision") or revision, fetched
+    return None, revision, None
 
-    # The upstream card: the pinned copy in the weights folder, else one fetched by `just fetch-cards`.
-    readme_dir, revision, fetched = None, (src.ref if src else None), None
-    if folder is not None and (folder / "README.md").is_file() and src and src.origin == "SOURCE.txt":
-        readme_dir = folder
-    elif src is not None and (found := model_cards.cache_dirs(p, src)):
-        readme_dir = found[0]
-        fetched = json.loads((readme_dir / "meta.json").read_text())
-        revision = fetched.get("revision") or revision
-    meta: dict[str, Any] = {}
-    if readme_dir is not None:
-        meta, body = split_front_matter(_read(readme_dir / "README.md", MAX_MARKDOWN) or "")
-        sub = src.subpath if src and src.host == "github" and fetched and fetched.get("readme_from") else ""
-        summary, results = digest(rewrite_links(body, src, revision or "main", sub) if src else body)
-        full = None
-        if src is not None:
-            full = (f"https://huggingface.co/{src.repo}/blob/{revision or 'main'}/README.md" if src.host == "huggingface"
-                    else src.url(revision))
-        sections.append({"key": "upstream", "title": "Model card", "markdown": summary, "evaluation": results or None,
-                         "full_url": full, "origin": "weights folder" if readme_dir == folder else "fetched copy",
-                         "fetched_at": (fetched or {}).get("fetched_at")})
-    elif src is not None:
+
+def _upstream_section(readme_dir: Path, folder: Path | None, src: Source, revision: str | None,
+                      fetched: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The upstream card's YAML header, and its section of the card: what describes the model and its results
+    (`digest`), with relative links pointing at the upstream repo."""
+    meta, body = split_front_matter(_read(readme_dir / "README.md", MAX_MARKDOWN) or "")
+    rev = revision or "main"
+    sub = src.subpath if src.host == "github" and fetched and fetched.get("readme_from") else ""
+    summary, results = digest(rewrite_links(body, src, rev, sub))
+    full = f"https://huggingface.co/{src.repo}/blob/{rev}/README.md" if src.host == "huggingface" else src.url(revision)
+    return meta, {"key": "upstream", "title": "Model card", "markdown": summary, "evaluation": results or None,
+                  "full_url": full, "origin": "weights folder" if readme_dir == folder else "fetched copy",
+                  "fetched_at": (fetched or {}).get("fetched_at")}
+
+
+def _source_gaps(s: Manifest, src: Source | None, revision: str | None, fetched: dict[str, Any] | None,
+                 has_card: bool, rule_based: bool) -> list[str]:
+    """What is missing about where the model came from and its upstream card, and how to fill it. A rule-based
+    service with no model needs neither: its own README is the card."""
+    gaps = []
+    if src is not None and not has_card:
         gaps.append(f"No upstream model card on this host: run `just fetch-cards {s.name}`.")
-    elif ws.kind == "none" and s.is_custom:
-        pass  # a rule-based service with no model: its own README is the card
-    else:
+    elif src is None and not rule_based:
         gaps.append("No source is recorded for this model: add SOURCE.txt (repo, revision) to its weights folder, "
                     "then run `just fetch-cards`.")
     if src is not None and not src.pinned:
         gaps.append(f"The source {src.repo} has no pinned revision on record"
                     + (f"; the card was fetched at {str(revision)[:12]}." if fetched else "."))
+    return gaps
 
+
+def _license_block(meta: dict[str, Any], spec: dict[str, Any], readme_dir: Path | None,
+                   folder: Path | None) -> dict[str, Any]:
+    """The license's name and link (`_license`), and the text of the first LICENSE file next to the upstream
+    card, or in the weights folder when there is none there or it is empty."""
     lic = _license(meta, spec)
     for d in filter(None, (readme_dir, folder)):
         for name in ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"):
@@ -364,33 +378,71 @@ def build(p: Platform, s: Manifest) -> dict[str, Any]:
                 break
         if lic["text"]:
             break
-    if not lic["name"] and not lic["text"] and not (ws.kind == "none" and s.is_custom):
+    return lic
+
+
+def _facts(s: Manifest, folder: Path | None, ws: identity.WeightsSource) -> tuple[list[dict[str, str]], list[str]]:
+    """Facts from the weights folder (its config, safetensors headers and size on disk), or a gap when the
+    folder is not on this host."""
+    if folder is None:
+        return [], []
+    if not folder.is_dir():
+        how = f"run `just fetch-weights {s.name}`" if ws.kind == "yaml" else "copy the model there"
+        return [], [f"The weights folder {folder} is not on this host, so its size and config are unknown; {how}."]
+    facts = _config_facts(folder)
+    size = _size(folder)
+    facts.append({"label": "Size on disk", "value": f"{size / 1e9:.2f} GB" if size >= 1e8 else f"{size / 1e6:.1f} MB"})
+    return facts, []
+
+
+def _service_section(p: Platform, s: Manifest) -> dict[str, Any] | None:
+    """A rule-based service has no upstream card: what its README says it does is the card (without its code)."""
+    if not s.build or (text := _read(p.root / s.build.context / "README.md", MAX_MARKDOWN)) is None:
+        return None
+    return {"key": "service", "title": "What it does", "markdown": "\n\n".join(filter(None, digest(text))),
+            "evaluation": None, "full_url": None, "origin": f"{s.build.context}/README.md"}
+
+
+def _source_block(src: Source | None, revision: str | None, spec: dict[str, Any]) -> dict[str, Any] | None:
+    if src is None:
+        return None
+    return {"host": src.host, "repo": src.repo, "revision": revision, "pinned": src.pinned, "origin": src.origin,
+            "url": src.url(revision), "downloaded": src.downloaded, "subpath": src.subpath or None,
+            "version": spec.get("version")}
+
+
+def build(p: Platform, s: Manifest) -> dict[str, Any]:
+    """The card for a platform service."""
+    src = model_cards.source_of(p, s)
+    folder = model_cards.weights_folder(p, s)
+    ws = identity.weights_source(p, s)
+    spec = (yaml.safe_load(ws.path.read_text()) or {}) if ws.kind == "yaml" else {}
+    rule_based = ws.kind == "none" and s.is_custom  # no model weights: its README is its card
+    sections: list[dict[str, Any]] = []
+
+    readme_dir, revision, fetched = _upstream_copy(p, folder, src)
+    meta: dict[str, Any] = {}
+    if readme_dir is not None:
+        meta, upstream = _upstream_section(readme_dir, folder, src, revision, fetched)
+        sections.append(upstream)
+    gaps = _source_gaps(s, src, revision, fetched, readme_dir is not None, rule_based)
+
+    lic = _license_block(meta, spec, readme_dir, folder)
+    if not lic["name"] and not lic["text"] and not rule_based:
         gaps.append("No license is recorded for this model.")
 
-    facts: list[dict[str, str]] = []
-    if folder is not None and folder.is_dir():
-        facts += _config_facts(folder)
-        size = _size(folder)
-        facts.append({"label": "Size on disk", "value": f"{size / 1e9:.2f} GB" if size >= 1e8 else f"{size / 1e6:.1f} MB"})
-    elif folder is not None:
-        how = f"run `just fetch-weights {s.name}`" if ws.kind == "yaml" else "copy the model there"
-        gaps.append(f"The weights folder {folder} is not on this host, so its size and config are unknown; {how}.")
+    facts, missing = _facts(s, folder, ws)
+    gaps += missing
 
-    # A rule-based service has no upstream card: what its README says it does is the card (without its code).
-    if ws.kind == "none" and s.is_custom and s.build:
-        if (text := _read(p.root / s.build.context / "README.md", MAX_MARKDOWN)) is not None:
-            sections.append({"key": "service", "title": "What it does", "markdown": "\n\n".join(filter(None, digest(text))),
-                             "evaluation": None, "full_url": None, "origin": f"{s.build.context}/README.md"})
+    if rule_based and (service := _service_section(p, s)) is not None:
+        sections.append(service)
 
     return {
         "id": s.name,
         "description": s.description,
         "tasks": list(s.tasks),
         "model_weights": ws.kind != "none",  # False: a rule-based service, its README is its card
-        "source": None if src is None else {
-            "host": src.host, "repo": src.repo, "revision": revision, "pinned": src.pinned, "origin": src.origin,
-            "url": src.url(revision), "downloaded": src.downloaded, "subpath": src.subpath or None,
-            "version": spec.get("version")},
+        "source": _source_block(src, revision, spec),
         "license": lic,
         "upstream": {"base_model": _listify(meta.get("base_model")), "languages": _listify(meta.get("language")),
                      "datasets": _listify(meta.get("datasets"))},

@@ -31,24 +31,9 @@ export const Logo = (p: P) => (
     <path d="M3 18.5h9M15.5 19.5l2 2 3.5-4M6.5 5.5h.01M6.5 12.5h.01" />
   </Svg>
 );
-export const Chart = (p: P) => (
-  <Svg {...p}>
-    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-  </Svg>
-);
-export const Bug = (p: P) => (
-  <Svg {...p}>
-    <path d="M12 20a6 6 0 0 0 6-6v-3a6 6 0 0 0-12 0v3a6 6 0 0 0 6 6zM12 20v-9M6 13H2M22 13h-4M3 21l3-3M21 21l-3-3M3 5l3 3M21 5l-3 3M9 5l1 2M15 5l-1 2" />
-  </Svg>
-);
 export const List = (p: P) => (
   <Svg {...p}>
     <path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01" />
-  </Svg>
-);
-export const Wand = (p: P) => (
-  <Svg {...p}>
-    <path d="M15 4V2M15 10V8M11 6h2M17 6h2M4 20l11-11M13 11l-2-2" />
   </Svg>
 );
 export const Pen = (p: P) => (
@@ -59,11 +44,6 @@ export const Pen = (p: P) => (
 export const Pulse = (p: P) => (
   <Svg {...p}>
     <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-  </Svg>
-);
-export const Flask = (p: P) => (
-  <Svg {...p}>
-    <path d="M9 3h6M10 3v6L4 19a1.5 1.5 0 0 0 1.3 2h13.4A1.5 1.5 0 0 0 20 19l-6-10V3" />
   </Svg>
 );
 export const Upload = (p: P) => (
@@ -98,11 +78,6 @@ export const Play = (p: P) => (
     <path d="M7 4l13 8-13 8z" fill="currentColor" />
   </Svg>
 );
-export const Pause = (p: P) => (
-  <Svg {...p}>
-    <path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor" />
-  </Svg>
-);
 export const Chevron = ({ open, ...p }: P & { open?: boolean }) => (
   <Svg {...p} style={{ transform: open ? "rotate(90deg)" : undefined, transition: "transform .12s" }}>
     <path d="M9 6l6 6-6 6" />
@@ -124,16 +99,6 @@ export const X = (p: P) => (
     <path d="M6 6l12 12M18 6L6 18" />
   </Svg>
 );
-export const Flag = (p: P) => (
-  <Svg {...p}>
-    <path d="M4 22V4M4 4h13l-2 4 2 4H4" />
-  </Svg>
-);
-export const Arrow = (p: P) => (
-  <Svg {...p}>
-    <path d="M5 12h14M13 6l6 6-6 6" />
-  </Svg>
-);
 export const Refresh = (p: P) => (
   <Svg {...p}>
     <path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5" />
@@ -142,12 +107,6 @@ export const Refresh = (p: P) => (
 export const Download = (p: P) => (
   <Svg {...p}>
     <path d="M12 4v12M7 11l5 5 5-5M4 20h16" />
-  </Svg>
-);
-export const Info = (p: P) => (
-  <Svg {...p}>
-    <circle cx="12" cy="12" r="9" />
-    <path d="M12 11v6M12 7.5h.01" />
   </Svg>
 );
 export const Book = (p: P) => (

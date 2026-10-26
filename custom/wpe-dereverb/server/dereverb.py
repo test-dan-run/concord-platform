@@ -22,7 +22,11 @@ class WpeParams:
         unknown = sorted(set(params) - set(cls.__dataclass_fields__))
         if unknown:
             raise ValueError(f"unknown parameters {unknown}; supported: {sorted(cls.__dataclass_fields__)}")
-        p = cls(**{k: int(params[k]) for k in cls.__dataclass_fields__ if k in params})
+        given = {k: params[k] for k in cls.__dataclass_fields__ if k in params}
+        for k, v in given.items():
+            if isinstance(v, bool) or not isinstance(v, int):  # a fraction is refused, not cut to an integer
+                raise ValueError(f"{k} must be an integer")
+        p = cls(**given)
         if not (1 <= p.taps <= 40 and 1 <= p.delay <= 10 and 1 <= p.iterations <= 10):
             raise ValueError("taps must be 1-40, delay 1-10, iterations 1-10")
         return p

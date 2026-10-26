@@ -17,5 +17,6 @@ Qwen3-ASR-0.6B and Qwen3-ASR-1.7B on English WER and Chinese CER.
   padding mask, so the server encodes each piece at its own length (pieces of the same length together) instead
   of padding the audio. Greedy decoding then gives each piece the same text as it would get alone. In rare cases
   a word can differ, because batched GPU kernels round bf16 numbers a little differently. A file that cannot be
-  decoded fails only its own request.
+  decoded fails only its own request. So does a file that fails in the model: when a batch fails, the server runs
+  each of its files again on its own.
 - Weights: `just fetch-weights ark-asr-0-6b` (2.6 GB). Licence: Apache-2.0.

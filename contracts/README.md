@@ -56,8 +56,13 @@ Follow the official OpenAI API shapes for the declared `api`. Every service also
 | `audio.speech` | `POST /v1/audio/speech` | `model`, `input`, `voice`, `response_format`, `speed` | audio bytes with the matching `content-type` (`audio/wav`, `audio/mpeg`, ...) |
 
 Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`. `aisvc` custom servers
-return 400 for invalid requests, 404 `model_not_found` for a wrong `model`, and 503 `not_ready`
-while loading. Streaming is engine-dependent; `aisvc` servers do not stream.
+return 400 `invalid_request` for invalid requests (a body that fails validation, or a `ValueError`
+from the handler), 404 `model_not_found` for a wrong `model`, and 503 `not_ready` while loading.
+The exception is the images still pinned to base 0.1.1 (text-normalizer, monkey-custom, silero-vad,
+kokoro-tts and voxcpm2): an existing 0.1.1 base image is never rebuilt and ships `aisvc` 0.1.0, which
+gives a `ValueError` from the handler a 400 with code `null` (kokoro-tts here, text-normalizer and
+monkey-custom in section 5) and has no `/platform/*` routes.
+Streaming is engine-dependent; `aisvc` servers do not stream.
 
 **Conformance:** `/health` 200; `/v1/models` lists the name; chat returns a non-empty completion
 (content or reasoning); transcription of `fixtures/tone_1s_16k.wav` (32 KB) returns a `text`

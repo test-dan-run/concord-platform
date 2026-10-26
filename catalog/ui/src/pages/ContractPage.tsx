@@ -46,25 +46,35 @@ language=<e.g. en>`}</pre>
         </Panel>
         <Panel title="VAD / diarisation · oip-v2 / infer">
           <pre className="m-0 text-[11px] num bg-canvas border border-track rounded-md p-2.5 whitespace-pre-wrap">{`POST /v2/models/<model>/infer
-inputs:  AUDIO        FP32  [-1]   16 kHz mono
-         SAMPLE_RATE  INT32 [1]    16000
-outputs: SEGMENTS     FP32  [-1,2] start, end (s)
-         SPEAKERS     INT32 [-1]   diarisers only`}</pre>
-          <span className="text-xs text-muted">A model that returns <span className="num">SPEAKERS</span> is a diariser; without it, a VAD.</span>
+inputs:  AUDIO        FP32  [-1]    16 kHz mono (VAD)
+                            [-1,-1] clips padded to one
+                                    length (diarisers)
+         LENGTHS      INT32 [-1]    each clip's length
+         SAMPLE_RATE  INT32 [1]     16000
+outputs: SEGMENTS     FP32  [-1,2]  start, end (s)
+         SPEAKERS     INT32 [-1]    diarisers only
+         ROWS         INT32 [-1]    each segment's clip`}</pre>
+          <span className="text-xs text-muted">
+            A model that returns <span className="num">SPEAKERS</span> is a diariser; without it, a VAD. Diarisers take a batch with <span className="num">LENGTHS</span> and return <span className="num">ROWS</span>; one clip as <span className="num">AUDIO [-1]</span> without <span className="num">LENGTHS</span> still works.
+          </span>
         </Panel>
         <Panel title="Speech enhancement · oip-v2 / infer">
           <pre className="m-0 text-[11px] num bg-canvas border border-track rounded-md p-2.5 whitespace-pre-wrap">{`POST /v2/models/<model>/infer
-inputs:  AUDIO        FP32  [-1]   16 kHz mono, −1…1
-         SAMPLE_RATE  INT32 [1]    16000
-outputs: AUDIO        FP32  [-1]   enhanced, same rate
-                                   and length as input
-         SAMPLE_RATE  INT32 [1]    16000`}</pre>
+inputs:  AUDIO        FP32  [-1,-1] clips padded to one
+                                    length, −1…1
+         LENGTHS      INT32 [-1]    each clip's length
+         SAMPLE_RATE  INT32 [1]     one rate for every
+                                    clip, e.g. 16000
+outputs: AUDIO        FP32  [-1,-1] enhanced, same rate
+                                    and lengths as input
+         LENGTHS      INT32 [-1]
+         SAMPLE_RATE  INT32 [1]     the input's rate`}</pre>
           <span className="text-xs text-muted">
-            Audio in, audio out: denoising, dereverberation, speech separation to one target. Tensors are sent as JSON number arrays, as the platform contract requires; the binary tensor extension is not implemented. Long files are chunked by the caller.
+            Audio in, audio out: denoising, dereverberation, speech separation to one target. One clip as <span className="num">AUDIO [-1]</span> without <span className="num">LENGTHS</span> still works. Tensors are sent as JSON number arrays, as the platform contract requires; the binary tensor extension is not implemented, so send files of minutes in pieces. <span className="num">deepfilternet3</span> and <span className="num">wpe-dereverb</span> take any rate from 8 kHz. <span className="num">nemotronlabs-re-use</span> takes 8, 16, 22.05, 24, 32, 44.1 or 48 kHz, and enhances clips over 240,000 samples (15 s at 16 kHz) in 5 s chunks itself.
           </span>
         </Panel>
         <Panel title="Text normalisation (ITN) · openai-inspired / text.itn">
-          <pre className="m-0 text-[11px] num bg-canvas border border-track rounded-md p-2.5 whitespace-pre-wrap">{`POST /v1/text/itn
+          <pre className="m-0 text-[11px] num bg-canvas border border-track rounded-md p-2.5 whitespace-pre-wrap">{`POST /m/<model>/v1/text/itn
 {"model": "<service>",
  "input": ["meet at three thirty p m"],
  "options": {"language": "en-SG",
@@ -77,7 +87,7 @@ outputs: AUDIO        FP32  [-1]   enhanced, same rate
           </span>
         </Panel>
       </div>
-      <Panel title="How a build is verified" subtitle="The platform's conformance checks first, then a capability probe on a 10.56 s synthesised two-speaker clip with a known transcript and turns">
+      <Panel title="How a build is verified" subtitle="The platform's conformance checks first, then a capability probe: a 10.56 s synthesised two-speaker clip with a known transcript and turns for audio models, spoken-form phrases for ITN">
         <div className="overflow-x-auto scroll-thin">
           <table className="w-full border-collapse text-[13px]">
             <thead>
@@ -99,8 +109,8 @@ outputs: AUDIO        FP32  [-1]   enhanced, same rate
           </table>
         </div>
         <span className="text-xs text-muted">
-          Every record belongs to one build: image id + config hash + weights hash. A rebuilt image, a changed manifest or new weights is a new build and is
-          verified again automatically. <Link to="/add">Add a model</Link>.
+          Every record belongs to one build: image id + config hash + weights hash, or contract + api + base URL + model name for a hosted model. A rebuilt
+          image, new weights or a change to a manifest field in the config hash is a new build and is verified again automatically. <Link to="/add">Add a model</Link>.
         </span>
       </Panel>
     </>

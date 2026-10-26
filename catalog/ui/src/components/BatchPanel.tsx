@@ -131,7 +131,7 @@ function Limits({ id, v }: { id: string; v: BatchView }) {
       {r && (r.started_with ? (
         <Note>
           The running service started with {describe(r.started_with)}.
-          {!same(r.started_with, l) && " The limits above apply the next time it starts."}
+          {!same(r.started_with, r.limits ?? l) && " The limits above apply the next time it starts."}
         </Note>
       ) : (
         <Note>

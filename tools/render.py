@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 from typing import Any
@@ -226,10 +227,15 @@ def usage_snippet(s: Manifest) -> str:
                             f'                           input="Hello there!", response_format="wav")\nr.write_to_file("hello.wav")',
         }[s.api]
         return head + body
-    if s.contract == "openai-inspired":
+    if s.contract == "openai-inspired" and s.api == "text.itn":
         return (f'from aicore import client\n\nsvc = client("{key}")\n'
-                f'svc.transform("hello world how are you")          # -> str\n'
-                f'svc.transform(["a", "b"], terminal_punctuation=True)  # -> list[str]')
+                f'svc.itn("meet at three thirty p m")                 # -> str\n'
+                f'svc.itn(["twenty one", "noon"], return_spans=True)  # -> list of {{output, spans}} items')
+    if s.contract == "openai-inspired":
+        readme = f"{s.build.context}/README.md" if s.build else "the service's README"
+        return (f'from aicore import client\n\nsvc = client("{key}")\n'
+                f'svc.transform("hello world how are you")  # -> str\n'
+                f'svc.transform(["a", "b"])                 # -> list[str]; options (keyword arguments): {readme}')
     assert s.signature is not None
     inputs = ",\n".join(f'    "{t.name}": {_py_value(t.shape, t.datatype, t.example)}' for t in s.signature.inputs)
     outs = "\n".join(f'out["{t.name}"]  # {t.datatype} {t.shape}' for t in s.signature.outputs)
@@ -289,12 +295,25 @@ def outputs(p: Platform) -> dict[Path, str]:
     }
 
 
+def _replace(path: Path, text: str) -> None:
+    """Write through a temp file in the same folder and rename it over path, so a reader (docker compose, the
+    catalog container) sees the old file or the new one, never a half-written one."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    try:
+        with open(tmp, "x", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def write_outputs(p: Platform) -> list[Path]:
     written = []
     for path, text in outputs(p).items():
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists() or path.read_text(encoding="utf-8") != text:
-            path.write_text(text, encoding="utf-8")
+            _replace(path, text)
         written.append(path)
     return written
 

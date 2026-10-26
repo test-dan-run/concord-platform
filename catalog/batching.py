@@ -13,9 +13,11 @@ image can use memory differently. The recommendation for V GiB is the largest N 
 next start of that build gets the limits for the memory it was given, as AISVC_MAX_BATCH (N at the short
 length) and AISVC_MAX_BATCH_LEN (the padded length, items x longest, in milliseconds of audio).
 
-Peak memory is read two ways and the larger is kept: nvidia-smi sampled during each request (device used
-minus what was used before the model started; correct because one GPU model runs at a time), and the
-image's own torch counters from /platform/memory. CTranslate2 and ONNX images have only the first.
+Peak memory is read two ways: nvidia-smi sampled during each request (device used minus what was used
+before the model started; correct because one GPU model runs at a time), and the image's own torch counters
+from /platform/memory. The torch reading is kept when there is one, since the device also holds what torch
+cached for earlier batches. CTranslate2 and ONNX images have only the first, and it counts only above the
+highest one so far, because those runtimes keep the memory a bigger batch took.
 
 vLLM services batch by themselves, so nothing is measured: their startup log gives the KV cache size, and
 the recommendation is a --max-num-seqs value, KV tokens / tokens per sequence.
@@ -29,6 +31,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -58,7 +61,13 @@ MAX_N = 256  # largest batch ever recommended (the fit is not trusted far past t
 # Most audio in one request: OIP sends samples as JSON numbers, so 64 x 180 s (11,520 s) took the aligner server's
 # host memory with it on 2026-10-25, while 32 x 180 s worked. Recommendations and the sweep stay under this.
 MAX_REQUEST_S = 6000.0
+# Log lines read for a vLLM profile: the whole container log. The KV cache lines come once, at startup, and vLLM
+# then logs a line per request, so a short tail misses them on a model that has served a while.
+LOG_TAIL = 1_000_000
 SWEEP_MAX_N = 128
+# Most concurrent requests the sweep sends an OpenAI transcription server: aisvc's route is a sync function that
+# Starlette runs in a pool of 40 threads, so more requests at once wait there and do not make a bigger batch.
+OPENAI_ASR_MAX_N = 32
 DEFAULT_LENGTHS_S = (2.0, 15.0, 60.0)
 SLOW_S = 120.0  # a batch that takes longer ends its length's sweep
 SAMPLE_S = 0.2  # nvidia-smi sampling interval during a request
@@ -382,13 +391,17 @@ def lengths_for(s: Manifest) -> tuple[list[float], float | None]:
 
 def sweep(send: Callable[[int, float], None], memory: Memory, lengths: list[float], *, budget_gib: float | None,
           max_n: int = SWEEP_MAX_N, stop: threading.Event | None = None,
-          log_fn: Callable[[str], None] = log.info) -> tuple[list[Point], list[dict[str, Any]], str]:
+          log_fn: Callable[[str], None] = log.info,
+          relift: Callable[[], None] | None = None) -> tuple[list[Point], list[dict[str, Any]], str]:
     """Batches of 1, 2, 4, ... at each length until the first out of memory point, a slow batch, the budget or
-    max_n. Returns (points, where each length stopped, how memory was read)."""
+    max_n. Returns (points, where each length stopped, how memory was read). `relift` runs before each length
+    after the first: a split at one length lowers the server's limit until it is lifted again."""
     points: list[Point] = []
     stops: list[dict[str, Any]] = []
     how = ""
-    for length in lengths:
+    for i, length in enumerate(lengths):
+        if i and relift is not None:
+            relift()
         n, why = 1, "max batch"
         here: list[Point] = []
         while n <= max_n:
@@ -411,17 +424,15 @@ def sweep(send: Callable[[int, float], None], memory: Memory, lengths: list[floa
                 why = f"out of memory at {n}: {exc}"
                 break
             secs = time.perf_counter() - t0
-            if read is None:  # no reading for this batch; a bigger one will tell
-                n *= 2
-                continue
-            peak, how = read
-            points.append(Point(n=n, length_s=length, peak_gib=peak, seconds=round(secs, 3)))
-            here.append(points[-1])
-            log_fn(f"batch {n} x {length:g} s: peak {peak:.2f} GiB in {secs:.1f} s")
-            if budget_gib is not None and peak > 0.95 * budget_gib:
-                why = f"peak {peak:.1f} GiB near the {budget_gib:.1f} GiB budget at {n}"
-                break
-            if secs > SLOW_S:
+            if read is not None:  # None: no reading for this batch; a bigger one will tell
+                peak, how = read
+                points.append(Point(n=n, length_s=length, peak_gib=peak, seconds=round(secs, 3)))
+                here.append(points[-1])
+                log_fn(f"batch {n} x {length:g} s: peak {peak:.2f} GiB in {secs:.1f} s")
+                if budget_gib is not None and peak > 0.95 * budget_gib:
+                    why = f"peak {peak:.1f} GiB near the {budget_gib:.1f} GiB budget at {n}"
+                    break
+            if secs > SLOW_S:  # with or without a reading
                 why = f"{secs:.0f} s for a batch of {n}"
                 break
             n *= 2
@@ -502,9 +513,7 @@ class BatchProfiler:
 
     def _fail(self, model: str, build_key: str | None, error: str) -> None:
         if build_key is None:
-            with self.scheduler.lock:
-                run = self.scheduler.runs.get(model)
-                build_key = run.build.build_key if run and run.build else None
+            build_key = self.scheduler.build_key(model)
         if build_key:
             self._save(model, build_key, "failed", None, error)
         log.warning("batch profile of %s: %s", model, error)
@@ -518,8 +527,8 @@ class BatchProfiler:
             raise ValueError("give max_batch, max_len_s or both (DELETE the override to use the measured limits)")
         if max_batch is not None and not 1 <= max_batch <= LIFT["max_items"]:
             raise ValueError(f"max_batch must be from 1 to {LIFT['max_items']}")
-        if max_len_s is not None and not 0 < max_len_s <= MAX_REQUEST_S:
-            raise ValueError(f"max_len_s must be over 0 and at most {MAX_REQUEST_S:g} s")
+        if max_len_s is not None and not 0.001 <= max_len_s <= MAX_REQUEST_S:  # the image takes whole ms, at least 1
+            raise ValueError(f"max_len_s must be from 0.001 to {MAX_REQUEST_S:g} s")
         self.db.execute("INSERT INTO batch_override (model_id, max_batch, max_len_s, set_at) VALUES (?, ?, ?, ?) "
                         "ON CONFLICT(model_id) DO UPDATE SET max_batch = excluded.max_batch, "
                         "max_len_s = excluded.max_len_s, set_at = excluded.set_at",
@@ -559,17 +568,19 @@ class BatchProfiler:
         """The limits the running service started with (None: started outside the catalog) and the ones it
         reports now, per batcher. None when it is not running."""
         sched = self.scheduler
-        with sched.lock:
-            run = sched.runs.get(s.name)
-            if run is None or not run.running:
-                return None
-            given, batch = run.given, run.batch
+        run = sched.run_view(s.name)
+        if run is None or not run.running:
+            return None
+        given, batch, measured = run.given, run.batch, run.gpu_used_before is not None
         total = sched.gpu[0] if sched.gpu else p.config.gpu_total_gb
         started = None if batch is None else {
             "max_batch": int(batch["AISVC_MAX_BATCH"]) if "AISVC_MAX_BATCH" in batch else None,
             "max_len_s": int(batch["AISVC_MAX_BATCH_LEN"]) / 1000 if "AISVC_MAX_BATCH_LEN" in batch else None}
-        out: dict[str, Any] = {"vram_gb": round(given * total, 2) if given else None, "started_with": started,
-                               "batchers": []}
+        # The memory the start was given, as tools/vram_check.start_memory works it out: the share of the device
+        # measured then (gpu_used_before is set), floored to 0.01 GiB, else util_limit x gpu_total_gb.
+        gib = None if not given else (math.floor(given * total * 100) / 100 if measured
+                                      else round(given * p.config.gpu_total_gb, 2))
+        out: dict[str, Any] = {"vram_gb": gib, "started_with": started, "batchers": []}
         if s.engine != CUSTOM_ENGINE:
             return out
         try:
@@ -601,78 +612,50 @@ class BatchProfiler:
             self._fail(model, None, f"{s.contract}/{s.api} has no batch measurement")
             return
         try:
-            req = sched.request(HOLDER, [model])
-        except SchedulerError as exc:
+            # Gives up 30 min after the request. A profile measured before the model crashed is kept.
+            with sched.hold(HOLDER, model, self._stop, wait_s=30 * 60, check_after=False) as held:
+                if held is None:
+                    return
+                run = sched.run_view(model)
+                given, baseline = run.given, run.gpu_used_before
+                total = p.config.gpu_total_gb
+                gpu = sched.gpu
+                if gpu:
+                    total = gpu[0]
+                given_gib = (given or p.config.util_limit) * total
+                if s.engine == "vllm":
+                    if given is None:  # its fixed memory is what it was given minus the KV cache
+                        raise ValueError("started outside the catalog (or before the catalog restarted), so the "
+                                         "memory it was given is unknown: restart it from the catalog to measure")
+                    prof = kv_profile(self.runtime.logs(p, model, LOG_TAIL), given_gib)
+                else:
+                    prof = self._measure(p, s, meta, held.rid, baseline, given_gib)
+                prof.given_gib = round(given_gib, 3)
+                self._save(model, held.build_key, "measured", prof, None)
+                log.info("batch profile of %s (%s): %s", model, held.build_key, json.dumps(prof.to_json())[:300])
+        except (SchedulerError, ValueError, httpx.HTTPError) as exc:  # the lease's errors are Scheduler.hold's
             self._fail(model, None, str(exc))
-            return
-        try:
-            build = self._wait(req.id, model)
-            if build is None:
-                return
-            with sched.lock:
-                run = sched.runs[model]
-                given = run.given
-                baseline = run.gpu_used_before
-            total = p.config.gpu_total_gb
-            gpu = sched.gpu
-            if gpu:
-                total = gpu[0]
-            given_gib = (given or p.config.util_limit) * total
-            if s.engine == "vllm":
-                prof = kv_profile(self.runtime.logs(p, model, 400), given_gib)
-            else:
-                prof = self._measure(p, s, meta, req.id, baseline, given_gib)
-            prof.given_gib = round(given_gib, 3)
-            self._save(model, build, "measured", prof, None)
-            log.info("batch profile of %s (%s): %s", model, build, json.dumps(prof.to_json())[:300])
-        except (SchedulerError, ValueError, httpx.HTTPError) as exc:
-            self._fail(model, None, str(exc))
-        finally:
-            sched.release(req.id)
-
-    def _wait(self, rid: str, model: str) -> str | None:
-        """Wait for the lease and the build key; the build key, or None if it never came."""
-        sched = self.scheduler
-        deadline = time.monotonic() + 30 * 60
-        while True:
-            r = sched.heartbeat(rid)
-            if r.state == "failed":
-                self._fail(model, None, f"could not start: {r.error}")
-                return None
-            with sched.lock:
-                build = sched.runs[model].build
-            if r.state == "active" and build and build.build_key:
-                return build.build_key
-            if time.monotonic() > deadline:
-                self._fail(model, None, "no build key after 30 min")
-                return None
-            if self._stop.wait(2.0):
-                return None
 
     def _measure(self, p: Platform, s: Manifest, meta: dict[str, Any], rid: str, baseline: float | None,
                  given_gib: float) -> Profile:
-        sched = self.scheduler
-        url = sched.upstream_url(s.name)
+        """The sweep under lease `rid`, which Scheduler.hold keeps alive."""
+        url = self.scheduler.upstream_url(s.name)
         lengths, longest = lengths_for(s)
-        beat = threading.Event()
-
-        def keep_alive() -> None:
-            while not beat.wait(20):
-                try:
-                    sched.heartbeat(rid)
-                except SchedulerError:
-                    return
-
-        threading.Thread(target=keep_alive, daemon=True).start()
+        max_n = s.batch.max_n if s.batch and s.batch.max_n else SWEEP_MAX_N
+        if mode(meta) == "openai-asr":
+            max_n = min(max_n, OPENAI_ASR_MAX_N)
         with httpx.Client(timeout=SLOW_S * 5) as http:
             lifted = http.post(f"{url}/platform/batch-limits", json=LIFT).status_code == 200
+
+            def relift() -> None:  # an out of memory split keeps the server's limit lowered until this
+                http.post(f"{url}/platform/batch-limits", json=LIFT)
+
             try:
                 memory = Memory(url, http, lambda: self.runtime.gpu_memory(p), baseline)
                 points, stops, how = sweep(sender(meta, url, http), memory, lengths, budget_gib=given_gib,
-                                           max_n=(s.batch.max_n if s.batch and s.batch.max_n else SWEEP_MAX_N),
-                                           stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m))
+                                           max_n=max_n, stop=self._stop, log_fn=lambda m: log.info("%s: %s", s.name, m),
+                                           relift=relift if lifted else None)
             finally:
-                beat.set()
                 if lifted:
                     http.post(f"{url}/platform/batch-limits", json={"restore": True})
         if not points:

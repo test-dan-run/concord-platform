@@ -56,17 +56,21 @@ def download(url: str, target: Path, expected: str) -> None:
     tmp = target.with_name(target.name + ".part")
     target.parent.mkdir(parents=True, exist_ok=True)
     h = hashlib.sha256()
-    with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=60) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length") or 0)
-        done = 0
-        with open(tmp, "wb") as fh:
-            for block in r.iter_bytes(CHUNK):
-                fh.write(block)
-                h.update(block)
-                done += len(block)
-                if total > 50 * CHUNK and sys.stdout.isatty():
-                    print(f"\r    {done / CHUNK:.0f}/{total / CHUNK:.0f} MB", end="", flush=True)
+    try:
+        with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=60) as r:
+            r.raise_for_status()
+            total = int(r.headers.get("content-length") or 0)
+            done = 0
+            with open(tmp, "wb") as fh:
+                for block in r.iter_bytes(CHUNK):
+                    fh.write(block)
+                    h.update(block)
+                    done += len(block)
+                    if total > 50 * CHUNK and sys.stdout.isatty():
+                        print(f"\r    {done / CHUNK:.0f}/{total / CHUNK:.0f} MB", end="", flush=True)
+    except BaseException:
+        tmp.unlink(missing_ok=True)  # a failed or interrupted download leaves nothing behind
+        raise
     if total > 50 * CHUNK and sys.stdout.isatty():
         print()
     if h.hexdigest() != expected:
@@ -102,7 +106,14 @@ def main(argv: list[str] | None = None) -> int:
             bad += 1
             continue
         print(f"  download  {f['path']} ({f.get('size', 0) / 1e6:.1f} MB)", flush=True)
-        download(f["url"], target, f["sha256"])
+        try:
+            download(f["url"], target, f["sha256"])
+        except httpx.HTTPError as exc:
+            print(f"error: {f['path']}: {(str(exc) or type(exc).__name__).splitlines()[0]}", file=sys.stderr)
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403):
+                print("  the file is gated or private: accept its license on huggingface.co and set HF_TOKEN in .env",
+                      file=sys.stderr)
+            return 1
     if bad:
         print(f"{bad} file(s) missing or wrong; run without --verify to fetch")
         return 1

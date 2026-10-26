@@ -6,37 +6,44 @@ produced is read from that app instead of being computed again.
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Any
 
 from .db import DB, now_iso
 
 KEY_FIELDS = ("build_key", "audio_sha256", "span_start", "span_end", "params_hash")
+# Output ids are kept as text. Only an integer written the way str(int) writes it (at most 19 digits) comes back
+# as a number, so forget() with the id lookup() gave finds the entry again ("007" stays "007").
+_INT_ID = re.compile(r"0|-?[1-9][0-9]{0,18}")
 
 
 class IndexKeyError(ValueError):
     pass
 
 
-def _span(v: Any) -> float:
-    v = float(v)
+def _span(v: float) -> float:
     return -1.0 if v < 0 else round(v, 3)
 
 
 def norm_key(k: dict[str, Any]) -> tuple:
     try:
         bk, sha, ph = str(k["build_key"]), str(k["audio_sha256"]), str(k["params_hash"])
-        start, end = _span(k.get("span_start", -1)), _span(k.get("span_end", -1))
-    except (KeyError, TypeError, ValueError) as exc:
+        start, end = float(k.get("span_start", -1)), float(k.get("span_end", -1))
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise IndexKeyError(f"bad index key {k!r}: needs {', '.join(KEY_FIELDS)}") from exc
     if not bk or bk == "None" or not sha or not ph:
         raise IndexKeyError(f"bad index key {k!r}: build_key, audio_sha256 and params_hash must be set")
+    if not (math.isfinite(start) and math.isfinite(end)):  # SQLite would keep NaN as NULL
+        raise IndexKeyError(f"bad index key {k!r}: span_start and span_end must be finite numbers")
+    start, end = _span(start), _span(end)
     if end < 0:
         start = -1.0
     return bk, sha, start, end, ph
 
 
 def _id(v: str) -> int | str:
-    return int(v) if v.lstrip("-").isdigit() else v
+    return int(v) if _INT_ID.fullmatch(v) else v
 
 
 class OutputIndex:

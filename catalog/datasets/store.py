@@ -12,7 +12,6 @@ file into place, so an app reading the mount never sees a partial file. The exte
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -26,12 +25,12 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
+from aicore.dataset_format import AUDIO_EXTS, HEX64, rel_ok, sha256_file
+
 from ..db import DB, now_iso
 from . import DatasetError
 
 log = logging.getLogger("catalog.datasets")
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
-AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".m4a", ".opus", ".aac", ".wma", ".webm"}
 MEDIA_TYPES = {".wav": "audio/wav", ".flac": "audio/flac", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
                ".opus": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".wma": "audio/x-ms-wma",
                ".webm": "audio/webm", ".zip": "application/zip"}
@@ -40,7 +39,7 @@ PROBE_TIMEOUT_S = 60
 
 
 def check_sha(sha: str) -> str:
-    if not isinstance(sha, str) or not HEX64.match(sha):
+    if not isinstance(sha, str) or not HEX64.fullmatch(sha):
         raise DatasetError(422, f"{sha!r} is not a sha256: 64 lowercase hex characters", "invalid_request")
     return sha
 
@@ -51,20 +50,6 @@ def norm_ext(ext: str | None) -> str:
     if ext and not re.fullmatch(r"[a-z0-9]{1,10}", ext):
         raise DatasetError(422, f"bad extension {ext!r}", "invalid_request")
     return f".{ext}" if ext else ""
-
-
-def rel_ok(rel: str) -> bool:
-    """A relative POSIX path without '..' (paths inside packages and zips)."""
-    p = PurePosixPath(rel)
-    return bool(rel) and not p.is_absolute() and ".." not in p.parts and "\\" not in rel
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(COPY_CHUNK), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _record(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -201,9 +186,11 @@ class AudioStore:
                                    "hash_mismatch", actual=actual)
             return self._place(tmp, sha, rec["ext"])
 
-    def put_file(self, src: Path, ext: str | None, sha: str | None = None) -> dict[str, Any]:
+    def put_file(self, src: Path, ext: str | None, sha: str | None = None, *,
+                 probe: dict[str, Any] | None = None) -> dict[str, Any]:
         """Store a file already on the store's filesystem (under tmp/), moving it. With `sha`, 422 if it doesn't
-        match. A file the store already has is removed and the stored record returned."""
+        match. A file the store already has is removed and the stored record returned. Pass `probe` when the caller
+        has probed the file already, so ffprobe runs once."""
         actual = sha256_file(src)
         if sha is not None and actual != sha:
             src.unlink(missing_ok=True)
@@ -218,10 +205,11 @@ class AudioStore:
                 self.db.execute("INSERT INTO audio (sha256, size, ext, state, created_at) VALUES (?, 0, ?, 'partial', ?)",
                                 (actual, norm_ext(ext), now_iso()))
             self.tmp_path(actual).unlink(missing_ok=True)  # a stale partial upload of the same bytes
-            return self._place(src, actual, (rec or {}).get("ext") or norm_ext(ext))
+            return self._place(src, actual, (rec or {}).get("ext") or norm_ext(ext), probe)
 
-    def _place(self, src: Path, sha: str, ext: str) -> dict[str, Any]:
-        probe = self.probe(src)
+    def _place(self, src: Path, sha: str, ext: str, probe: dict[str, Any] | None = None) -> dict[str, Any]:
+        if probe is None:
+            probe = self.probe(src)
         os.chmod(src, 0o644)
         dest = self.path(sha)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -293,11 +281,12 @@ class AudioStore:
                     tmp = work / uuid.uuid4().hex
                     with zf.open(info) as src, open(tmp, "wb") as dst:
                         shutil.copyfileobj(src, dst, COPY_CHUNK)
-                    if self.ffprobe and self.probe(tmp)["duration"] is None:
+                    probe = self.probe(tmp) if self.ffprobe else None
+                    if probe is not None and probe["duration"] is None:
                         tmp.unlink()
                         skipped.append({"path": name, "error": "ffprobe can't read it"})
                         continue
-                    files.append({"path": name, **self.put_file(tmp, p.suffix)})
+                    files.append({"path": name, **self.put_file(tmp, p.suffix, probe=probe)})
         finally:
             shutil.rmtree(work, ignore_errors=True)
         with self.lock:
@@ -324,22 +313,26 @@ class AudioStore:
         return self.db.one("SELECT COUNT(*) AS n FROM hold WHERE app = ?", (app,))["n"]  # type: ignore[index]
 
     def stats(self) -> dict[str, Any]:
-        def group(where: str) -> dict[str, int]:
-            r = self.db.one(f"SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM audio a WHERE {where}")
-            return {"files": r["files"], "bytes": r["bytes"]}  # type: ignore[index]
+        groups = {k: {"files": 0, "bytes": 0} for k in ("audio", "in_versions", "held_only", "neither", "partial")}
 
-        listed = "EXISTS (SELECT 1 FROM version_file v WHERE v.sha256 = a.sha256)"
-        held = "EXISTS (SELECT 1 FROM hold h WHERE h.sha256 = a.sha256)"
-        ready = "a.state = 'ready'"
+        def add(k: str, r: dict[str, Any]) -> None:
+            groups[k]["files"] += r["files"]
+            groups[k]["bytes"] += r["bytes"]
+
+        # One pass over the audio, grouped by state and by what keeps each file.
+        for r in self.db.all("SELECT a.state, EXISTS (SELECT 1 FROM version_file v WHERE v.sha256 = a.sha256) AS listed, "
+                             "EXISTS (SELECT 1 FROM hold h WHERE h.sha256 = a.sha256) AS held, COUNT(*) AS files, "
+                             "COALESCE(SUM(a.size), 0) AS bytes FROM audio a GROUP BY a.state, listed, held"):
+            if r["state"] == "ready":
+                add("audio", r)
+                add("in_versions" if r["listed"] else "held_only" if r["held"] else "neither", r)
+            elif r["state"] == "partial":
+                add("partial", r)
         holds = self.db.all("SELECT h.app, COUNT(*) AS files, COALESCE(SUM(a.size), 0) AS bytes FROM hold h "
                             "LEFT JOIN audio a ON a.sha256 = h.sha256 AND a.state = 'ready' GROUP BY h.app ORDER BY h.app")
         disk = shutil.disk_usage(self.root)
         return {"root": str(self.root),
-                "audio": group(ready),
-                "in_versions": group(f"{ready} AND {listed}"),
-                "held_only": group(f"{ready} AND NOT {listed} AND {held}"),
-                "neither": group(f"{ready} AND NOT {listed} AND NOT {held}"),
-                "partial": group("a.state = 'partial'"),
+                **groups,
                 "holds": holds,
                 "datasets": self.db.one("SELECT COUNT(*) AS n FROM dataset")["n"],  # type: ignore[index]
                 "versions": self.db.one("SELECT COUNT(*) AS n FROM version")["n"],  # type: ignore[index]

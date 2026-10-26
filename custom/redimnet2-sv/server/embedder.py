@@ -32,7 +32,8 @@ def prepare(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     if sample_rate != SR:
         import soxr
 
-        x = soxr.resample(x, sample_rate, SR).astype(np.float32)
+        y = soxr.resample(x, sample_rate, SR).astype(np.float32)
+        x = y if len(y) else x[:1]  # soxr turns one sample at 44.1 or 48 kHz into none: keep that sample
     n_min = int(MIN_S * SR)
     if len(x) < n_min:
         x = np.tile(x, -(-n_min // len(x)))[:n_min]

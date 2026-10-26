@@ -128,9 +128,11 @@ def create_openai_inspired_app(name: str, api: str, handler: Callable[[list[str]
                     raise RuntimeError(f"handler returned {len(outputs)} outputs for {len(texts)} inputs")
                 return outputs
 
-            outputs = guard(app, name, req.model, run)
-            items = [{"object": "text.transform", "index": i, "output": o} for i, o in enumerate(outputs)]
-            return body(texts, items, outputs)
+            def shape(outputs: list[str]) -> dict:
+                items = [{"object": "text.transform", "index": i, "output": o} for i, o in enumerate(outputs)]
+                return body(texts, items, outputs)
+
+            return guard(app, name, req.model, run, shape=shape)
 
     if api == "text.itn":
 
@@ -149,13 +151,16 @@ def create_openai_inspired_app(name: str, api: str, handler: Callable[[list[str]
                     raise RuntimeError(f"handler returned {len(results)} outputs for {len(texts)} inputs")
                 return options, [(out, _checked_spans(spans, text, out)) for (out, spans), text in zip(results, texts, strict=True)]
 
-            options, results = guard(app, name, req.model, run)
-            items = []
-            for i, (out, spans) in enumerate(results):
-                item: dict[str, Any] = {"object": "text.itn", "index": i, "output": out}
-                if options.return_spans:
-                    item["spans"] = spans
-                items.append(item)
-            return body(texts, items, [out for out, _ in results])
+            def shape(checked: tuple[ItnOptions, list[tuple[str, list[dict[str, Any]]]]]) -> dict:
+                options, results = checked
+                items = []
+                for i, (out, spans) in enumerate(results):
+                    item: dict[str, Any] = {"object": "text.itn", "index": i, "output": out}
+                    if options.return_spans:
+                        item["spans"] = spans
+                    items.append(item)
+                return body(texts, items, [out for out, _ in results])
+
+            return guard(app, name, req.model, run, shape=shape)
 
     return app

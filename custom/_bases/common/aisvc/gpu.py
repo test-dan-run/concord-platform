@@ -1,4 +1,5 @@
-"""Keep a custom GPU service inside its manifest budget (gpu.vram_gb, passed as AISVC_VRAM_GB) and report its use."""
+"""Keep a custom GPU service inside the memory its start was given (AISVC_VRAM_GB: the free GPU memory at the start
+less 1 GiB, at most util_limit, and never under gpu.vram_gb) and report its use."""
 
 from __future__ import annotations
 

@@ -6,7 +6,6 @@ the catalog renders compose.yml whenever it reloads the manifests.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -49,12 +48,6 @@ class ContainerInfo:
     gpu: bool
     image_id: str | None
     config_hash: str | None  # label aiplatform.config_hash: the config the container was started with
-
-
-def budget_gib(s: Manifest, total_gib: float) -> float:
-    """The least GPU memory a service loads in (gpu.util x the device, or gpu.vram_gb). At start it gets more:
-    the whole GPU as measured free (tools/vram_check.py start_memory)."""
-    return min_gib(s, total_gib)
 
 
 class Runtime(Protocol):
@@ -110,21 +103,9 @@ class DockerRuntime:
         self._gpu_warned = False
 
     def containers(self, p: Platform) -> dict[str, ContainerInfo]:
-        ids = subprocess.run(["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={p.config.compose_project}"],
-                             capture_output=True, text=True, check=True).stdout.split()
-        if not ids:
-            return {}
-        out = subprocess.run(["docker", "inspect", *ids], capture_output=True, text=True, check=True).stdout
-        result = {}
-        for c in json.loads(out):
-            labels = c["Config"]["Labels"] or {}
-            name = labels.get("com.docker.compose.service") or labels.get("aiplatform.name")
-            if not name:
-                continue
-            health = (c["State"].get("Health") or {}).get("Status", "-")
-            result[name] = ContainerInfo(name, c["State"]["Status"], health, labels.get("aiplatform.gpu") == "true",
-                                         c.get("Image"), labels.get("aiplatform.config_hash"))
-        return result
+        return {c["name"]: ContainerInfo(c["name"], c["state"], c["health"], c["gpu"], c["image"],
+                                         c["labels"].get("aiplatform.config_hash"))
+                for c in stack.inspect_project(p)}
 
     def image_id(self, ref: str) -> str | None:
         with self._lock:
@@ -153,7 +134,10 @@ class DockerRuntime:
 
     def stop(self, p: Platform, names: list[str]) -> None:
         if names:
-            stack.compose(p, "stop", *names, capture=True, check=False)
+            r = stack.compose(p, "stop", *names, capture=True, check=False)
+            if r.returncode != 0:
+                raise RuntimeError(f"docker compose stop {' '.join(names)} exited {r.returncode}: "
+                                   f"{(r.stderr or '').strip()[-400:]}")
 
     def healthy(self, p: Platform, s: Manifest, url: str) -> bool:
         try:
@@ -298,6 +282,6 @@ class FakeRuntime:
             return None
         known = {s.name: s for s in p.services}
         with self._lock:
-            used = sum(float(self.envs.get(n, {}).get(VRAM_VAR) or budget_gib(known[n], self.gpu_total_gib))
+            used = sum(float(self.envs.get(n, {}).get(VRAM_VAR) or min_gib(known[n], self.gpu_total_gib))
                        for n in self.running if n in known and known[n].gpu)
         return self.gpu_total_gib, self.gpu_total_gib - used - self.gpu_other_gib

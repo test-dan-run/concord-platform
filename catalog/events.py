@@ -9,13 +9,21 @@ from typing import Any
 MAX_BACKLOG = 1000
 
 
+class Subscription(queue.Queue):
+    """One subscriber's queue. `dropped` is set when its backlog was full: it gets no more events."""
+
+    def __init__(self) -> None:
+        super().__init__(MAX_BACKLOG)
+        self.dropped = False
+
+
 class Events:
     def __init__(self) -> None:
-        self._subs: set[queue.Queue] = set()
+        self._subs: set[Subscription] = set()
         self._lock = threading.Lock()
 
-    def subscribe(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue(MAX_BACKLOG)
+    def subscribe(self) -> Subscription:
+        q = Subscription()
         with self._lock:
             self._subs.add(q)
         return q
@@ -31,4 +39,5 @@ class Events:
             try:
                 q.put_nowait((event, data))
             except queue.Full:  # a stalled client: drop it rather than grow without bound
+                q.dropped = True
                 self.unsubscribe(q)

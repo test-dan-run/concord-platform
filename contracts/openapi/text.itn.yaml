@@ -10,7 +10,8 @@ info:
     Adapted from an external ITN API (v1.0.0) to the openai-inspired conventions:
     - `language` is an option, `model` is required, and `classes` is a comma-separated string,
       because options are scalar.
-    - Unknown top-level fields and unknown options are rejected (400 invalid_options).
+    - Unknown top-level fields are rejected (400 invalid_request), and so are unknown options
+      (400 invalid_options).
     - `input` is a string or a non-empty list; a string yields one `data` item.
     - Output is deterministic for a given build.
     - Span offsets are zero-based, half-open [start, end), counted in Unicode code points.
@@ -18,7 +19,8 @@ servers:
   - url: http://localhost:{port}
     variables:
       port:
-        default: "8501"
+        default: "8000"
+        description: The service's port, from its manifest (services/<name>.yaml); 8000 is only a placeholder.
 
 paths:
   /v1/text/itn:

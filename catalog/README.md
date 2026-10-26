@@ -70,6 +70,7 @@ Paths below are under `/api` unless they start with `/m/` or `/v2/` (the gateway
   "leased_by": ["bench:job-12"],
   "in_flight": 0,
   "build_key": "3f9c0a1b2c4d5e6f",
+  "build_pending": null,
   "image": "vllm/vllm-openai:v0.31.0",
   "capabilities": {
     "build_key": "3f9c0a1b2c4d5e6f",
@@ -96,7 +97,8 @@ Paths below are under `/api` unless they start with `/m/` or `/v2/` (the gateway
 
 - `state`: `running` | `stopped` | `starting` | `stopping` | `queued` (a request for it is waiting for
   compute) | `failed` (the last start failed; `state_detail` says why). CPU-only models have
-  `gpu: null` and are never stopped by the scheduler.
+  `gpu: null`. They never make room for another model, but they are spun down like the others when
+  nothing needs them (see Scheduler rules).
 - `capabilities` is the record for the **current** build, or `null` before the first verification.
   `capabilities.status`: `pending` (queued) | `running` | `verified` | `failed` (the report says why) |
   `stale` (verified on an earlier build; the current build has not been verified yet).
@@ -125,7 +127,7 @@ default only registered models are listed).
 | Call | Body | Does |
 |---|---|---|
 | `POST /api/models/{id}/register` | `{"display_name"?, "tags"?: [], "parent_id"?}` | Registers a platform service (idempotent). Queues verification if the current build has none. 201 with the record. |
-| `PATCH /api/models/{id}` | same fields | Edits registration fields. |
+| `PATCH /api/models/{id}` | same fields | Edits the fields given; `null` clears one (`"parent_id": null` removes "Derived from"). Registering again leaves out a field that is missing or `null`. |
 | `DELETE /api/models/{id}/register` | | Unregisters (records and index entries are kept). |
 | `POST /api/models/{id}/verify` | | Queues verification on demand. 202 with `capabilities` (`pending`). |
 
@@ -164,9 +166,10 @@ the platform already holds (`catalog/cards.py`); the UI shows it on a model's pa
   are chosen by heading (`cards.digest`). A rule-based service with no model weights has its README,
   without code, in place of an upstream card. `gaps` lists what is missing and how to fill it.
 
-Upstream cards come from the weights folder when it holds one, else from `just fetch-cards [NAME ...]`,
-which downloads only README and LICENSE at the recorded revision into `${AI_ASSETS}/model-cards/`
-(never into a weights folder: every file there is part of the build key).
+Upstream cards come from the README.md in the weights folder when the source came from `SOURCE.txt` in
+that folder, else from `just fetch-cards [NAME ...]`, which downloads only README and LICENSE at the
+recorded revision into `${AI_ASSETS}/model-cards/` (never into a weights folder: every file there is part
+of the build key).
 
 ## Batch profiles
 
@@ -177,16 +180,17 @@ because a rebuilt image can use memory differently.
 | Call | What it does |
 |---|---|
 | `POST /api/models/{id}/batch-profile` | Queues a measurement. 202 with `measuring` (`pending` or `running`). |
-| `GET /api/models/{id}/batch?vram_gb=24&item_s=20&n=8` | The current build's profile and a `table` of item lengths against 16, 24 and 32 GB and the full budget. With `item_s` (or `item_tokens` for vLLM), `recommendation` is the largest batch for `vram_gb` (default: the full budget). With `n` too, `need` is the memory that batch needs. A length in the other unit, or an audio length over `batch.max_item_s` (the server splits it), gives a `note` instead of both. For a custom GPU image, `limits` are the batch limits its next start gets with the full budget, with the `source` of each (`measured`, `override` or `default`), and `override` is what was set by hand. `running` is null when the service is stopped. Otherwise it has the limits the catalog started it with (`started_with`, null when it was started outside the catalog) and the limits each batcher in the service reports now (`batchers`), including any it lowered after running out of memory. |
-| `PUT /api/models/{id}/batch-override` | Sets the batch limits by hand: `max_batch` (most inputs in one batch) and `max_len_s` (most audio in one batch, in seconds). A limit left out still comes from the profile. The override is kept per model, so it stays in place after a rebuild, and it applies from the next start. 409 for a vLLM or CPU service. |
+| `GET /api/models/{id}/batch?vram_gb=24&item_s=20&n=8` | The current build's profile and a `table` of item lengths against 16, 24 and 32 GB and the full budget. With `item_s` (or `item_tokens` for vLLM), `recommendation` is the largest batch for `vram_gb` (default: the full budget). With `n` too, `need` is the memory that batch needs. A length in the other unit, or an audio length over `batch.max_item_s` (the server splits it), gives a `note` instead of both. For a custom GPU image, `limits` are the batch limits its next start gets with the full budget, with the `source` of each (`measured`, `override` or `default`), and `override` is what was set by hand. `running` is null when the service is stopped. Otherwise it has the memory its start was given (`vram_gb`), the limits the catalog started it with (`started_with`, null when it was started outside the catalog) and the limits each batcher in the service reports now (`batchers`), including any it lowered after running out of memory. For a custom GPU image it also has `limits`, the ones a start with the same memory gets now, so they differ from `started_with` only when the profile or the override changed after the start. A query value that is not a finite number, or is far out of range (`vram_gb` over 10,000, `item_s` under 0.001 or over 86,400, `item_tokens` over 10,000,000, `n` over 1,000,000), is a 422. |
+| `PUT /api/models/{id}/batch-override` | Sets the batch limits by hand: `max_batch` (most inputs in one batch) and `max_len_s` (most audio in one batch, in seconds, from 0.001 to 6,000). A limit left out still comes from the profile. The override is kept per model, so it stays in place after a rebuild, and it applies from the next start. 409 for a vLLM or CPU service. |
 | `DELETE /api/models/{id}/batch-override` | Removes the override, so the next start uses the measured limits again. |
 
 For a custom audio image, the measurement takes a lease (holder `catalog:batch`), so it waits its turn.
 It lifts the server's batch limits (`POST /platform/batch-limits` in `aisvc`), resets the peak, and sends
 batches of 1, 2, 4 and so on up to 128 items at three lengths: a short clip, a typical clip and the
-longest clip the server takes (`batch.max_item_s` in the manifest, or `batch.lengths_s` to choose them). A server that batches inside one item, like faster-whisper with the 30 s windows of a file, sets `batch.max_n: 1`, so the sweep sends single items of growing length.
+longest clip the server takes (`batch.max_item_s` in the manifest, or `batch.lengths_s` to choose them). A server that batches inside one item, like faster-whisper with the 30 s windows of a file, sets `batch.max_n: 1`, so the sweep sends single items of growing length. An OpenAI transcription server gets at most 32 requests at once, because the `aisvc` route runs in a pool of 40 threads and more requests only wait there.
 Each length stops at the first out of memory error, or when the server had to split a batch, or when a
-batch takes more than 120 s. It also stops before a batch it predicts to need more than the budget, because under WSL2 such a
+batch takes more than 120 s. A split lowers the server's limit, so the catalog lifts the limits again before
+the next length. It also stops before a batch it predicts to need more than the budget, because under WSL2 such a
 batch does not fail: Windows moves GPU memory to system RAM and the batch takes minutes. No request
 carries more than 6,000 s of audio, in the sweep or in a recommendation, because OIP sends samples as
 JSON numbers and a larger request can exhaust the server's host memory. It then fits
@@ -197,8 +201,10 @@ where N is the number of items and L is the length of each in seconds. The L² t
 models. The recommendation for V GB is the largest N whose predicted peak stays under 0.9 × V. Peak
 memory is read from `nvidia-smi` during each request, less what the GPU used before the model started.
 This is correct because only one GPU model runs at a time. For a PyTorch image it is also read from the
-image's own counters (`GET /platform/memory`), and the larger value is kept. CTranslate2 and ONNX images
-have only the first reading.
+image's own counters (`GET /platform/memory`), and that reading is kept, because the device also holds
+memory that PyTorch cached for earlier batches. CTranslate2 and ONNX images have only the `nvidia-smi`
+reading. Those runtimes keep the memory a bigger batch took, so a reading counts only when it is above the
+highest one so far.
 
 When a build has a profile, each start passes limits for the memory the start was given:
 `AISVC_MAX_BATCH` (the batch for the shortest measured length) and `AISVC_MAX_BATCH_LEN` (the padded
@@ -206,8 +212,11 @@ length, which is items times the longest item, in milliseconds of audio). Withou
 uses its own small defaults, and its out of memory backoff splits a batch that does not fit.
 
 A vLLM service is not measured, because vLLM batches by itself. Its profile comes from its startup log
-(the available KV cache memory and the KV cache size in tokens). The recommendation is the number of
-sequences of a given length that fit the KV cache, which is a value for `--max-num-seqs`.
+(the available KV cache memory and the KV cache size in tokens), read from the whole container log, and
+from the last start when the container restarted. The recommendation is the number of sequences of a
+given length that fit the KV cache, which is a value for `--max-num-seqs`. The memory outside the KV cache
+is the memory its start was given minus the KV cache, so a vLLM service started outside the catalog (or
+before the catalog restarted) is not profiled: restart it from the catalog first.
 
 `just batch NAME [--vram GB] [--item-s S | --item-tokens T] [--n N]` prints the same numbers in the
 terminal, and `just batch-profile NAME [--wait]` asks for a measurement. The model's page has a Batching
@@ -220,9 +229,9 @@ and API key. Apps call it through the gateway like any platform model, and never
 
 | Call | Body | Does |
 |---|---|---|
-| `POST /api/hosted/test` | the fields below (`key` optional with `id` of an existing one) | Connection test before saving: TLS, key accepted, speaks the contract (`GET /models` lists the model, else one minimal request; OIP: ready + metadata). Stores nothing. |
-| `POST /api/hosted` | `{"id", "contract", "api", "base_url", "model", "auth_type": "bearer"\|"header"\|"none", "header_name"?, "key"?, "timeout_s"?: 120, "max_concurrency"?: 4, "max_upload_mb"?: 25, "display_name"?, "tags"?, "parent_id"?, "data_leaves_network": true}` | Creates it and its registration, queues verification. 422 without `data_leaves_network`; 409 if `id` is a platform name or alias. OIP endpoints store the signature from the provider's metadata. |
-| `PATCH /api/hosted/{id}` | any of the same | Changes it. A new `key` is tested before it replaces the old one. |
+| `POST /api/hosted/test` | the fields below (`key` optional with `id` of an existing one) | Connection test before saving: TLS, key accepted, speaks the contract (`GET /models` lists the model, else one minimal request; OIP: ready + metadata). The key line is a warning when the first request answered neither 2xx nor 401/403, since the key was not checked by it. Every result has `tested_at`. Stores nothing. Without `key`, the stored key is used only when the scheme, host and port are the stored ones; a `base_url` on another host gets 422 until the key is entered again. |
+| `POST /api/hosted` | `{"id", "contract", "api", "base_url", "model", "auth_type": "bearer"\|"header"\|"none", "header_name"?, "key"?, "timeout_s"?: 120, "max_concurrency"?: 4, "max_upload_mb"?: 25, "display_name"?, "tags"?, "parent_id"?, "data_leaves_network": true}` | Creates it and its registration, queues verification. 422 without `data_leaves_network`, or for a `base_url` that is not an http(s) URL with a host; 409 if `id` is a platform name or alias. OIP endpoints store the signature from the provider's metadata. |
+| `PATCH /api/hosted/{id}` | any of the same | Changes the fields given; `display_name`, `tags` and `parent_id` as `PATCH /api/models/{id}` does (`null` clears one). A new `key` is tested before it replaces the old one. Changing to oip-v2, or an OIP endpoint's build, reads the signature from the provider's metadata again; a metadata read that fails gets 422, as on create, and nothing is saved (the old build's signature never carries over). Changing away from oip-v2 drops the signature. |
 | `DELETE /api/hosted/{id}` | | Removes it, its encrypted key and its registration (`DELETE /api/models/{id}/register` does the same). |
 | `POST /api/models/{id}/test` | | The connection test with the stored key. |
 
@@ -232,10 +241,17 @@ and API key. Apps call it through the gateway like any platform model, and never
 - Record: `state: "hosted"`, `gpu: null`, `image: null`, `cold_start_s: 0`, `served_name` = the provider
   model name, and `hosted: {base_url, model, host, auth_type, header_name, key_hint, timeout_s,
   max_concurrency, max_upload_mb, resolved_url, data_ack_at, next_check_at, last_test}`. The key is
-  never returned, logged or exported; `key_hint` is its last four characters.
+  never returned, logged or exported; `key_hint` is its last four characters. When a provider quotes
+  the key back, connection tests, verification reports and the verifier's log show `••••` in its
+  place. The gateway reads a provider's error reply (status 400 and up) whole, shows `••••` in place of
+  the key in its body and drops a header that quotes the key; an error body over 1 MiB is not
+  forwarded (`upstream_error` with the provider's status). A successful reply streams as it is and is
+  not redacted.
 - Build key: sha256 of contract, api, base URL and model name. Changing any of them is a new build
   (verified again); limits and key replacement are not. Hosted models are also re-verified when their
-  last verification is over 24 hours old. Verification takes no lease.
+  last verification is over 24 hours old; that check runs only while `CATALOG_VERIFY_NEW_BUILDS` is on
+  (the default), the switch that also queues a platform model's new build. Verification takes no
+  lease and runs on its own worker, so it never waits behind a platform model's verification.
 - Leases may name hosted ids next to platform models: they are granted at once and never queue.
   `start` and `stop` return 409.
 - Gateway: incoming `Authorization` (and a header named like the custom auth header) is dropped and
@@ -258,7 +274,8 @@ not exported.
 
 The bundle is a folder under `CATALOG_EXPORT_DIR` (default `run/catalog/exports`; leave it out of
 `dev/.backups` tarballs): `manifest.json`, one `images.tar` from a single `docker save` (each shared
-layer once), and `models/<id>/` with `service.yaml`, `registration.json`, `weights/` and
+layer once), and `models/<id>/` with `service.yaml`, `registration.json`, `weights/` (with the
+weights folder's `SOURCE.txt`, which the model card reads; it stays out of the weights hash) and
 `verification.json`. The job checks free space against the estimate plus 10% first; a failure records
 its phase and removes the partial bundle; a restart marks a running job failed. For a registry, each
 image is tagged and pushed (the host's `~/.docker/config.json` is mounted read-only for the login)
@@ -267,7 +284,10 @@ and `manifest.json` records the pushed refs and digests.
 On the target: `python -m catalog import <bundle folder or .tar>` loads the images (`docker load`, or
 pulls the pushed refs), writes each `service.yaml` into `services/` (a differing manifest is kept
 unless `--force`; nothing is kept if the platform no longer loads), copies weights to where the
-manifest mounts them, and registers each model with the running catalog, which verifies every build.
+manifest mounts them (which must be under `AI_ASSETS`; model ids must be kebab case), and registers each model with the running catalog, which verifies every build.
+A model the catalog refuses (too big for this GPU, say) is named with the catalog's reason and left
+unregistered. Only when no catalog answers are the registrations written to its database. A catalog
+that stops answering partway stops the import; run it again once the catalog answers.
 A build key that matches keeps its indexed outputs.
 
 ## Leases and the queue
@@ -285,14 +305,15 @@ priority.
 | `GET /api/leases` | live leases and queued requests, queue order |
 
 ```json
-{"id": "l-8c1f…", "holder": "bench:job-12", "models": ["pyannote-diarization"],
+{"id": "l-8c1f…", "kind": "lease", "holder": "bench:job-12", "models": ["pyannote-diarization"],
  "state": "queued", "position": 2, "waiting_for": "one GPU model runs at a time: pyannote-diarization waits for qwen3-32b-awq (leased by label:job-3)",
- "error": null, "created_at": "…", "granted_at": null, "ready_at": null, "expires_at": "…"}
+ "error": null, "created_at": "…", "granted_at": null, "ready_at": null, "ended_at": null, "expires_at": "…"}
 ```
 
 - `state`: `queued` -> `starting` (granted; its models are being started) -> `active` (every model is
   healthy and has a build key: call it now, and index what it returns) -> `released` | `expired` | `failed` (a model failed to start, or the request
-  can never be met, `error` says why).
+  can never be met, `error` says why). `kind` is `lease` for an app's lease, or `start` for the request a
+  gateway call or `just up` makes; a start request ends as `done` once its models are up.
 - **Heartbeat** every 30 s; a lease (queued or not) expires after `ttl_s` (default 90 s, i.e. three
   missed beats) without one, so a crashed app frees its models and its queue place.
 - One request names its whole model set, with at most one GPU model. A request for a GPU model while
@@ -310,7 +331,9 @@ priority.
 - The scheduler stops a GPU model to make room only when nobody leases it, no call to it is in flight,
   and it has run for its settle time (2 x cold start, at least 60 s) or its lease has ended. If any
   other GPU model can't be stopped yet, the request waits, and `waiting_for` names the model it waits
-  for and the reason.
+  for and the reason. If the stop that makes room fails, the new GPU model does not start next to the
+  old one: its request goes back to its place in the queue (`waiting for <model> to stop`), and the
+  stop is tried again.
 - One model starts at a time, and no GPU model starts while another GPU model is still loading. vLLM
   sizes its KV cache from the free memory it measures at start, so a neighbour that loads at the same
   time breaks its start ("No available memory for the cache blocks").
@@ -325,13 +348,20 @@ priority.
   `AISVC_VRAM_GB`. The 1 GiB stays free because Windows keeps some GPU memory for the display under
   WSL2, and vLLM fails to start when the memory it asks for isn't free. Without `nvidia-smi`, a GPU
   model gets `util_limit` x `gpu_total_gb`.
-- Stopping one GPU model to start a different one counts as a swap. `GET /api/platform` returns the
-  count as `swaps`, and the catalog keeps it in its database across restarts.
+- Stopping one GPU model to start a different one counts as a swap, once also when that stop has to be
+  tried again. `GET /api/platform` returns the count as `swaps`, and the catalog keeps it in its
+  database across restarts. The count is made when the request is granted, so it can be one off when a
+  stop keeps failing together with a model started outside the catalog or a catalog restart.
 - **Models a lease brought up are spun down when nothing needs them.** Once its last lease ends, a model
   is stopped after `CATALOG_RELEASE_LINGER_S` (default 30 s, so a back-to-back lease on the same model
-  keeps it loaded) unless a live or queued request names it or a call is in flight. Models started on
+  keeps it loaded) unless a live or queued request names it or a call is in flight. A request that
+  comes after the stop has begun waits until the model has stopped and started again. A stop that
+  fails is tried again on the next tick, then after 5 s, doubling after each failure up to 5 minutes,
+  until one works (`POST /api/models/{id}/stop` still tries at once). Models started on
   purpose (`POST /api/models/{id}/start`, `just up`, or found running outside the catalog) stay up
-  until they are evicted or stopped. A model the gateway started for a call without a lease is stopped
+  until they are evicted or stopped, also when the start was asked for while the model was being
+  stopped. A start that ends before its model runs (`just up` gave up while it was queued) leaves no
+  pin, also when another request brings the model up later. A model the gateway started for a call without a lease is stopped
   after `CATALOG_GATEWAY_IDLE_S` (default 600 s) without a call, unless a request names it. A model
   whose lease ended needs no settle time before it is evicted.
 - The catalog watches Docker every few seconds, so services started or stopped outside it (`docker`,
@@ -343,7 +373,8 @@ Inference goes through the catalog, addressed by model id, with the platform con
 
 - `/m/{id}/...` forwards to the service root: `/m/whisper-large-v3/v1/audio/transcriptions`,
   `/m/silero-vad/v2/models/silero-vad/infer`.
-- `/v2/models/{id}/...` is also accepted for OIP calls.
+- `/v2/models/{id}/...` is also accepted for OIP calls, and `GET /v2/models/{id}` for the model's OIP
+  metadata.
 - With `AICORE_CATALOG` set, `aicore.client(name)` points at the gateway, so app code does not change.
   A name the local endpoint map does not list (a hosted model) is looked up at `/api/models/{name}`
   (cached 60 s); `model_name()` then returns its provider model name.
@@ -365,12 +396,18 @@ Index key: `build_key` + `audio_sha256` (sha256 of the original file's bytes) + 
 (`span_start`, `span_end` in seconds, rounded to 3 decimals; `-1, -1` = the whole file) +
 `params_hash` (the app's 16-hex-character hash of its request parameters; it must not include the
 image or build key). Both Concord apps compute `params_hash` the same way, so their keys agree.
+A span that is not a finite number is refused (422).
+
+Output ids are kept as text. An id written as a plain integer (no leading zeros, at most 19 digits)
+comes back as a number; any other id comes back as the same text, so forgetting the id a lookup
+gave always finds the entry.
 
 | Call | Body | Response |
 |---|---|---|
-| `POST /api/index/lookup` | `{"app": "label", "keys": [{"build_key", "audio_sha256", "span_start", "span_end", "params_hash"}]}` | `{"hits": [null \| {"owner": "bench", "output_id": 812, "owner_url": "http://…"}]}`, one per key, in order; the asking app's own entries are preferred |
+| `POST /api/index/lookup` | `{"app": "label", "keys": [{"build_key", "audio_sha256", "span_start", "span_end", "params_hash"}]}` | `{"hits": [null \| {"owner": "bench", "output_id": 812, "owner_url": "http://…"}]}`, one per key, in order; the asking app's own entries are preferred, then other owners by name |
 | `POST /api/index/record` | `{"app": "bench", "entries": [{…key, "output_id": 812}]}` | `{"recorded": n}` |
 | `POST /api/index/forget` | `{"app": "bench", "output_ids": [812]}` | `{"forgotten": n}` |
+| `GET /api/index/stats` | | `[{"owner": "bench", "outputs": n}]`, indexed outputs per app (the Output index page) |
 | `POST /api/apps` | `{"name": "bench", "base_url": "http://concord-bench:8000"}` | registers where other apps read this app's outputs |
 | `GET /api/apps` | | registered apps |
 
@@ -403,7 +440,7 @@ Response:
 
 ```json
 {"pipeline": "staged",
- "steps": [{"stage": "seg", "model": "pyannote-diarization", "load": true, "cold_start_s": 21.0,
+ "steps": [{"stage": "seg", "model": "pyannote-diarization", "load": false, "cold_start_s": 21.0,
             "items": 120, "hits": 120, "missing": 0, "skip": true}, …],
  "loads": 3, "est_load_s": 410.0, "hits": 120, "fits_together": false}
 ```
@@ -413,17 +450,22 @@ Response:
 - `co-resident`: both stages at once (streaming, or audio added mid-run). The slowest-loading stage is
   the outer loop and stays up; the other stage's models are re-spun inside it unless at most one model of the two stages uses the GPU
   beside it, in which case nothing is re-spun.
+- In both, a running GPU model counts as loaded only until an earlier step loads another GPU model
+  (one GPU model runs at a time), and a stage that names one model twice (its alias and its id) gives
+  it one step.
 - `keys` per model are optional. With keys, the catalog checks the index for the current build, and
   a model with nothing missing is skipped (`skip: true`). Keys for a later stage are usually unknown
   until the earlier stage has run (segments decide the cuts); plan again after it.
 
 ## Events
 
-`GET /api/events` is a server-sent event stream: `model` events (`{id, state, build_key,
-capabilities_status}`), `lease` events (the lease JSON), `queue` events (`{queue: [{id, holder,
+`GET /api/events` is a server-sent event stream: `model` events (`{id, state, state_detail, build_key,
+leased_by}`, for platform services), `lease` events (the lease JSON), `queue` events (`{queue: [{id, holder,
 position, waiting_for}]}`), `export` events (the export job JSON) and `dataset` events (`{id, n,
 action}`, see [Dataset Catalog](#dataset-catalog)). App backends can relay these or poll `GET /api/models` and
-`GET /api/leases/{id}`.
+`GET /api/leases/{id}`. Each connection starts with a `model` event per model. A client that falls more than
+1000 events behind gets no more events: its stream ends once it has read the ones already queued, and a
+reconnect (EventSource does this after 3 s) starts again with that snapshot.
 
 ## UI
 
@@ -436,10 +478,16 @@ Model Catalog and the Dataset Catalog, whose pages are under `/datasets` (see [P
 ## Other calls
 
 - `POST /api/models/{id}/start`, `POST /api/models/{id}/stop` (`?force=1` stops a leased model, the
-  owner's override). `tools/stack.py up/down` use these when the catalog is running, so `just up`,
-  `just down` and Synthetics' `stack.py` calls keep working.
+  owner's override; a lease that is still active starts it again at once, so release the lease to keep it
+  down. A stop sent while the model is starting is not kept: it still answers 202 and the model comes up). `tools/stack.py up/down` use these when the catalog is running, so `just up`,
+  `just down` and Synthetics' `stack.py` calls keep working. Start answers 202 with `model` (the
+  record) and `request` (the request that brings it up, or `null` when it is already up). Its `?holder=`
+  (default `manual`) names who asked in the queue; any holder but `gateway` pins the model so it
+  stays up after leases end, while `holder=gateway` starts it like a gateway call, stopped after
+  `CATALOG_GATEWAY_IDLE_S` without a call.
 - `GET /api/usage`: calls, errors and last use per model.
 - `GET /api/health`.
+- `GET /api/docs`: the API docs, from `GET /api/openapi.json`.
 
 ## Python client (aicore)
 
@@ -458,15 +506,25 @@ plan = cat.plan(stages=[...])
 cat.batch("wavlm-sv", item_s=20)["recommendation"]  # {"batch": ..., "vram_gb": ...} once a profile exists
 ```
 
+A `Catalog` keeps its HTTP connections open until `cat.close()`; `with Catalog() as cat:` closes them at the
+end of the block.
+
 `aicore.catalog.FakeCatalog` is an in-memory stand-in with the same methods for app tests (leases are
-granted at once; models and capabilities come from the constructor).
+granted at once; models and capabilities come from the constructor). It answers leases, the output index,
+apps and plans as the server does (an unknown lease is a 404, a heartbeat of an ended lease a 409, aliases
+resolve, a lease names each model once, a release leaves a failed or expired lease as it is, a lookup takes
+the asking app's entry and then other owners by name, digit output ids come back as ints), but it accepts
+models it does not know, and `register` creates them. `catalog/tests/test_catalog_client.py` runs the same
+cases on both.
 
 ## Dataset Catalog
 
 The Dataset Catalog keeps versioned datasets that Concord Bench and Concord Label both read. It runs in the
 same catalog service as the Model Catalog, on the same port, and its code is in `catalog/datasets/`. The
 design is in [../DATASET_CATALOG_PLAN.md](../DATASET_CATALOG_PLAN.md), and the version format is in
-[../contracts/datasets/version.md](../contracts/datasets/version.md).
+[../contracts/datasets/version.md](../contracts/datasets/version.md). The code for the format (the check of a
+version folder, its digest and the reading of its references) is `aicore.dataset_format`, which the service and
+`FakeDatasetCatalog` both use.
 
 - A **dataset** has a name, a language, a description, tags and numbered versions. Its id is a 32 character
   hex string.
@@ -519,12 +577,12 @@ Every path is under `/api`. Errors have the same shape as the rest of the catalo
 | `POST /api/store/unpack` | `{"sha256"}` of a committed zip -> the audio files in it, each stored and probed, and the files it skipped. |
 | `POST /api/store/holds` | `{"app", "add": [...], "remove": [...]}` -> `{"held"}`, the number of files this app holds. |
 | `GET /api/store/stats` | Sizes and counts for the Storage page, holds per app and free disk space. |
-| `POST /api/store/gc` | `{"dry_run": true}` -> what clean-up would delete. The same call with `false` deletes it. |
+| `POST /api/store/gc` | `{"dry_run": true}` -> what clean-up would delete. The same call with `false` deletes it. With `"expect_files"`, the dry run's count, a clean-up that would delete more files answers 409 `gc_changed` and deletes nothing. |
 | `GET /api/datasets` | `?q=&language=&label_type=&app=` -> datasets, each with its latest version. |
 | `POST /api/datasets` | `{"name", "language"?, "description"?, "tags"?, "app"}` -> 201 dataset. |
 | `GET`, `PATCH`, `DELETE /api/datasets/{id}` | The dataset with its versions, newest first. PATCH changes the name, description and tags. DELETE removes the dataset and every version. |
 | `POST /api/datasets/{id}/versions` | Multipart: a zip of a version folder (or of a whole reference package), plus `parent`, `app` and `force`. 201 for a new version, 200 when it matches the latest version, 409 `stale_parent` with `latest`, 422 when the folder is invalid or audio is missing. |
-| `POST /api/datasets/{id}/versions/audio` | `{"files": [{"path", "sha256"}], "parent"}` -> a version with audio only. 409 when the latest version has references. |
+| `POST /api/datasets/{id}/versions/audio` | `{"files": [{"path", "sha256"}], "parent", "app"?, "force"?}` -> a version with audio only: the latest version's files plus these. 409 `has_references` when the latest version has references, and 409 `stale_parent` unless `force`, as for a publish. |
 | `GET`, `DELETE /api/datasets/{id}/versions/{n}` | The version with its manifest and counts. DELETE removes it, 204. |
 | `GET /api/datasets/{id}/versions/{n}/files` | `?offset=&limit=` -> the files, with their segment counts and labels. |
 | `GET /api/datasets/{id}/versions/{n}/refs?path=` | The reference segments of one file. |
@@ -575,8 +633,10 @@ Clean-up deletes an audio file only when all of these are true:
 
 Clean-up runs only when a person starts it, and it always shows a dry run first. Start it from the Storage
 page, or run `just datasets-gc`. The recipe asks the running catalog service for a dry run, prints the
-files and bytes it would delete, and deletes them only when you answer yes. Deleting a version or a
-dataset never deletes audio by itself.
+files and bytes it would delete, and deletes them only when you answer yes. The Storage page sends the dry
+run's count with the clean-up, so when more files can be deleted by then (a version was deleted in another
+tab, for example), it deletes nothing and runs the dry run again. Deleting a version or a dataset never
+deletes audio by itself.
 
 ### Python client (aicore.datasets)
 
@@ -615,7 +675,12 @@ subclasses for the cases an app handles.
 
 `aicore.datasets.FakeDatasetCatalog` has the same methods for app tests. It keeps its records in memory, and it
 writes audio and versions to a folder laid out like the real store, so `audio_path` and `version_dir` work. It
-follows the same rules as the catalog service for publishing, holds and uses. Pass a folder such as pytest's
+checks a folder with the catalog service's own `check_folder` and reads references with the service's own reader,
+both in `aicore.dataset_format`, so it refuses the folders the service refuses, with the same problems, and it
+reports the same labels and files. Publishing (the digest, the parent rules and missing audio), versions with audio
+only, holds and uses follow the service's rules and messages too. One difference is that the fake reads the folder
+as it is, while the real client zips it and the service drops `.DS_Store` and `__MACOSX` files when it unzips, so
+the fake refuses a stray `.DS_Store` under `refs/` that the service ignores. Pass a folder such as pytest's
 `tmp_path` as `root`, or leave it out to get a temporary folder that is removed with the fake. A test can put
 audio straight into the store with `add_audio(data)`, and it can publish a version with `add_version(dataset_id,
 {path: bytes}, {refs file name: text})`. The fake reads the duration and sample rate of WAV files only, so pass

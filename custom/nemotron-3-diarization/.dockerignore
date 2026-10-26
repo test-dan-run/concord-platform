@@ -1,0 +1,3 @@
+# Python caches from running the tests on the host: keep them out of the image
+**/__pycache__
+**/*.pyc

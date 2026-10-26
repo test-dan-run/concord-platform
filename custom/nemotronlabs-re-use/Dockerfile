@@ -4,7 +4,7 @@
 # mamba-ssm publishes no wheel for this base (Python 3.12, CUDA 13.0, torch 2.14), so the first stage compiles its
 # selective-scan kernel on the CUDA 13.0 devel image against the same torch, for the RTX 5090 (sm_120) only.
 # causal-conv1d is not built: without it mamba-ssm uses torch's conv1d and still runs the compiled scan.
-ARG BASE_IMAGE=ghcr.io/owner/py-cuda-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cuda-base:0.2.0
 
 FROM nvidia/cuda:13.0.3-devel-ubuntu24.04 AS kernels
 # Must match TORCH_VERSION of py-cuda-base (custom/_bases/Dockerfile.py-cuda): the kernel links against torch's ABI.

@@ -1,0 +1,5 @@
+# Python caches from running the tests on the host: keep them out of the image
+**/__pycache__
+**/*.pyc
+# Docs for people; the aisvc wheel does not read it, so editing it leaves the bases current
+common/README.md

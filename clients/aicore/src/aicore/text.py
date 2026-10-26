@@ -29,10 +29,12 @@ class TextServiceClient:
         r = self._http.post(path, json=body)
         if r.status_code >= 400:
             try:
-                err = r.json()["error"]
+                err = r.json()["error"]  # {"message", "type", "code"}, or a plain string from some servers
+            except (ValueError, KeyError, TypeError):
+                err = None
+            if isinstance(err, dict):
                 raise ServiceError(r.status_code, err.get("message", r.text), err.get("type"), err.get("code"))
-            except (ValueError, KeyError, TypeError, AttributeError):
-                raise ServiceError(r.status_code, r.text) from None
+            raise ServiceError(r.status_code, err if isinstance(err, str) else r.text)
         return r.json()
 
     def models(self) -> list[str]:

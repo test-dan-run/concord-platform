@@ -1,5 +1,5 @@
 # qwen3-forced-aligner: OIP v2 forced alignment (Qwen3-ForcedAligner-0.6B) on the GPU. Weights mounted at /models.
-ARG BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cuda-torch211-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt /app/requirements.txt

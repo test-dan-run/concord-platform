@@ -1,5 +1,5 @@
 # wpe-dereverb: OIP v2 dereverberation utility on CPU (nara_wpe, no model weights).
-ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt /app/requirements.txt

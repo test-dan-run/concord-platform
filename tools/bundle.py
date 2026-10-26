@@ -35,13 +35,14 @@ import tarfile
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import render
+from tools.identity import PARTIAL
 from tools.schema import ASSETS_VAR, BASE_PATHS, MODELS_MOUNT, Manifest, Platform, PlatformError, load_platform
 from tools.vram_check import budget
 
@@ -52,7 +53,6 @@ TREE = ("tools", "engines", "contracts", "clients/aicore", "custom/_bases", "ui"
         "config.yaml", "pyproject.toml", "uv.lock", "Justfile", ".env.example", ".gitignore")
 TREE_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".venv", "*.egg-info", ".env", "node_modules",
                                      "catalog.html", "endpoints.generated.yaml")
-PARTIAL = (".lock", ".incomplete", ".part")  # download leftovers, never copied
 
 
 class BundleError(Exception):
@@ -186,7 +186,7 @@ def save_images(refs: list[str], dest: Path) -> None:
 def image_facts(ref: str) -> dict[str, Any] | None:
     """{id, bytes} of a local image, or None when it is not present."""
     r = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}} {{.Size}}", ref],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     if r.returncode != 0:
         return None
     image_id, size = r.stdout.split()
@@ -327,8 +327,10 @@ def readme(p: Platform, services: list[Manifest], title: str, *, with_images: bo
 
 def write_bundle(p: Platform, services: list[Manifest], target: Path, *, with_images: bool = False,
                  with_weights: bool = False, platform_tree: bool = False, title: str | None = None,
-                 log: Log = print) -> dict[str, Any]:
-    """Write a bundle directory at target (empty or absent). Returns the report saved as bundle.json."""
+                 log: Log = print, stage_weights: bool = True) -> dict[str, Any]:
+    """Write a bundle directory at target (empty or absent). Returns the report saved as bundle.json.
+    stage_weights=False leaves the weights out of target/assets (make_bundle adds them to the tarball from
+    where they are); bundle.json and the README still list them."""
     title = title or bundle_name(services, None)
     rep = report(p, services)
     blocking = []
@@ -365,7 +367,7 @@ def write_bundle(p: Platform, services: list[Manifest], target: Path, *, with_im
             (target / rel).parent.mkdir(parents=True, exist_ok=True)
             (target / rel).write_bytes(data)
 
-    if with_weights:
+    if with_weights and stage_weights:
         log("== weights")
         copy_weights([w for s in services if (w := weights_of(p, s))], target / "assets", log)
     if with_images:
@@ -385,9 +387,34 @@ def write_bundle(p: Platform, services: list[Manifest], target: Path, *, with_im
     return rep
 
 
+def _root_owned(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Every tarball member is owned by root with mode 0644, whoever wrote the file on this machine."""
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    info.mode = 0o644
+    return info
+
+
+def write_tar(target: Path, mode: str, title: str, files: dict[str, Path], log: Log) -> None:
+    """files (path in the bundle -> file on this machine) as the tarball target, under title/, in path order."""
+    total = sum(f.stat().st_size for f in files.values()) or 1
+    done = 0
+    log(f"== tarball ({total / 1e6:.1f} MB)")
+    # dereference: a linked weights file goes in as the file it points to, as copy_weights copies it
+    with tarfile.open(target, mode, dereference=True) as tar:
+        for rel in sorted(files, key=PurePosixPath):
+            tar.add(files[rel], arcname=f"{title}/{rel}", recursive=False, filter=_root_owned)
+            size = files[rel].stat().st_size
+            done += size
+            if size > 1_000_000:
+                log(f"  [{100 * done / total:3.0f}%] {rel}")
+
+
 def make_bundle(p: Platform, services: list[Manifest], out_dir: Path, with_images: bool, name: str | None = None, *,
                 with_weights: bool = False, platform_tree: bool = False, log: Log = print) -> Path:
-    """The bundle as one tarball in out_dir (uncompressed when it holds images or weights)."""
+    """The bundle as one tarball in out_dir (uncompressed when it holds images or weights). Only the generated
+    files and the docker save are staged in a temporary folder: the weights go into the tarball from where
+    they are, so they are not written to disk twice."""
     title = bundle_name(services, name)
     big = with_images or with_weights
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -395,17 +422,14 @@ def make_bundle(p: Platform, services: list[Manifest], out_dir: Path, with_image
     with tempfile.TemporaryDirectory(dir=out_dir) as tmp:
         root = Path(tmp) / title
         write_bundle(p, services, root, with_images=with_images, with_weights=with_weights,
-                     platform_tree=platform_tree, title=title, log=log)
-        with tarfile.open(target, "w" if big else "w:gz") as tar:
-            for f in sorted(root.rglob("*")):
-                if not f.is_file():
-                    continue
-                info = tar.gettarinfo(str(f), arcname=f"{title}/{f.relative_to(root).as_posix()}")
-                info.uid = info.gid = 0
-                info.uname = info.gname = ""
-                info.mode = 0o644
-                with open(f, "rb") as fh:
-                    tar.addfile(info, fh)
+                     platform_tree=platform_tree, title=title, log=log, stage_weights=False)
+        files = {f.relative_to(root).as_posix(): f for f in root.rglob("*") if f.is_file()}
+        if with_weights:
+            files |= {f"assets/{w.path}/{rel}": src for s in services if (w := weights_of(p, s))
+                      for rel, src in w.files.items()}
+        part = Path(tmp) / target.name  # in out_dir, so the rename below stays on one filesystem
+        write_tar(part, "w" if big else "w:gz", title, files, log)
+        os.replace(part, target)  # a failed or stopped run leaves the tarball that was there before
     return target
 
 

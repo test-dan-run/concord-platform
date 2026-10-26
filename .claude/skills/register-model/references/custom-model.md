@@ -196,8 +196,8 @@ gpu:
   vram_gb: N                        # measured peak, rounded up; omit the gpu block for CPU-only
 batch:                              # GPU only, when the defaults measure the wrong thing (see Batching)
   max_item_s: 30                    # longer audio is cut into 30 s pieces that run as separate batch rows
-profiles: [<profile>]
 description: "..."
+tasks: [<task>, ...]                # kebab-case, from the model card (voice-activity-detection, ...)
 build:
   context: custom/<name>
   image: "{registry}/<name>:0.1.0"
@@ -222,9 +222,10 @@ signature:                          # oip-v2 only
   apps can switch between them. Speech enhancement uses the batch signature of `deepfilternet3`,
   `nemotronlabs-re-use` and `wpe-dereverb`: `AUDIO` [-1, -1] + `LENGTHS` + `SAMPLE_RATE` in, and the
   same three out, with each row at the rate and length of its input (the catalog fails a length more
-  than 10 ms off). The output signature is what makes the catalog verify it as an enhancer. A batch
-  `AUDIO` input needs a nested `example` (one short row) and a `LENGTHS` example, or conformance
-  sends a 16000 x 16000 array of zeros.
+  than 10 ms off). The output signature is what makes the catalog verify it as an enhancer. Give a
+  batch `AUDIO` input a nested `example` (one short row) and a `LENGTHS` example, as those services
+  do, so conformance sends a short clip. Without them, conformance sends one row of 16000 zeros and
+  sets `LENGTHS` from it.
 - `gpu` takes `vram_gb` only (never `util`). It is the least memory the service needs to load (the
   measured peak, rounded up), and at run time the service gets the whole GPU.
 
@@ -235,7 +236,7 @@ just test                 # in-process conformance with the fake model
 just validate && just vram <name> && just render
 just fetch-weights <name> # only if the user agreed to download
 just build <name>         # builds the base image too if it is missing
-just up <profile> && just conform <name>
+just up <name> && just conform <name>
 just batch-profile <name> --wait  # GPU only, after catalog registration; leases the model
 just batch <name>                 # the limits the next start gets
 ```

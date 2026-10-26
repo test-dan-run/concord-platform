@@ -14,6 +14,7 @@ from itertools import islice
 
 import numpy as np
 from aisvc import DynamicBatcher, Limits, MicroBatcher, create_openai_app
+from aisvc.batch import free_cuda_cache
 
 from .meralion import CHUNK_MS, SR, Meralion3Asr, chunks, decode_audio, join
 
@@ -25,9 +26,25 @@ def build_app(model: Meralion3Asr | None = None):
     # Chunks in batches within AISVC_MAX_BATCH / AISVC_MAX_BATCH_LEN (ms; every chunk counts as a full 30 s window)
     pieces = MicroBatcher(model.transcribe_batch, length=lambda x: CHUNK_MS, name="transcribe")
 
-    def files(group: list[list[np.ndarray]]) -> list[str]:
-        texts = iter(pieces([c for f in group for c in f]))
-        return [join(islice(texts, len(f))) for f in group]
+    def one(f: list[np.ndarray]) -> str | Exception:
+        try:
+            return join(pieces(f))
+        except Exception as exc:  # this file's own error, raised in its own request below
+            return exc.with_traceback(None)
+
+    def files(group: list[list[np.ndarray]]) -> list[str | Exception]:
+        """Text of each file, or its error. A failed batch runs again file by file, so only the file that fails gets
+        its error, and an out of memory error never reaches (and never lowers) the batcher of requests below."""
+        try:
+            texts = iter(pieces([c for f in group for c in f]))
+            return [join(islice(texts, len(f))) for f in group]
+        except Exception as exc:
+            failed = exc.with_traceback(None)
+        if len(group) == 1:
+            return [failed]
+        # Outside the except block, so the failed batch's tensors are freed before the files run again
+        free_cuda_cache()
+        return [one(f) for f in group]
 
     # Requests within AISVC_BATCH_WAIT_MS of each other share one call. The model takes no options, so every
     # request can share; the limits apply to the chunks above, not to the number of requests.
@@ -35,6 +52,9 @@ def build_app(model: Meralion3Asr | None = None):
 
     def handler(req):
         x = decode_audio(req.file)  # here, so a bad file fails only its own request
-        return {"task": "transcribe", "language": None, "duration": round(len(x) / SR, 3), "text": transcribe(chunks(x))}
+        text = transcribe(chunks(x))
+        if isinstance(text, Exception):
+            raise text
+        return {"task": "transcribe", "language": None, "duration": round(len(x) / SR, 3), "text": text}
 
     return create_openai_app(NAME, "audio.transcriptions", handler, load=model.load)

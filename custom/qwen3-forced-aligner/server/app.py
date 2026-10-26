@@ -7,8 +7,8 @@
     timestamps), ROWS INT32 [-1] (the input row each word belongs to; the words of row 0 come first, then row 1, ...)
 
 WORDS are the transcript's words as the aligner tokenises them (punctuation dropped, apostrophes kept; Chinese
-characters one by one). Each row is at most 180 s. Rows are sorted by length and aligned in padded batches within
-AISVC_MAX_BATCH / AISVC_MAX_BATCH_LEN (ms of audio).
+characters one by one). Each row is at most 180 s; a row under 0.1 s gets no words. Rows are sorted by length and
+aligned in padded batches within AISVC_MAX_BATCH / AISVC_MAX_BATCH_LEN (ms of audio).
 
 The single-clip request of 0.1.0 still works: AUDIO [-1] without LENGTHS, with TEXT and LANGUAGE [1], runs as one
 row and gets the 0.1.0 outputs (WORDS, TIMES, SCORES; no ROWS unless asked for).

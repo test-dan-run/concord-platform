@@ -5,13 +5,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, notFound } from "../lib/api";
 import { appLabel, packageUrl, parentLabel, plural, takesAudio, versionPath, type Comparison, type Dataset, type Version } from "../lib/datasets";
 import { ago, hours, num } from "../lib/format";
 import * as I from "../components/icons";
 import { ConfirmDelete, UseList } from "../components/dataset";
 import { TagInput } from "../components/TagInput";
-import { Button, Chip, Empty, ErrorNote, Fact, LinkButton, PageHeader, Panel, Spinner } from "../components/ui";
+import { Button, Chip, Empty, ErrorNote, Fact, inputClass, LinkButton, PageHeader, Panel, Spinner } from "../components/ui";
 import { LabelNames, LabelTypeChips } from "./DatasetsPage";
 
 const small = "inline-flex items-center gap-1.5 min-h-8 px-2.5 rounded-md text-xs no-underline border border-line !text-fg hover:bg-track";
@@ -143,17 +143,16 @@ function Details({ d }: { d: Dataset }) {
   });
   const changed = name.trim() !== d.name || description.trim() !== (d.description ?? "") || tags.join() !== d.tags.join();
   const uses = (d.versions ?? []).flatMap((v) => v.uses.map((u) => ({ ...u, n: v.n })));
-  const input = "min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg";
   return (
     <>
       <Panel title="Details">
         <label className="flex flex-col gap-1.5 text-xs text-muted">
           Name
-          <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
+          <input value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
         </label>
         <label className="flex flex-col gap-1.5 text-xs text-muted">
           Description
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${input} py-2 resize-y`} />
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inputClass} py-2 resize-y`} />
         </label>
         <TagInput value={tags} onChange={setTags} pool={(all.data ?? []).flatMap((x) => x.tags)} placeholder="e.g. call-centre, en-SG" />
         <ErrorNote error={save.error} />
@@ -196,7 +195,7 @@ export function DatasetDetail() {
   const { id = "" } = useParams();
   const q = useQuery({ queryKey: ["dataset", id], queryFn: () => api.get<Dataset>(`/datasets/${id}`), retry: false });
   if (q.isLoading) return <Spinner />;
-  if (!q.data)
+  if (!q.data || notFound(q.error))
     return (
       <>
         <PageHeader crumbs={<Link to="/datasets">Datasets</Link>} title="Dataset not found" />

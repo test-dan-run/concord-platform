@@ -17,6 +17,7 @@ import httpx
 from aicore.catalog import DEFAULT_URL, catalog_url
 
 from ..db import iso
+from . import DatasetError
 from .store import AudioStore
 
 GRACE_S = 24 * 3600.0
@@ -42,12 +43,15 @@ def candidates(store: AudioStore, now: float | None = None) -> list[dict[str, An
     return out
 
 
-def collect(store: AudioStore, dry_run: bool = True) -> dict[str, Any]:
+def collect(store: AudioStore, dry_run: bool = True, *, expect_files: int | None = None) -> dict[str, Any]:
     """{"dry_run", "files", "bytes", "sample"}: what clean-up deletes, or would delete on a dry run. The rules are
-    checked again under the store's lock, so a publish running at the same time keeps its audio."""
+    checked again under the store's lock, so a publish running at the same time keeps its audio. With
+    `expect_files` (the count a dry run showed), a real run that finds more deletes nothing: 409 gc_changed."""
     with store.lock:
         found = candidates(store)
         if not dry_run:
+            if expect_files is not None and len(found) > expect_files:
+                raise DatasetError(409, "clean-up found more files than the check showed: check again", "gc_changed")
             for r in found:
                 store.remove(r["sha256"])
     return {"dry_run": dry_run, "files": len(found), "bytes": sum(r["size"] for r in found),
@@ -55,11 +59,11 @@ def collect(store: AudioStore, dry_run: bool = True) -> dict[str, Any]:
 
 
 def _size(n: float) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024 or unit == "GB":
+    for unit in ("B", "KB", "MB"):
+        if n < 1024:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
-    return f"{n:.1f} TB"
+    return f"{n:.1f} GB"
 
 
 def main(argv: list[str] | None = None) -> int:

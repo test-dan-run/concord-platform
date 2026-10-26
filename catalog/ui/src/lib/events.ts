@@ -4,6 +4,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+/** The query families each event refreshes. */
+const EVENTS: Record<string, string[]> = {
+  // A model started or stopped: the Batching panel shows the limits the running service started with.
+  model: ["models", "model", "platform", "batch"],
+  lease: ["leases", "models", "model"],
+  queue: ["leases", "platform"],
+  export: ["exports"],
+  // A dataset was made, edited, published to or deleted. Version files, references and comparisons never
+  // change, so their queries ("version-files", "refs", "compare") aren't touched.
+  dataset: ["datasets", "dataset", "store-stats"],
+};
+
 export function useCatalogEvents(): boolean {
   const qc = useQueryClient();
   const [live, setLive] = useState(false);
@@ -20,15 +32,19 @@ export function useCatalogEvents(): boolean {
       timer ??= setTimeout(flush, 400);
     };
     const es = new EventSource("/api/events");
-    es.onopen = () => setLive(true);
-    es.onerror = () => setLive(false);
-    es.addEventListener("model", () => touch("models", "model", "platform"));
-    es.addEventListener("lease", () => touch("leases", "models", "model"));
-    es.addEventListener("queue", () => touch("leases", "platform"));
-    es.addEventListener("export", () => touch("exports"));
-    // A dataset was made, edited, published to or deleted. Version files, references and comparisons never
-    // change, so their queries ("version-files", "refs", "compare") aren't touched.
-    es.addEventListener("dataset", () => touch("datasets", "dataset", "store-stats"));
+    // Events sent while the stream was down are lost, and a new stream starts with a model event per model only,
+    // so after a reconnect every query the events refresh is refreshed.
+    let dropped = false;
+    es.onopen = () => {
+      setLive(true);
+      if (dropped) touch(...Object.values(EVENTS).flat());
+      dropped = false;
+    };
+    es.onerror = () => {
+      setLive(false);
+      dropped = true;
+    };
+    for (const [type, keys] of Object.entries(EVENTS)) es.addEventListener(type, () => touch(...keys));
     return () => {
       es.close();
       if (timer) clearTimeout(timer);

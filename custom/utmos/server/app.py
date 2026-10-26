@@ -6,6 +6,7 @@ The batch signature matches dnsmos (minus its SIG/BAK outputs), so callers can s
 
 from __future__ import annotations
 
+import math
 import os
 
 import numpy as np
@@ -40,6 +41,11 @@ def build_app(model: Utmos | None = None):
         sr = int(inputs["SAMPLE_RATE"].reshape(-1)[0])
         if sr < 8000:
             raise ValueError(f"SAMPLE_RATE must be at least 8000, got {sr}")
+        # The model resamples with torchaudio, whose filter grows with sr / gcd(sr, 16000): 44100 gives 441 and
+        # takes 244 MB, 44101 takes 11.7 GB. Every common rate (8k to 192k, 11025, 22050, 44100 ...) is at most 441.
+        if sr // math.gcd(sr, 16000) > 1000:
+            raise ValueError(f"SAMPLE_RATE {sr} is not supported: resampling it to 16 kHz needs too much memory; "
+                             "use a common rate such as 16000, 44100 or 48000")
         if audio.shape[0] != len(lengths):
             raise ValueError(f"AUDIO has {audio.shape[0]} rows but LENGTHS has {len(lengths)} entries")
         if np.any(lengths <= 0) or np.any(lengths > audio.shape[1]):

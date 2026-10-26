@@ -7,7 +7,7 @@ Rules (`server/normalize.py`):
 
 1. Unicode NFKC normalisation
 2. collapse runs of whitespace, trim
-3. capitalise the first letter of each sentence
+3. capitalise the first letter of each sentence, in any script that has capitals, using its titlecase form (`élan` becomes `Élan`, `ß` becomes `Ss`)
 4. add terminal punctuation when missing: `?` when the last sentence opens with a question word
    or auxiliary (`how`, `what`, `are`, `can`, ...), otherwise `.`
 

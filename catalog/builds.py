@@ -1,7 +1,8 @@
 """Current build of each model: image id + config hash + weights hash -> build key (tools/identity.py).
 
 Weights folders are hashed by content once, in a background thread, and cached by a quick
-fingerprint (path, size, mtime of each file); until that hash exists the build key is None.
+fingerprint (path, size, mtime of each file); until that hash exists the build key is None. A custom
+image's weights.yaml is hashed from its parsed contents, again only when its mtime or size changes.
 """
 
 from __future__ import annotations
@@ -85,6 +86,8 @@ class WeightsHasher:
                     log.info("hashed weights %s in %.1fs", path, time.monotonic() - t0)
             except OSError as exc:
                 log.warning("cannot hash weights %s: %s", path, exc)
+            except Exception:  # noqa: BLE001 - e.g. a locked database: keep hashing the other folders
+                log.exception("cannot hash weights %s", path)
             finally:
                 with self._lock:
                     self._queued.discard(str(path))
@@ -95,6 +98,21 @@ class Builds:
         self.db = db
         self.runtime = runtime
         self.hasher = WeightsHasher(db)
+        self._yaml: dict[Path, tuple[tuple[int, int], str]] = {}  # weights.yaml -> ((mtime_ns, size), hash)
+        self._yaml_lock = threading.Lock()
+
+    def _yaml_hash(self, path: Path) -> str:
+        """identity.weights_yaml_hash, cached until the file's mtime or size changes: every tick asks for it."""
+        st = path.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+        with self._yaml_lock:
+            hit = self._yaml.get(path)
+        if hit and hit[0] == stamp:
+            return hit[1]
+        h = identity.weights_yaml_hash(path)
+        with self._yaml_lock:
+            self._yaml[path] = (stamp, h)
+        return h
 
     def weights_hash(self, p: Platform, s: Manifest) -> tuple[str | None, str | None]:
         """(hash, why it is missing)."""
@@ -103,7 +121,7 @@ class Builds:
             return "none", None
         assert src.path is not None
         if src.kind == "yaml":
-            return identity.weights_yaml_hash(src.path), None
+            return self._yaml_hash(src.path), None
         if not src.path.is_dir():
             return None, f"weights folder {src.path} not found"
         h = self.hasher.get(src.path)

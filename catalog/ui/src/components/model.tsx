@@ -59,7 +59,8 @@ export function CapabilityChips({ c }: { c: Capabilities | null }) {
   );
 }
 
-const GLYPH: Record<string, { c: string; t: string }> = {
+/** The mark and colour of a check line's status. */
+export const GLYPH: Record<string, { c: string; t: string }> = {
   pass: { c: "text-good", t: "✓" },
   warn: { c: "text-warn", t: "!" },
   fail: { c: "text-bad", t: "✕" },

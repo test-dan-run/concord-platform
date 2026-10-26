@@ -149,7 +149,7 @@ def conformance(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> None:
         except AssertionError as exc:
             failed += 1
             rep.add(f"contract: {check.__name__}", "fail", _short(str(exc) or "assertion failed"))
-        except httpx.HTTPError as exc:
+        except Exception as exc:  # noqa: BLE001 - an HTTP error, a reply that is not JSON: one failed line each
             failed += 1
             rep.add(f"contract: {check.__name__}", "fail", f"{type(exc).__name__}: {_short(str(exc))}")
     rep.conformance_ok = failed == 0
@@ -278,6 +278,9 @@ def probe_segmenter(rep: Report, http: httpx.Client, meta: dict[str, Any]) -> No
         return
     rep.latency_s = time.perf_counter() - t0
     rep.add("request", "pass", f"infer accepted ({rep.latency_s:.2f} s)")
+    if "SEGMENTS" not in out:
+        rep.add("segments", "fail", "no SEGMENTS output returned")
+        return
     dur = len(audio) / 16000
     segs = np.asarray(out["SEGMENTS"], dtype=float).reshape(-1, 2).round(4).tolist()
     speakers = np.asarray(out["SPEAKERS"]).reshape(-1).astype(int).tolist() if "SPEAKERS" in out else None
@@ -444,6 +447,26 @@ ROUTES = {"audio.transcriptions": "/v1/audio/transcriptions", "chat.completions"
           "text.transform": "/v1/text/transform", "text.itn": "/v1/text/itn"}
 
 
+def _probe(rep: Report, client: httpx.Client, meta: dict[str, Any]) -> None:
+    """The capability probe for rep.usable_as."""
+    if rep.usable_as == "asr":
+        probe_asr(rep, client, meta)
+    elif rep.usable_as == "chat-audio":
+        first = len(rep.lines)
+        probe_chat_audio(rep, client, meta)
+        if not rep.tasks and meta.get("audio_optional"):  # hosted chat: a text model is still a model
+            rep.lines[first:] = [x if x.status != "fail" else Line(x.name, "info", x.reason) for x in rep.lines[first:]]
+            rep.add("audio", "info", "no audio capability: verified as a text model")
+            rep.usable_as = None
+            rep.latency_s = None
+    elif rep.usable_as == "segmenter":
+        probe_segmenter(rep, client, meta)
+    elif rep.usable_as == "enhancer":
+        probe_enhancer(rep, client, meta)
+    elif rep.usable_as == "itn":
+        probe_itn(rep, client, meta)
+
+
 def verify(meta: dict[str, Any], base_url: str, http: httpx.Client | None = None) -> Report:
     """Run every check against the service at base_url (its root URL). meta is the endpoint-map entry."""
     rep = Report(meta["name"], usable_as(meta))
@@ -451,22 +474,11 @@ def verify(meta: dict[str, Any], base_url: str, http: httpx.Client | None = None
     rep.protocol = {"contract": meta["contract"], "api": meta["api"], "routes": [route] if route else []}
     with http or httpx.Client(base_url=base_url, timeout=TIMEOUT_S) as client:
         conformance(rep, client, meta)
-        if rep.usable_as == "asr":
-            probe_asr(rep, client, meta)
-        elif rep.usable_as == "chat-audio":
-            first = len(rep.lines)
-            probe_chat_audio(rep, client, meta)
-            if not rep.tasks and meta.get("audio_optional"):  # hosted chat: a text model is still a model
-                rep.lines[first:] = [x if x.status != "fail" else Line(x.name, "info", x.reason) for x in rep.lines[first:]]
-                rep.add("audio", "info", "no audio capability: verified as a text model")
-                rep.usable_as = None
-                rep.latency_s = None
-        elif rep.usable_as == "segmenter":
-            probe_segmenter(rep, client, meta)
-        elif rep.usable_as == "enhancer":
-            probe_enhancer(rep, client, meta)
-        elif rep.usable_as == "itn":
-            probe_itn(rep, client, meta)
+        try:
+            _probe(rep, client, meta)
+        except Exception as exc:  # noqa: BLE001 - a crashed probe is one failed line; the lines before it stay
+            rep.tasks.clear()
+            rep.add("probe", "fail", f"the {rep.usable_as} probe crashed: {type(exc).__name__}: {_short(str(exc))}")
     if rep.usable_as and not rep.tasks:
         rep.add("result", "fail", f"no {rep.usable_as} capability detected")
     elif rep.tasks:

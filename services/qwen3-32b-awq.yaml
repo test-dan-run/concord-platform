@@ -9,8 +9,8 @@ model: /models/qwen3-32b-awq
 port: 8202
 gpu:
   util: 0.85                       # 27.1 GiB: 18.0 GB AWQ weights + ~1.5 GB overhead + ~8.7 GiB KV (~35k tokens at 256 KB/token)
-  # 0.90 -> 0.85 on 2026-10-24: the catalog starts a model only when util x 31.84 GiB + 0.5 GiB is free, and
-  # ~1.9 GiB of the 5090 is used outside the platform (WSL/desktop), so 0.90 had ~0.8 GiB to spare.
+  # 0.90 -> 0.85 on 2026-10-24: the catalog starts a model only when util x 31.84 GiB + 1.0 GiB is free, and
+  # ~1.9 GiB of the 5090 is used outside the platform (WSL/desktop), so 0.90 had ~0.3 GiB to spare (0.85: ~1.9 GiB).
 args:
   - --max-model-len=16384
 description: "Heavy chat, Qwen3 32B AWQ 4-bit; runs alone"

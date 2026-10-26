@@ -6,7 +6,7 @@ import * as I from "../components/icons";
 import { AuthFields, body, contractOf, EndpointFields, TestLines, type Auth, type Endpoint } from "../components/hosted";
 import { gpuLabel, StateCell } from "../components/model";
 import { TagInput } from "../components/TagInput";
-import { Button, Chip, cx, Empty, ErrorNote, Fact, PageHeader, Panel, Select, Spinner } from "../components/ui";
+import { Button, Chip, cx, Empty, ErrorNote, Fact, inputClass, PageHeader, Panel, Select, Spinner } from "../components/ui";
 
 const GROUPS = [
   { key: "speech", title: "Speech models", note: "ASR, VAD, diarisation and speech enhancement: verified with a capability probe on the check clip" },
@@ -47,7 +47,8 @@ export function AddModel() {
   const name = params.get("name");
   const all = useQuery({ queryKey: ["models", "all"], queryFn: () => api.get<Model[]>("/models?all=1") });
   const [q, setQ] = useState("");
-  const entry = all.data?.find((m) => m.id === name) ?? null;
+  const services = (all.data ?? []).filter((m) => !m.hosted); // ?all=1 lists the hosted endpoints too
+  const entry = services.find((m) => m.id === name) ?? null;
   const hosted = params.get("source") === "hosted";
   const pick = (source: "platform" | "hosted") => setParams(source === "hosted" ? { source } : {});
 
@@ -81,7 +82,7 @@ export function AddModel() {
           {all.isLoading && <Spinner />}
           <ErrorNote error={all.error} />
           {GROUPS.map((g) => {
-            const items = (all.data ?? []).filter((m) => group(m) === g.key && (!q || `${m.id} ${m.aliases.join(" ")} ${m.description ?? ""} ${m.tasks.join(" ")}`.toLowerCase().includes(q.toLowerCase())));
+            const items = services.filter((m) => group(m) === g.key && (!q || `${m.id} ${m.aliases.join(" ")} ${m.description ?? ""} ${m.tasks.join(" ")}`.toLowerCase().includes(q.toLowerCase())));
             if (!items.length) return null;
             return (
               <div key={g.key} className="flex flex-col gap-1">
@@ -171,7 +172,7 @@ function EntryForm({ entry, models, onAdded }: { entry: Model; models: Model[]; 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5 text-xs text-muted">
               Display name
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={entry.id} className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg" />
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={entry.id} className={inputClass} />
             </label>
             <Select label="Derived from" value={parent} onChange={(e) => setParent(e.target.value)} className="!min-h-10 flex-1">
               <option value="">None</option>
@@ -214,7 +215,13 @@ function HostedForm({ models, onAdded }: { models: Model[]; onAdded: (m: Model) 
   const [ack, setAck] = useState(false);
   const [tested, setTested] = useState<ConnectionTest | null>(null);
   const c = contractOf(ep.contract);
-  const test = useMutation({ mutationFn: () => api.post<ConnectionTest>("/hosted/test", body(ep, auth)), onSuccess: setTested });
+  const test = useMutation({
+    mutationFn: (sent: ReturnType<typeof body>) => api.post<ConnectionTest>("/hosted/test", sent),
+    // An edit while the test ran clears it, so keep the answer only if the inputs are still the ones it tested.
+    onSuccess: (r, sent) => {
+      if (JSON.stringify(sent) === JSON.stringify(body(ep, auth))) setTested(r);
+    },
+  });
   const add = useMutation({
     mutationFn: () => api.post<Model>("/hosted", { ...body(ep, auth), id: id.trim(), display_name: displayName.trim() || null, tags, parent_id: parent || null, data_leaves_network: ack }),
     onSuccess: onAdded,
@@ -252,11 +259,11 @@ function HostedForm({ models, onAdded }: { models: Model[]; onAdded: (m: Model) 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5 text-xs text-muted">
               Catalog name
-              <input value={id} onChange={(e) => setId(e.target.value.toLowerCase())} placeholder="e.g. hosted-asr-whisper-1" className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg num" />
+              <input value={id} onChange={(e) => setId(e.target.value.toLowerCase())} placeholder="e.g. hosted-asr-whisper-1" className={`${inputClass} num`} />
             </label>
             <label className="flex flex-col gap-1.5 text-xs text-muted">
               Display name
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={id || "optional"} className="min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg" />
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={id || "optional"} className={inputClass} />
             </label>
             <Select label="Derived from" value={parent} onChange={(e) => setParent(e.target.value)} className="!min-h-10 flex-1">
               <option value="">None</option>
@@ -279,7 +286,7 @@ function HostedForm({ models, onAdded }: { models: Model[]; onAdded: (m: Model) 
           {tested && <TestLines lines={tested.lines} />}
           {!tested && !test.isPending && <span className="text-[13px] text-muted">Not tested yet. A test sends one small request with the key; it does not run the check clip.</span>}
           <ErrorNote error={test.error} />
-          <Button disabled={!canTest || test.isPending} onClick={() => test.mutate()}>Test connection</Button>
+          <Button disabled={!canTest || test.isPending} onClick={() => test.mutate(body(ep, auth))}>Test connection</Button>
         </Panel>
         <Panel title="Verification" subtitle="Runs after adding, daily, and on demand">
           <span className="text-[13px] text-muted leading-relaxed">{c.verify}</span>

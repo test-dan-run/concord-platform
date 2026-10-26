@@ -12,7 +12,8 @@ utterance window of the dry tracks against its `text_norm`.
 - Outputs: `WORDS` BYTES `[-1]` (the aligner's tokens: punctuation dropped, apostrophes kept, Chinese characters
   one by one), `TIMES` FP32 `[-1, 2]` (start and end in seconds within the row's clip, non-decreasing within a row),
   `SCORES` FP32 `[-1]` (0 to 1), and `ROWS` INT32 `[-1]`, the input row that each word belongs to. The words of
-  row 0 come first, then the words of row 1, and so on. A row whose transcript has no words has no entries.
+  row 0 come first, then the words of row 1, and so on. A row whose transcript has no words has no entries, and
+  so does a row under 0.1 s: it is too short to align, and the model is not run on it.
 - Timestamps come in 80 ms steps.
 - Batching: the server sorts the rows by length and aligns them in padded batches of at most `AISVC_MAX_BATCH`
   rows (8 when unset) and `AISVC_MAX_BATCH_LEN` milliseconds of padded audio. Each row is prepared on its own, the

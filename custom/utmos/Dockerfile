@@ -1,6 +1,6 @@
 # utmos: OIP v2 speech naturalness (UTMOS22 strong learner) on CPU. Weights and model code are mounted at
 # /models, never baked in.
-ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
 FROM ${BASE_IMAGE}
 
 # CPU-only torch wheels (the py-cpu base has no torch); torchaudio 2.11 is the last release, so torch matches it.

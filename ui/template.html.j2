@@ -120,7 +120,7 @@ footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
     <span class="sub" id="summary"></span>
   </header>
 
-  <section class="panel" aria-label="VRAM by service">
+  <section class="panel" aria-label="Minimum GPU memory to load, by service">
     <div class="vram" id="vram"></div>
     <div class="legend" id="legend"></div>
   </section>
@@ -174,8 +174,8 @@ footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
   const segColors = ["--seg-1", "--seg-2", "--seg-3", "--seg-4", "--seg-5", "--seg-6"];
   const vramEl = $("#vram");
   DATA.gpu.forEach((g, i) => {
-    const bar = el("div", { class: "bar", role: "img", "aria-label": `${g.name}: ${fmtGB(g.gb)} of ${DATA.gpu_total_gb} GB` });
-    const seg = el("div", { class: "seg", title: `${g.name}: ${fmtGB(g.gb)} (${g.fraction.toFixed(3)})` });
+    const bar = el("div", { class: "bar", role: "img", "aria-label": `${g.name}: needs at least ${fmtGB(g.gb)} of ${DATA.gpu_total_gb} GB to load` });
+    const seg = el("div", { class: "seg", title: `${g.name}: minimum to load ${fmtGB(g.gb)} (${g.fraction.toFixed(3)})` });
     seg.style.width = (Math.min(g.fraction, 1) * 100) + "%";
     seg.style.background = `var(${segColors[i % segColors.length]})`;
     const limit = el("div", { class: "limit", title: `util_limit ${DATA.util_limit}` });
@@ -186,8 +186,10 @@ footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
       el("div", { class: "vrow-num", text: `${fmtGB(g.gb)} · ${g.fraction.toFixed(3)}` })));
   });
   const cpuCount = DATA.services.length - DATA.gpu.length;
-  $("#legend").textContent = `Bar = ${DATA.gpu_total_gb} GB; the marker is util_limit ${DATA.util_limit}. ` +
-    `Any services can run together if their shares add up to no more than the limit (check with \`just vram NAME...\`). ` +
+  $("#legend").textContent = `Each bar is ${DATA.gpu_total_gb} GB wide, and its fill is the minimum GPU memory the service ` +
+    `needs to load; the marker is util_limit ${DATA.util_limit}. ` +
+    `Only one GPU service runs at a time: it gets the GPU memory free at its start less 1 GiB, up to the limit, and CPU ` +
+    `services run next to it (check a set with \`just vram NAME...\`). ` +
     `${cpuCount} more services run on CPU.`;
 
   // ---------------------------------------------------------------- filters
@@ -220,7 +222,7 @@ footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
     const kv = el("dl", { class: "kv" },
       el("dt", { text: "Port" }), el("dd", { class: "mono", text: String(s.port) }),
       el("dt", { text: "Base URL" }), el("dd", {}, el("span", { class: "inline" }, el("code", { text: s.base_url }), copyBtn(s.base_url))),
-      el("dt", { text: "VRAM" }), el("dd", { text: s.gpu ? `${fmtGB(s.gpu.gb)} (${s.gpu.source === "util" ? "util " : ""}${s.gpu.fraction.toFixed(3)})` : "CPU" }),
+      el("dt", { text: "GPU (minimum to load)" }), el("dd", { text: s.gpu ? `${fmtGB(s.gpu.gb)} (${s.gpu.source === "util" ? "util " : ""}${s.gpu.fraction.toFixed(3)})` : "CPU" }),
       s.model ? el("dt", { text: "Model" }) : null, s.model ? el("dd", { class: "mono", text: s.model }) : null,
       el("dt", { text: "Image" }), el("dd", { class: "mono", text: s.image }),
     );

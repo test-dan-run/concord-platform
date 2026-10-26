@@ -1,5 +1,5 @@
 # deepfilternet3: OIP v2 speech denoising on CPU. The deep-filter binary and model are mounted at /models, never baked in.
-ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.1.1
+ARG BASE_IMAGE=ghcr.io/owner/py-cpu-base:0.2.0
 FROM ${BASE_IMAGE}
 
 COPY requirements.txt /app/requirements.txt

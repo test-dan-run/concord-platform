@@ -22,7 +22,7 @@ images and video. A vision language model (VLM) is a chat model that can also re
 
 | Service | Alias | Kind | Engine | Contract / API | Port | GPU |
 |---|---|---|---|---|---|---|
-| qwen3-8b | default-chat | model | vllm | openai / chat.completions | 8201 | util 0.35 |
+| qwen3-8b | default-chat | model | vllm | openai / chat.completions | 8201 | util 0.48 |
 | qwen3-32b-awq | heavy-chat | model | vllm | openai / chat.completions | 8202 | util 0.85 |
 | qwen3-4b-instruct-2507 | fast-chat | model | vllm | openai / chat.completions | 8203 | util 0.25 |
 | qwen2-5-14b-instruct-awq | mid-chat | model | vllm | openai / chat.completions | 8204 | util 0.45 |

@@ -5,7 +5,9 @@ utterance with it in stage 5 (MOS floor) and in the bake-off. `dnsmos` stays the
 
 - Contract: `oip-v2` / `infer`, port 8406, CPU.
 - Input: `AUDIO` FP32 `[-1, -1]` (clips zero-padded to one length), `LENGTHS` INT32 `[-1]`, `SAMPLE_RATE` INT32 `[1]`
-  (any rate of 8 kHz or more; the model resamples to 16 kHz).
+  (any common rate of 8 kHz or more, such as 16000, 22050, 44100 or 48000; the model resamples to 16 kHz).
+  A rate whose ratio to 16 kHz does not reduce to a small fraction (`sr / gcd(sr, 16000)` over 1000, such as 44101)
+  is a 400, because resampling it would take many GB of memory.
 - Output: `MOS` FP32 `[-1]`, about 1 to 5.
 - Weights: `just fetch-weights utmos` (406 MB, MIT). The model code (`modeling_*.py`) comes with the weights.
 - No request parameters. The model pads clips shorter than 400 samples (25 ms).

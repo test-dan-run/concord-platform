@@ -8,13 +8,15 @@ search works the same for both kinds.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
 
 from tools.schema import BASE_PATHS, Manifest, Platform
 
 from . import hosted as hosted_mod
-from .db import DB, iso, now_iso
+from .db import DB, from_iso, iso, now_iso
 from .hosted import CONTRACTS, Hosted, HostedStore
 from .scheduler import Scheduler, SchedulerError
 from .settings import Settings
@@ -49,10 +51,8 @@ class Registry:
     def register(self, model_id: str, display_name: str | None = None, tags: list[str] | None = None,
                  parent_id: str | None = None) -> dict[str, Any]:
         if model_id in self.hosted:  # always registered: only the fields change
-            return self.update(model_id, {"display_name": display_name, "tags": tags, "parent_id": parent_id})
-        p, s = self._manifest(model_id)
-        if s.vram_fraction(p.config.gpu_total_gb) > p.config.util_limit + 1e-9:
-            raise SchedulerError(422, f"{s.name} needs more GPU memory than this host has (util_limit {p.config.util_limit})")
+            return self.update(model_id, _given(display_name=display_name, tags=tags, parent_id=parent_id))
+        _, s = self._manifest(model_id)  # the schema already refused a model over util_limit
         if parent_id:
             parent_id = self._parent(parent_id)
         row = self.db.one("SELECT * FROM registration WHERE model_id = ?", (s.name,))
@@ -60,7 +60,7 @@ class Registry:
             self.db.execute("INSERT INTO registration (model_id, display_name, tags, parent_id, registered_at) "
                             "VALUES (?, ?, ?, ?, ?)", (s.name, display_name, json.dumps(_tags(tags)), parent_id, now_iso()))
         else:
-            self._update(s.name, display_name=display_name, tags=tags, parent_id=parent_id)
+            self._update(s.name, **_given(display_name=display_name, tags=tags, parent_id=parent_id))
         rec = self.record(s.name)
         if rec["capabilities"] is None or rec["capabilities"]["status"] == "stale":
             self.verifier.enqueue(s.name)
@@ -68,10 +68,9 @@ class Registry:
         return rec
 
     def _update(self, model_id: str, **fields: Any) -> None:
+        """Write every field given. None is NULL, and None tags are no tags."""
         sets, args = [], []
         for k, v in fields.items():
-            if v is None:
-                continue
             sets.append(f"{k} = ?")
             args.append(json.dumps(_tags(v)) if k == "tags" else v)
         if sets:
@@ -117,6 +116,14 @@ class Registry:
                                       f"not {h.contract} / {h.api}")
         if not h.base_url.startswith(("https://", "http://")):
             raise SchedulerError(422, "base_url must start with https:// (or http://)")
+        try:  # read as the records (urlsplit) and the gateway (httpx) read it, so a stored one never breaks them
+            u = urlsplit(h.base_url)
+            host, _ = u.hostname, u.port  # .port raises for a port that is not a number up to 65535
+            httpx.URL(h.base_url)
+        except (ValueError, httpx.InvalidURL) as exc:
+            raise SchedulerError(422, f"base_url is not a valid URL: {exc}") from None
+        if not host:
+            raise SchedulerError(422, "base_url must name a host, such as https://api.example.com/v1")
         if not h.model.strip():
             raise SchedulerError(422, "model (the provider's model name) must not be empty")
         if h.auth_type not in hosted_mod.AUTH_TYPES:
@@ -142,12 +149,14 @@ class Registry:
 
     def test_hosted(self, body: dict[str, Any]) -> dict[str, Any]:
         """POST /api/hosted/test: a connection test before saving. With `id` of an existing hosted model and no
-        key, the stored key is used (replacing a key tests the new one)."""
+        key, the stored key is used (replacing a key tests the new one), but only on the host it was stored for."""
         old = self.hosted.get(body.get("id") or "")
         h = self._spec(body.get("id") or "test", body, old)
         key = body.get("key")
         self._check_hosted(h, key)
-        if key is None and old is not None:
+        if key is None and old is not None and old.key_enc and h.auth_type != "none":
+            if not hosted_mod.same_host(h.base_url, old.base_url):  # the catalog has no API auth: never send it elsewhere
+                raise SchedulerError(422, "enter the key to test a different host")
             key = self.hosted.key(old)
         if h.auth_type != "none" and not key:
             raise SchedulerError(422, "the API key is required")
@@ -158,7 +167,9 @@ class Registry:
         if model_id not in self.hosted:
             raise SchedulerError(409, f"{model_id} is not a hosted endpoint; platform services are tested by verification")
         h = self._hosted(model_id)
-        result = hosted_mod.connection_test(self.hosted, h, self.hosted.key(h))
+        key = self.hosted.key(h)
+        self._check_hosted(h, key)  # a row saved before base_url was checked must not reach the test as a 500
+        result = hosted_mod.connection_test(self.hosted, h, key)
         self.db.execute("UPDATE hosted SET signature = COALESCE(?, signature) WHERE id = ?",
                         (json.dumps(result["signature"]) if result.get("signature") else None, h.id))
         self._last_test[h.id] = result
@@ -179,25 +190,27 @@ class Registry:
         self._check_hosted(h, key)
         if h.auth_type != "none" and not key:
             raise SchedulerError(422, "the API key is required")
+        parent = self._parent(body["parent_id"]) if body.get("parent_id") else None  # 404 before anything is stored
         if not self.hosted.keys.available:
             self.hosted.keys.encrypt("")  # raises KeyUnavailable: 503, naming the master key file
         if h.contract == "oip-v2":  # usable_as() needs the signature: take it from the provider's metadata
             test = hosted_mod.connection_test(self.hosted, h, key)
             if not test.get("signature"):
-                why = "; ".join(x["reason"] for x in test["lines"] if x["status"] == "fail") or "no signature"
-                raise SchedulerError(422, f"cannot read {h.model}'s OIP metadata from the provider: {why}")
+                raise SchedulerError(422, _no_metadata(h, test))
             h.signature = test["signature"]
         self.hosted.insert(h, key if h.auth_type != "none" else None)
         tags = body.get("tags")
         self.db.execute("INSERT OR REPLACE INTO registration (model_id, display_name, tags, parent_id, registered_at) "
                         "VALUES (?, ?, ?, ?, ?)", (model_id, body.get("display_name") or None, json.dumps(_tags(tags)),
-                                                   self._parent(body["parent_id"]) if body.get("parent_id") else None,
-                                                   now_iso()))
+                                                   parent, now_iso()))
         self.verifier.enqueue(model_id)
         return self.record(model_id)
 
     def update_hosted(self, model_id: str, body: dict[str, Any]) -> dict[str, Any]:
         old = self._hosted(model_id)
+        fields = {k: body[k] for k in ("display_name", "tags", "parent_id") if k in body}
+        if fields.get("parent_id"):  # an unknown parent is a 404 before anything is saved
+            fields["parent_id"] = self._parent(fields["parent_id"])
         h = self._spec(model_id, body, old)
         key = body.get("key")
         self._check_hosted(h, key)
@@ -208,14 +221,17 @@ class Registry:
                 raise SchedulerError(422, f"the new key did not pass the connection test: {why}")
         elif h.auth_type != "none" and not old.key_enc:
             raise SchedulerError(422, "the API key is required")
+        if h.contract != old.contract:  # an OIP signature does not carry over to another contract
+            h.signature = None
         if h.contract == "oip-v2" and (h.build_key != old.build_key or not h.signature):
             test = hosted_mod.connection_test(self.hosted, h, key or self.hosted.key(old))
-            if test.get("signature"):
-                h.signature = test["signature"]
+            h.signature = test.get("signature")  # a new build's own: the old model's says nothing about it
+            if not h.signature:  # like create: usable_as() needs the signature
+                raise SchedulerError(422, _no_metadata(h, test))
         self.hosted.update(h, key)
         if h.build_key != old.build_key:  # a new build: verify it; limits and keys keep the build
             self.verifier.enqueue(model_id)
-        return self.record(model_id)
+        return self.update(model_id, fields)  # the registration fields given, as PATCH /api/models/{id} writes them
 
     def delete_hosted(self, model_id: str) -> None:
         self._hosted(model_id)
@@ -314,7 +330,7 @@ class Registry:
         caps = self.capabilities(h.id, h.build_key)
         public = h.public()
         verified = (caps or {}).get("verified_at")
-        public["next_check_at"] = iso(_ts(verified) + self.settings.hosted_reverify_s) if verified else None
+        public["next_check_at"] = iso(from_iso(verified) + self.settings.hosted_reverify_s) if verified else None
         public["last_test"] = self._last_test.get(h.id)
         detail = None if self.hosted.keys.available or h.auth_type == "none" else \
             f"key unavailable: master key file {self.hosted.keys.path} is missing"
@@ -359,6 +375,16 @@ class Registry:
         return out
 
 
+def _no_metadata(h: Hosted, test: dict[str, Any]) -> str:
+    why = "; ".join(x["reason"] for x in test["lines"] if x["status"] == "fail") or "no signature"
+    return f"cannot read {h.model}'s OIP metadata from the provider: {why}"
+
+
+def _given(**fields: Any) -> dict[str, Any]:
+    """The fields that are not None: registering again leaves a field it was not given as it was."""
+    return {k: v for k, v in fields.items() if v is not None}
+
+
 def _tags(tags: list[str] | None) -> list[str]:
     seen: list[str] = []
     for t in tags or []:
@@ -366,7 +392,3 @@ def _tags(tags: list[str] | None) -> list[str]:
         if t and t not in seen:
             seen.append(t)
     return seen
-
-
-def _ts(value: str) -> float:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()

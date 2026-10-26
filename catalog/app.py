@@ -8,7 +8,6 @@ import json
 import logging
 import queue
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Query, Request
@@ -166,7 +165,8 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
         if start:
             cat.shutdown()
 
-    app = FastAPI(title="Model Catalog", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app = FastAPI(title="Model Catalog", lifespan=lifespan, docs_url="/api/docs", redoc_url=None,
+                  openapi_url="/api/openapi.json")
     app.state.catalog = cat
     sched, reg = cat.scheduler, cat.registry
 
@@ -190,15 +190,12 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     @app.get("/api/platform")
     def platform() -> dict[str, Any]:
         p = sched.platform()
-        with sched.lock:
-            # What each start was given (the whole GPU as measured), else the minimum to load.
-            held = {m: sched.runs[m].given or sched.frac(p, m) for m in sorted(sched._occupying(p))}
-            swaps = sched.swaps
+        held = sched.gpu_in_use(p)  # what each start was given (the whole GPU as measured), else the minimum to load
         return {"gpu_total_gb": p.config.gpu_total_gb, "util_limit": p.config.util_limit,
                 "reserve_gb": round((1 - p.config.util_limit) * p.config.gpu_total_gb, 2),
                 "used_fraction": round(sum(held.values()), 4),
                 "gpu_models": [{"id": m, "fraction": round(f, 4)} for m, f in held.items()],
-                "swaps": swaps, "platform_error": sched.platform_error}
+                "swaps": sched.swaps, "platform_error": sched.platform_error}
 
     @app.get("/api/models")
     def list_models(task: list[str] = Query(default=[]), tag: list[str] = Query(default=[]),
@@ -229,68 +226,62 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
         return rec["capabilities"] or {"status": "pending"}
 
     @app.get("/api/models/{model_id}/batch")
-    def batch(model_id: str, vram_gb: float | None = Query(default=None, gt=0),
-              item_s: float | None = Query(default=None, gt=0), item_tokens: int | None = Query(default=None, gt=0),
-              n: int | None = Query(default=None, ge=1)) -> dict[str, Any]:
+    def batch(model_id: str, vram_gb: float | None = Query(default=None, gt=0, le=10_000, allow_inf_nan=False),
+              item_s: float | None = Query(default=None, ge=0.001, le=86_400, allow_inf_nan=False),
+              item_tokens: int | None = Query(default=None, gt=0, le=10_000_000),
+              n: int | None = Query(default=None, ge=1, le=1_000_000)) -> dict[str, Any]:
         """The batch profile of the model's current build: the recommended batch for vram_gb (default: the full
         budget) and an item of item_s seconds (audio) or item_tokens tokens (vLLM), the memory batch `n` needs,
         and a table of lengths against 16, 24 and 32 GB and the full budget. For a custom GPU image, `limits` are
         the ones its next start gets at the full budget and `override` is what was set by hand. `running` is
-        what the running service started with and reports now."""
+        what the running service started with and reports now, and its `limits` are the ones a start with the
+        same memory gets now."""
         p = sched.platform()
-        try:
-            s = p.get(model_id)
-        except KeyError:
-            raise SchedulerError(404, f"unknown model {model_id!r}") from None
-        with sched.lock:
-            run = sched.runs.get(model_id)
-            bk = run.build.build_key if run and run.build else None
+        s = sched.manifest(model_id)
+        bk = sched.build_key(s.name)
         if bk is None:
             try:
-                bk = cat.builds.current(p, p.get(model_id), None).build_key
+                bk = cat.builds.current(p, s, None).build_key
             except Exception:  # noqa: BLE001
                 bk = None
         full = full_budget_gib(p, sched)
-        out = cat.profiler.view(model_id, bk, vram_gb=vram_gb, item_s=item_s, item_tokens=item_tokens, n=n,
+        out = cat.profiler.view(s.name, bk, vram_gb=vram_gb, item_s=item_s, item_tokens=item_tokens, n=n,
                                 full_gib=full)
         if s.gpu and s.engine == CUSTOM_ENGINE:
-            out["limits"] = cat.profiler.limits(model_id, bk, full)
-            out["override"] = cat.profiler.override(model_id)
+            out["limits"] = cat.profiler.limits(s.name, bk, full)
+            out["override"] = cat.profiler.override(s.name)
         out["running"] = cat.profiler.in_use(p, s)
+        if "limits" in out and out["running"] and out["running"]["vram_gb"]:
+            out["running"]["limits"] = cat.profiler.limits(s.name, bk, out["running"]["vram_gb"])
         return out
 
-    def _custom_gpu(model_id: str) -> None:
-        try:
-            s = sched.platform().get(model_id)
-        except KeyError:
-            raise SchedulerError(404, f"unknown model {model_id!r}") from None
+    def _custom_gpu(model_id: str) -> str:
+        """The model's name, or 409 unless it is a custom GPU image."""
+        s = sched.manifest(model_id)
         if not s.gpu or s.engine != CUSTOM_ENGINE:
-            raise SchedulerError(409, f"{model_id} is not a custom GPU image: the catalog does not set its batch "
+            raise SchedulerError(409, f"{s.name} is not a custom GPU image: the catalog does not set its batch "
                                       "limits" + (" (vLLM sizes its own batches)" if s.engine == "vllm" else ""))
+        return s.name
 
     @app.put("/api/models/{model_id}/batch-override")
     def set_batch_override(model_id: str, body: BatchOverrideIn) -> dict[str, Any]:
         """Set the batch limits by hand for the model's next starts (a limit left out stays measured)."""
-        _custom_gpu(model_id)
+        name = _custom_gpu(model_id)
         try:
-            return cat.profiler.set_override(model_id, body.max_batch, body.max_len_s)
+            return cat.profiler.set_override(name, body.max_batch, body.max_len_s)
         except ValueError as exc:
             raise SchedulerError(422, str(exc)) from None
 
     @app.delete("/api/models/{model_id}/batch-override", status_code=204)
     def clear_batch_override(model_id: str) -> Response:
-        _custom_gpu(model_id)
-        cat.profiler.clear_override(model_id)
+        cat.profiler.clear_override(_custom_gpu(model_id))
         return Response(status_code=204)
 
     @app.post("/api/models/{model_id}/batch-profile", status_code=202)
     def batch_profile(model_id: str) -> dict[str, Any]:
         """Measure the model's batch profile now (it leases the model and waits its turn)."""
-        try:
-            sched.platform().get(model_id)
-        except KeyError:
-            raise SchedulerError(404, f"unknown model {model_id!r}") from None
-        return {"model": model_id, "measuring": cat.profiler.enqueue(model_id)}
+        name = sched.manifest(model_id).name
+        return {"model": name, "measuring": cat.profiler.enqueue(name)}
 
     @app.get("/api/models/{model_id}/card")
     def model_card(model_id: str) -> dict[str, Any]:
@@ -323,17 +314,13 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
 
     @app.post("/api/models/{model_id}/start", status_code=202)
     def start_model(model_id: str, holder: str = "manual") -> dict[str, Any]:
-        if model_id in cat.hosted:
-            raise SchedulerError(409, f"{model_id} is a hosted endpoint: it is always up and cannot be started")
-        name = sched.manifest(model_id).name
+        name = reg.name(model_id)  # a hosted endpoint is refused by the scheduler (409)
         r = sched.ensure_started(name, holder)
         return {"model": reg.record(name), "request": r.public() if r else None}
 
     @app.post("/api/models/{model_id}/stop", status_code=202)
     def stop_model(model_id: str, force: bool = False) -> dict[str, Any]:
-        if model_id in cat.hosted:
-            raise SchedulerError(409, f"{model_id} is a hosted endpoint: it has no container to stop")
-        name = sched.manifest(model_id).name
+        name = reg.name(model_id)  # a hosted endpoint is refused by the scheduler (409)
         sched.stop_model(name, force)
         sched.wake()
         return reg.record(name)
@@ -449,6 +436,8 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
                     try:
                         event, data = q.get_nowait()
                     except queue.Empty:
+                        if q.dropped:  # it fell too far behind: end the stream, so the client reconnects
+                            return
                         await asyncio.sleep(0.25)
                         idle += 0.25
                         if idle >= 15:
@@ -473,6 +462,10 @@ def create_app(catalog: Catalog | None = None, *, start: bool = True) -> FastAPI
     @app.api_route("/v2/models/{model_id}/{path:path}", methods=methods, include_in_schema=False)
     async def gateway_oip(model_id: str, path: str, request: Request) -> Response:
         return await cat.gateway.forward(request, model_id, f"v2/models/{model_id}/{path}")
+
+    @app.get("/v2/models/{model_id}", include_in_schema=False)
+    async def gateway_oip_metadata(model_id: str, request: Request) -> Response:  # OIP model metadata
+        return await cat.gateway.forward(request, model_id, f"v2/models/{model_id}")
 
     add_dataset_routes(app, cat)  # the Dataset Catalog (catalog/datasets): before the UI's catch-all route
 

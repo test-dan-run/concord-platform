@@ -7,14 +7,6 @@ export function pct(v: number | null | undefined, digits = 1): string {
   return `${(v * 100).toFixed(digits)}%`;
 }
 
-/** Signed percentage-point delta, e.g. "+1.2" / "−0.4". */
-export function deltaPts(v: number | null | undefined, digits = 1): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return "";
-  const x = v * 100;
-  if (Math.abs(x) < 0.05) return "±0.0";
-  return `${x > 0 ? "+" : "−"}${Math.abs(x).toFixed(digits)}`;
-}
-
 export function num(v: number | null | undefined, digits = 0): string {
   if (v === null || v === undefined || Number.isNaN(v)) return DASH;
   return v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });

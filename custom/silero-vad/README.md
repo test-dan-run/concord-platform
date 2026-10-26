@@ -7,7 +7,7 @@ CPU). Contract **oip-v2** (non-text input, no OpenAI route). See [WHY.md](WHY.md
 |---|---|
 | Inputs | `AUDIO` FP32 `[-1]` mono samples in [-1, 1]; `SAMPLE_RATE` INT32 `[1]`: 8000, 16000 or a multiple of 16000 |
 | Output | `SEGMENTS` FP32 `[-1, 2]`: `[start, end]` in seconds |
-| Parameters | `threshold` (0.5), `neg_threshold` (threshold-0.15), `min_speech_duration_ms` (250), `min_silence_duration_ms` (100), `speech_pad_ms` (30) |
+| Parameters | `threshold` (0.5), `neg_threshold` (threshold-0.15), `min_speech_duration_ms` (250), `min_silence_duration_ms` (100), `speech_pad_ms` (30). The thresholds are in (0, 1) and the durations are finite and at least 0; other values are a 400 |
 | Weights | `weights.yaml` → `${AI_ASSETS}/custom-models/silero-vad/v6.2.3/silero_vad.onnx` |
 
 ```bash

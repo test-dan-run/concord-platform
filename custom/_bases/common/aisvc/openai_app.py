@@ -67,19 +67,27 @@ def install_openai_errors(app: FastAPI) -> None:
         return OpenAIError(exc.status_code, str(exc.detail), code=code).response()
 
 
-def guard(app: FastAPI, name: str, model: str | None, call: Callable[[], Any]) -> Any:
-    """Common pre/post handling: readiness, model name, handler errors."""
+def guard(app: FastAPI, name: str, model: str | None, call: Callable[[], Any], *,
+          shape: Callable[[Any], Any] | None = None) -> Any:
+    """Common pre/post handling: readiness, model name, handler errors, and `shape` (the handler's result -> the
+    response body), whose errors are the server's: a 500 in the OpenAI shape, also for a ValueError."""
     state = app.state.svc
     if not state.ready:
         raise OpenAIError(503, f"{name} is not ready ({state.error or 'loading'})", type="service_unavailable", code="not_ready")
     if model is not None and model != name:
         raise OpenAIError(404, f"The model {model!r} does not exist; this service serves {name!r}", code="model_not_found")
     try:
-        return call()
+        out = call()
     except OpenAIError:
         raise
     except ValueError as exc:
-        raise OpenAIError(400, str(exc)) from None
+        raise OpenAIError(400, str(exc), code="invalid_request") from None
+    except Exception as exc:
+        raise OpenAIError(500, f"{type(exc).__name__}: {exc}", type="server_error") from None
+    if shape is None:
+        return out
+    try:
+        return shape(out)
     except Exception as exc:
         raise OpenAIError(500, f"{type(exc).__name__}: {exc}", type="server_error") from None
 
@@ -170,39 +178,46 @@ def create_openai_app(name: str, api: str, handler: Callable[..., Any], *, load:
 
         @app.post(ROUTES[api])
         def chat(req: ChatCompletionRequest) -> dict:
-            out = guard(app, name, req.model, lambda: handler(req))
-            out = {"content": out} if isinstance(out, str) else dict(out)
-            return {
-                "id": f"chatcmpl-{uuid.uuid4().hex}", "object": "chat.completion", "created": int(time.time()),
-                "model": name,
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": out["content"]},
-                             "finish_reason": out.get("finish_reason", "stop")}],
-                "usage": out.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
-            }
+            def shape(out: Any) -> dict:
+                out = {"content": out} if isinstance(out, str) else dict(out)
+                return {
+                    "id": f"chatcmpl-{uuid.uuid4().hex}", "object": "chat.completion", "created": int(time.time()),
+                    "model": name,
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": out["content"]},
+                                 "finish_reason": out.get("finish_reason", "stop")}],
+                    "usage": out.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
+                }
+
+            return guard(app, name, req.model, lambda: handler(req), shape=shape)
 
     elif api == "completions":
 
         @app.post(ROUTES[api])
         def completions(req: CompletionRequest) -> dict:
-            out = guard(app, name, req.model, lambda: handler(req))
-            texts = [out] if isinstance(out, str) else list(out)
-            return {
-                "id": f"cmpl-{uuid.uuid4().hex}", "object": "text_completion", "created": int(time.time()),
-                "model": name,
-                "choices": [{"index": i, "text": t, "finish_reason": "stop", "logprobs": None} for i, t in enumerate(texts)],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-            }
+            def shape(out: Any) -> dict:
+                texts = [out] if isinstance(out, str) else list(out)
+                return {
+                    "id": f"cmpl-{uuid.uuid4().hex}", "object": "text_completion", "created": int(time.time()),
+                    "model": name,
+                    "choices": [{"index": i, "text": t, "finish_reason": "stop", "logprobs": None} for i, t in enumerate(texts)],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                }
+
+            return guard(app, name, req.model, lambda: handler(req), shape=shape)
 
     elif api == "embeddings":
 
         @app.post(ROUTES[api])
         def embeddings(req: EmbeddingRequest) -> dict:
-            vectors = guard(app, name, req.model, lambda: handler(req))
-            return {
-                "object": "list", "model": name,
-                "data": [{"object": "embedding", "index": i, "embedding": [float(x) for x in v]} for i, v in enumerate(vectors)],
-                "usage": {"prompt_tokens": 0, "total_tokens": 0},
-            }
+            def shape(vectors: Any) -> dict:
+                return {
+                    "object": "list", "model": name,
+                    "data": [{"object": "embedding", "index": i, "embedding": [float(x) for x in v]}
+                             for i, v in enumerate(vectors)],
+                    "usage": {"prompt_tokens": 0, "total_tokens": 0},
+                }
+
+            return guard(app, name, req.model, lambda: handler(req), shape=shape)
 
     elif api == "audio.transcriptions":
 
@@ -218,13 +233,16 @@ def create_openai_app(name: str, api: str, handler: Callable[..., Any], *, load:
         ) -> Response:
             req = TranscriptionRequest(model, file.file.read(), file.filename or "audio", language, prompt,
                                        response_format, temperature, list(timestamp_granularities or []))
-            out = guard(app, name, model, lambda: handler(req))
-            out = {"text": out} if isinstance(out, str) else dict(out)
-            if response_format == "text":
-                return Response(out["text"], media_type="text/plain")
-            if response_format == "json":
-                out = {"text": out["text"]}
-            return JSONResponse(out)
+
+            def shape(out: Any) -> Response:
+                out = {"text": out} if isinstance(out, str) else dict(out)
+                if response_format == "text":
+                    return Response(out["text"], media_type="text/plain")
+                if response_format == "json":
+                    out = {"text": out["text"]}
+                return JSONResponse(out)
+
+            return guard(app, name, model, lambda: handler(req), shape=shape)
 
     elif api == "audio.speech":
 

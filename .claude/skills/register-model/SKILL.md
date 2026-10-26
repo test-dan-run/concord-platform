@@ -1,6 +1,6 @@
 ---
 name: register-model
-description: Register a new model on the personal AI service platform (services/*.yaml) so it can be started with `just up` and called through aicore, or register a model a provider already serves online as a hosted endpoint in the Model Catalog. Use when a user or agent wants to add, register, onboard or serve a model (a Hugging Face id, a local checkpoint in $AI_ASSETS, a model name like "Llama 3.1 8B", or a provider URL and API key), give it a port/alias/profile, or work out its gpu.util. Covers choosing the API contract (including speech enhancement and text.itn), engine vs custom server, VRAM sizing, writing the manifest, batching (vLLM --max-num-seqs, aisvc batchers and the manifest batch hints in custom servers, measuring a batch profile), audio longer than a model's window, updating the pinned tests and README, validating, and catalog registration and verification.
+description: Register a new model on the personal AI service platform (services/*.yaml) so it can be started with `just up` and called through aicore, or register a model a provider already serves online as a hosted endpoint in the Model Catalog. Use when a user or agent wants to add, register, onboard or serve a model (a Hugging Face id, a local checkpoint in $AI_ASSETS, a model name like "Llama 3.1 8B", or a provider URL and API key), give it a port or alias, or work out its gpu.util. Covers choosing the API contract (including speech enhancement and text.itn), engine vs custom server, VRAM sizing, writing the manifest, batching (vLLM --max-num-seqs, aisvc batchers and the manifest batch hints in custom servers, measuring a batch profile), audio longer than a model's window, updating the pinned tests and README, validating, and catalog registration and verification.
 ---
 
 # Register a model on the platform
@@ -16,12 +16,12 @@ Two helpers ship with this skill (run them with the platform venv):
 
 ```bash
 S=.claude/skills/register-model/scripts
-uv run --quiet python $S/platform_state.py --api chat.completions --profile voice-chat
+uv run --quiet python $S/platform_state.py --api chat.completions
 uv run --quiet python $S/size_model.py Qwen/Qwen3-8B-FP8 --max-model-len 8192
 ```
 
 - `platform_state.py`: engines and pinned tags, every service with alias/port/source, used ports
-  and the **next free port** per band, every profile's VRAM total and headroom.
+  and the **next free port** per band, and the GPU budget (`util_limit`).
 - `size_model.py SOURCE`: reads `config.json` and file sizes (local dir, `/models/<dir>`, or an HF id,
   metadata only) and prints architecture, quantization, checkpoint GB, **KV bytes per token**, and a
   `gpu.util` for a given `--max-model-len` (or, with `--util`, how many KV tokens fit).
@@ -32,14 +32,12 @@ uv run --quiet python $S/size_model.py Qwen/Qwen3-8B-FP8 --max-model-len 8192
   manifest needs neither. `just up` pulls both, so confirm before running it.
 - **Never reassign an existing alias** (`default-chat` etc.) unless the user asks: apps resolve
   aliases at runtime, so this silently changes which model they call.
-- **Don't change an existing profile's members** (that changes what `just up <profile>` starts)
-  unless the user named that profile. Default to a new profile named for the role.
 - Never `:latest`, never weights in images or git, ports bind to `127.0.0.1` (render does this).
 - When you can't confirm an engine flag or capability for the pinned version, write
   `# TODO(verify): <what to check>` in the manifest and list it in your report. Don't guess silently.
 
-Ask the user only for decisions that are theirs: taking over an alias, joining an existing profile,
-going over budget, downloading, or escalating past a stock engine. Derive everything else.
+Ask the user only for decisions that are theirs: taking over an alias, going over budget,
+downloading, or escalating past a stock engine. Derive everything else.
 
 ## Procedure
 
@@ -162,7 +160,7 @@ uv run --quiet python $S/size_model.py <source> --max-model-len <N> [--overhead-
 
 ### 5. Choose identity and write the manifest
 
-`platform_state.py --api <api> --profile <profile>` gives the next free port and the budget.
+`platform_state.py --api <api>` gives the next free port and the budget.
 
 - **name**: kebab-case from the repo name, lowercased, without the org, `.` → `-`, and the quant
   suffix kept when it distinguishes the checkpoint (`qwen3-32b-awq`, `qwen2-5-14b-instruct-awq`). The
@@ -171,7 +169,7 @@ uv run --quiet python $S/size_model.py <source> --max-model-len <N> [--overhead-
   `just test` asserts there are no warnings, so it fails the tests.
 - **alias**: only when the user asks, or when the model takes a new role (`fast-chat`, `mid-chat`,
   `default-vlm`). It must be unique across names and aliases.
-- **profiles**: a new kebab-case profile for the role, or the one the user named.
+- There is no `profiles` field: validation rejects it. `just up` takes service names and aliases.
 
 Template (match the comment style of the existing manifests: the arithmetic goes on the `util` line
 and the reason for each flag goes on its `args` line):
@@ -190,7 +188,6 @@ gpu:
   util: 0.NN                       # NN.N GB: X.X GB <quant> checkpoint + ~Y GB KV (~Zk tokens at K KB/token)
 args:
   - --max-model-len=NNNNN          # native NNNk; capped to fit the KV cache in the budget
-profiles: [<profile>]
 description: "<Role>, <Model> <size> <quant>; <notable behaviour>"
 tasks: [<task>, ...]               # kebab-case, from the model card: what it was trained for, not only what this service exposes
 ```
@@ -217,16 +214,14 @@ Flags for the pinned vLLM. Verify each one against that version's docs before yo
 
 - `tests/test_schema.py::test_sample_manifests_validate`:
   - Add the name to the sorted `names` list.
-  - Add any new profile to the sorted `profiles` list.
   - Add `"<alias>": "<name>"` to the alias dict. With no alias, note that the `None:` key holds the
     alphabetically last alias-less service, because it is a dict comprehension. Update it if your
     name sorts after the current one.
-- `tests/test_stack.py`: only if the service joins `voice-chat` (the expected start order and
-  `stop` tuples are hard-coded there).
 - `README.md` (platform root): add a row to the table of the service's group, e.g. "Speech to text
   (ASR)" or "Text normalisation" (name, alias, kind, engine, contract / api, port, `util 0.NN` or
   `N GB` or `CPU`), in port order. A service that fits no group goes in "Other audio analysis" or a
-  new group with a one-sentence description.
+  new group with a one-sentence description. `tests/test_readme.py` checks every row against the
+  manifests, so change the row too when you change a manifest's alias, port or GPU value.
 
 ### 7. Verify
 
@@ -292,7 +287,7 @@ manifest.
 
 Tell the user:
 
-- The manifest path, plus the contract, api, engine, port, alias and profile, with the reason for
+- The manifest path, plus the contract, api, engine, port and alias, with the reason for
   any non-obvious choice.
 - The sizing arithmetic, that is, the minimum the model needs to load.
 - The output of validate, vram and test, and whether a live start and conformance ran. If they

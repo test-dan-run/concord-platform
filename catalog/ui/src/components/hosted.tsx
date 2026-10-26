@@ -4,7 +4,8 @@
 import { useState } from "react";
 import type { CheckLine, HostedInfo } from "../lib/api";
 import * as I from "./icons";
-import { cx } from "./ui";
+import { GLYPH } from "./model";
+import { cx, inputClass } from "./ui";
 
 export const HOSTED_CONTRACTS = [
   { value: "openai|audio.transcriptions", label: "openai / audio.transcriptions (ASR)", path: "/audio/transcriptions", url: "https://api.example.com/v1", model: "e.g. whisper-1", verify: "Conformance checks, then transcription of the 10 s check clip: word, segment or text timing, and WER." },
@@ -53,7 +54,6 @@ export function body(e: Endpoint, a: Auth) {
   };
 }
 
-const input = "min-h-10 bg-canvas border border-line rounded-md px-3 text-[13px] text-fg";
 const field = "flex flex-col gap-1.5 text-xs text-muted";
 
 export function EndpointFields({ value, onChange }: { value: Endpoint; onChange: (e: Endpoint) => void }) {
@@ -63,18 +63,18 @@ export function EndpointFields({ value, onChange }: { value: Endpoint; onChange:
     <>
       <label className={field}>
         Contract
-        <select value={value.contract} onChange={(e) => set({ contract: e.target.value })} className={input}>
+        <select value={value.contract} onChange={(e) => set({ contract: e.target.value })} className={inputClass}>
           {HOSTED_CONTRACTS.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
         </select>
       </label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className={field}>
           Base URL
-          <input type="url" value={value.base_url} onChange={(e) => set({ base_url: e.target.value })} placeholder={c.url} className={input} />
+          <input type="url" value={value.base_url} onChange={(e) => set({ base_url: e.target.value })} placeholder={c.url} className={inputClass} />
         </label>
         <label className={field}>
           Model name at the provider
-          <input type="text" value={value.model} onChange={(e) => set({ model: e.target.value })} placeholder={c.model} className={input} />
+          <input type="text" value={value.model} onChange={(e) => set({ model: e.target.value })} placeholder={c.model} className={inputClass} />
         </label>
       </div>
       <div className="flex flex-wrap items-baseline gap-2 text-xs">
@@ -84,15 +84,15 @@ export function EndpointFields({ value, onChange }: { value: Endpoint; onChange:
       <div className="grid gap-3 grid-cols-3">
         <label className={field}>
           Timeout (s)
-          <input type="number" min={1} value={value.timeout_s} onChange={(e) => set({ timeout_s: Number(e.target.value) })} className={input} />
+          <input type="number" min={1} value={value.timeout_s} onChange={(e) => set({ timeout_s: Number(e.target.value) })} className={inputClass} />
         </label>
         <label className={field}>
           Max concurrent calls
-          <input type="number" min={1} value={value.max_concurrency} onChange={(e) => set({ max_concurrency: Number(e.target.value) })} className={input} />
+          <input type="number" min={1} value={value.max_concurrency} onChange={(e) => set({ max_concurrency: Number(e.target.value) })} className={inputClass} />
         </label>
         <label className={field}>
           Max upload (MB)
-          <input type="number" min={1} value={value.max_upload_mb} onChange={(e) => set({ max_upload_mb: Number(e.target.value) })} className={input} />
+          <input type="number" min={1} value={value.max_upload_mb} onChange={(e) => set({ max_upload_mb: Number(e.target.value) })} className={inputClass} />
         </label>
       </div>
     </>
@@ -124,14 +124,14 @@ export function AuthFields({ value, onChange, keyLabel = "API key", keyPlacehold
       {value.auth_type === "header" && (
         <label className={field}>
           Header name
-          <input type="text" value={value.header_name} onChange={(e) => set({ header_name: e.target.value })} placeholder="api-key" className={input} />
+          <input type="text" value={value.header_name} onChange={(e) => set({ header_name: e.target.value })} placeholder="api-key" className={inputClass} />
         </label>
       )}
       {value.auth_type !== "none" && (
         <div className="flex flex-col gap-1.5">
           <label htmlFor="api-key" className="text-xs text-muted">{keyLabel}</label>
           <span className="flex gap-2">
-            <input id="api-key" type={show ? "text" : "password"} autoComplete="off" value={value.key} onChange={(e) => set({ key: e.target.value })} placeholder={keyPlaceholder} className={cx(input, "flex-1 min-w-0 num")} />
+            <input id="api-key" type={show ? "text" : "password"} autoComplete="off" value={value.key} onChange={(e) => set({ key: e.target.value })} placeholder={keyPlaceholder} className={cx(inputClass, "flex-1 min-w-0 num")} />
             <button type="button" aria-label={show ? "Hide key" : "Show key"} onClick={() => setShow((s) => !s)} className="min-h-10 min-w-10 inline-flex items-center justify-center rounded-md border border-line bg-transparent text-muted hover:text-fg cursor-pointer">
               <I.Eye />
             </button>
@@ -141,13 +141,6 @@ export function AuthFields({ value, onChange, keyLabel = "API key", keyPlacehold
     </>
   );
 }
-
-const GLYPH: Record<string, { c: string; t: string }> = {
-  pass: { c: "text-good", t: "✓" },
-  warn: { c: "text-warn", t: "!" },
-  fail: { c: "text-bad", t: "✕" },
-  info: { c: "text-muted", t: "i" },
-};
 
 export function TestLines({ lines }: { lines: CheckLine[] }) {
   return (

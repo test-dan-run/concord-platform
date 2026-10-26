@@ -2,6 +2,6 @@
 gpu_total_gb: 32                  # RTX 5090
 util_limit: 0.93                  # most of the GPU one GPU service may take (it gets the whole GPU, less 1 GiB, up to this)
 assets_dir: ~/ai-assets           # overridden by AI_ASSETS env var (see .env)
-ai_host: localhost                # overridden by AI_HOST env var
+ai_host: localhost                # not read: aicore takes the host from the AI_HOST env var (see .env)
 registry: ghcr.io/owner           # placeholder for custom image pushes (must be lowercase)
 network: ai-net

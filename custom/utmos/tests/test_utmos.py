@@ -85,11 +85,14 @@ WEIGHTS = Path(os.environ.get("UTMOS_WEIGHTS", Path(os.path.expanduser(os.enviro
 def test_real_model_prefers_clean_over_noisy():
     pytest.importorskip("torch")
     pytest.importorskip("transformers")
+    import wave
+
     m = mos_mod.Utmos(WEIGHTS)
     m.load()
-    t = np.arange(16000 * 3) / 16000
-    clean = (0.3 * np.sin(2 * np.pi * 180 * t) * (1 + np.sin(2 * np.pi * 4 * t))).astype(np.float32)
-    noisy = clean + np.random.default_rng(0).normal(0, 0.3, len(t)).astype(np.float32)
+    # Real speech: UTMOS scores a synthetic tone about the same with or without noise (1.31 against 1.36).
+    with wave.open(str(SERVICE_DIR.parents[1] / "catalog/fixtures/check_clip.wav")) as w:
+        clean = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+    noisy = clean + np.random.default_rng(0).normal(0, 0.05, len(clean)).astype(np.float32)
     assert m.score(clean, 16000) > m.score(noisy, 16000)
     assert m.score(clean, 16000) == pytest.approx(m.score(clean, 16000))  # deterministic
 

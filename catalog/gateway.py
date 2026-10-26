@@ -1,13 +1,14 @@
 """Gateway: inference calls by model id, forwarded unchanged to the model service.
 
-`/m/{id}/<path>` -> `<service root>/<path>`; `/v2/models/{id}/<path>` -> the same service's OIP route.
+`/m/{id}/<path>` -> `<service root>/<path>`; `/v2/models/{id}[/<path>]` -> the same service's OIP route.
 A stopped model is started on demand and the call is held until it is healthy (2 x its measured cold
 start, or gateway_unmeasured_wait_s), then 503 `model_starting`. Calls in flight keep a model from
 being stopped.
 
 A hosted endpoint is always up: its branch skips the scheduler's start logic, refuses bodies over the
 upload limit (413), waits for one of its concurrency slots (503 after its timeout), swaps whatever auth
-the caller sent for the stored key, and forwards the body unchanged to the provider URL.
+the caller sent for the stored key, and forwards the body unchanged to the provider URL. A successful
+reply streams back unchanged; an error reply is read whole and the key redacted from it.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
 
 import anyio
 import httpx
@@ -31,11 +31,24 @@ from .settings import Settings
 log = logging.getLogger("catalog.gateway")
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
               "transfer-encoding", "upgrade", "host"}
+ERROR_BODY_LIMIT = 1024 * 1024  # a hosted provider's error reply is read whole up to this size, to redact the key
 
 
 def error(status: int, message: str, type_: str, headers: dict[str, str] | None = None) -> JSONResponse:
     return JSONResponse({"error": {"message": message, "type": type_, "code": status}}, status_code=status,
                         headers=headers)
+
+
+def _raw(resp: httpx.Response, drop: set[str], key: str | None = None) -> list[tuple[bytes, bytes]]:
+    """The upstream's headers for a response's raw_headers, as it sent them: a header sent twice (two Set-Cookie)
+    stays two, not one joined by ", ", and a value keeps its bytes (httpx decodes UTF-8 ones as UTF-8). Leaves out
+    the names in `drop` and, given a key, a header that quotes it."""
+    out = []
+    for k, v in resp.headers.raw:
+        text = v.decode("latin-1")  # for the key check only: one character per byte, so it never fails
+        if k.decode("latin-1").lower() not in drop and hosted_mod.redact(text, key) == text:
+            out.append((k.lower(), v))
+    return out
 
 
 class TooLarge(Exception):
@@ -140,14 +153,39 @@ class Gateway:
                 end(True)
                 return error(502, f"{h.host} did not answer: {type(exc).__name__}: {hosted_mod.redact(str(exc), key)}",
                              "upstream_error")
+            if resp.status_code >= 400:  # an error reply may quote the key: read it and redact it
+                return await self._redacted(resp, h, key, end)
             return self._stream(resp, end)
         except BaseException:
             end(True)
             raise
 
-    def _stream(self, resp: httpx.Response, end) -> StreamingResponse:
-        out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in HOP_BY_HOP}
+    async def _redacted(self, resp: httpx.Response, h: Hosted, key: str | None, end) -> Response:
+        """A provider's error reply, read whole (decompressed) with the key redacted from its body. A header
+        that quotes the key is dropped (a header cannot carry the •••• mask)."""
+        data = bytearray()
+        try:
+            async for chunk in resp.aiter_bytes():
+                data += chunk
+                if len(data) > ERROR_BODY_LIMIT:
+                    break
+        except httpx.HTTPError as exc:
+            end(True)
+            return error(502, f"{h.host} did not answer: {type(exc).__name__}: {hosted_mod.redact(str(exc), key)}",
+                         "upstream_error")
+        finally:
+            await resp.aclose()
+            end(resp.status_code >= 500)
+        if len(data) > ERROR_BODY_LIMIT:
+            return error(resp.status_code, f"{h.host} answered {resp.status_code} with an error body over 1 MiB; "
+                                           "it is not forwarded", "upstream_error")
+        body = hosted_mod.redact(data.decode("utf-8", "surrogateescape"), key).encode("utf-8", "surrogateescape")
+        drop = HOP_BY_HOP | {"content-length", "content-encoding"}  # the body changed: Response sets its length
+        out = Response(body, status_code=resp.status_code)
+        out.raw_headers += _raw(resp, drop, key)
+        return out
 
+    def _stream(self, resp: httpx.Response, end) -> StreamingResponse:
         async def close() -> None:
             await resp.aclose()
             end(resp.status_code >= 500)
@@ -162,8 +200,9 @@ class Gateway:
             finally:  # also runs when the client disconnects mid-stream, so in-flight counts never leak
                 await close()
 
-        return StreamingResponse(body(), status_code=resp.status_code, headers=out_headers,
-                                 background=BackgroundTask(close))
+        out = StreamingResponse(body(), status_code=resp.status_code, background=BackgroundTask(close))
+        out.raw_headers = _raw(resp, HOP_BY_HOP)
+        return out
 
     async def forward(self, request: Request, model: str, path: str) -> Response:
         sched = self.scheduler
@@ -202,7 +241,3 @@ class Gateway:
         except BaseException:
             end(True)
             raise
-
-
-def routes_info() -> dict[str, Any]:
-    return {"prefix": "/m/{id}/", "oip": "/v2/models/{id}/"}
